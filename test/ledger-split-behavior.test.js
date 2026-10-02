@@ -24,7 +24,7 @@ const FIXTURE = [
   { id: 'b2', date: '2026-08-06', ledger: 'cashflow', source: 'bank', type: 'expense', category: '居住', subcategory: '房租', amount: 15000, account: '台新活存', note: 'A-old-name', bankSummary: 'C-summary', bankNote: 'C-note' },
   { id: 'b3', date: '2026-08-12', ledger: 'cashflow', source: 'bank', type: 'expense', category: '', subcategory: '', amount: 6900, account: '台新活存', note: 'C-old-name', bankSummary: 'A-summary', bankNote: 'A-note' },   // 刻意不等於本月消費 7,500
   { id: 'b4', date: '2026-08-18', ledger: 'cashflow', source: 'bank', type: 'transfer', category: '內轉', subcategory: '內轉出', amount: 20000, account: '台新活存', note: 'D-existing-note' },
-  { id: 'b5', date: '2026-08-22', ledger: 'cashflow', source: 'stmt', type: 'expense', category: '飲食', subcategory: '超市', amount: 4300, account: '台新卡', note: 'E-existing-note' },
+  { id: 'b5', date: '2026-08-22', ledger: 'cashflow', source: 'stmt', type: 'expense', category: '飲食', subcategory: '超市', amount: 4300, account: '台新卡', note: 'E-existing-note', bankSummary: 'E-summary', bankNote: 'E-note' },
   { id: 'm1', date: '2026-08-25', type: 'expense', category: '飲食', subcategory: '餐廳', amount: 1000, account: '現金', note: 'F-existing-note' },
   { id: 'y1', date: '2025-12-04', ledger: 'cashflow', source: 'bank', type: 'income', category: '工作', subcategory: '薪資', amount: 100, account: '台新活存', note: '去年收入', bankSummary: '去年摘要', bankNote: '去年備註' },
   { id: 'y2', date: '2025-03-09', ledger: 'cashflow', source: 'bank', type: 'expense', category: '居住', subcategory: '房租', amount: 50, account: '台新活存', note: '三月舊說明', bankSummary: '三月摘要', bankNote: '三月備註' },
@@ -48,14 +48,27 @@ const API = {
 };
 
 let app;
+let lastWrite;
+let legacyDropCashflowText = false;
 async function boot() {
   if (app) return app;
   const dom = new JSDOM('<!doctype html><html><body><nav id="nav"></nav><button id="snapshotBtn"></button><main id="view"></main><div id="modal-root"></div><div id="toast-root"></div></body></html>', { url: 'http://localhost/#cashflow' });
   const win = dom.window;
   const set = (k, v) => Object.defineProperty(globalThis, k, { value: v, configurable: true, writable: true });
   for (const k of ['document', 'window', 'location', 'localStorage', 'HTMLElement', 'Element', 'Node', 'Event', 'CustomEvent', 'MutationObserver', 'requestAnimationFrame', 'getComputedStyle']) set(k, win[k]);
-  set('fetch', async (url) => {
+  set('fetch', async (url, init) => {
     const path = String(url).split('?')[0];
+    if (path.startsWith('/api/transactions/') && init?.method === 'PUT') {
+      lastWrite = { path, body: JSON.parse(String(init.body)) };
+      const id = path.split('/').at(-1);
+      const stored = legacyDropCashflowText
+        ? Object.fromEntries(Object.entries(lastWrite.body).filter(([key]) => key !== 'summary' && key !== 'remark'))
+        : lastWrite.body;
+      const current = API['/api/transactions'].find(t => t.id === id);
+      const updated = { ...current, ...stored };
+      API['/api/transactions'] = API['/api/transactions'].map(t => t.id === id ? updated : t);
+      return new Response(JSON.stringify(updated), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
     const body = Object.hasOwn(API, path) ? API[path] : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
   });
@@ -137,4 +150,81 @@ test('信用卡費頁：本月消費只算信用卡帳本（含缺 ledger 的舊
   assert.deepEqual(rowIds(), CARD_IDS, '明細＝五筆刷卡；繳卡費 b3 與來源是帳單的 b5 都不在這頁（否則同一筆錢兩頁各算一次）');
   const cats = [...document.querySelectorAll('.credit-category-label')].map(el => el.textContent.replace(/\s+/g, ''));
   assert.deepEqual(cats, ['購物3,000元', '飲食2,500元', '交通2,000元']);
+});
+
+test('編輯收支：桌機欄位成對排列，摘要與備註分開寫，舊說明只讀相容', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  await renderCashflow();
+  const year = document.querySelector('#yearSel');
+  year.value = '2026';
+  year.dispatchEvent(new globalThis.Event('change', { bubbles: true }));
+  await settleRender();
+
+  document.querySelector('[data-edit="b2"]')?.click();
+  const labels = [...document.querySelectorAll('#modalForm .form-grid > div > label')].map(el => el.textContent);
+  assert.deepEqual(labels.slice(0, 7), ['金流', '日期 *', '銀行帳戶', '金額 *', '分類', '子分類', '摘要']);
+  for (const id of ['f_summary', 'f_remark']) {
+    assert.ok(document.querySelector('#' + id)?.parentElement?.classList.contains('cashflow-text-divider'),
+      `${id} 上方要有獨立分隔線`);
+  }
+  assert.equal(document.querySelector('#f_applySameSummary')?.closest('.full')?.querySelector('label')?.textContent,
+    '相同摘要是否一起修改（目前 0 筆）');
+  assert.equal(document.querySelector('#f_applySameRemark')?.closest('.full')?.querySelector('label')?.textContent,
+    '相同備註是否一起修改（目前 0 筆）');
+  assert.equal(document.querySelector('#f_summary')?.value, 'C-summary');
+  assert.equal(document.querySelector('#f_remark')?.value, 'C-note', '銀行備註預設帶入帳單原文');
+  document.querySelector('#f_summary').value = '自己寫的摘要';
+  document.querySelector('#f_remark').value = '自己補充的備註';
+  document.querySelector('#modalForm').dispatchEvent(new globalThis.Event('submit', { bubbles: true, cancelable: true }));
+  await settleRender();
+  assert.equal(lastWrite?.path, '/api/transactions/b2');
+  assert.equal(lastWrite?.body.summary, '自己寫的摘要');
+  assert.equal(lastWrite?.body.remark, '自己補充的備註');
+  assert.equal(Object.hasOwn(lastWrite.body, 'note'), false, '兩行都不可寫入舊說明');
+  assert.equal(Object.hasOwn(lastWrite.body, 'bankSummary'), false, '帳單摘要原文不可回送寫入');
+  assert.equal(Object.hasOwn(lastWrite.body, 'bankNote'), false, '帳單原文不可回送寫入');
+  const saved = document.querySelector('[data-edit="b2"]')?.closest('tr');
+  assert.equal(saved?.querySelector('.cf-note-summary')?.textContent, '自己寫的摘要');
+  assert.equal(saved?.querySelector('.cf-note-remark')?.textContent, '自己補充的備註');
+
+  document.querySelector('[data-edit="b5"]')?.click();
+  assert.equal(document.querySelector('#f_summary')?.value, 'E-summary');
+  assert.equal(document.querySelector('#f_remark')?.value, 'E-note');
+  document.querySelector('#f_remark').value = '另存備註';
+  document.querySelector('#modalForm').dispatchEvent(new globalThis.Event('submit', { bubbles: true, cancelable: true }));
+  await settleRender();
+  assert.equal(lastWrite?.path, '/api/transactions/b5');
+  assert.equal(lastWrite?.body.remark, '另存備註');
+  assert.equal(Object.hasOwn(lastWrite.body, 'note'), false);
+
+  document.querySelector('[data-edit="m1"]')?.click();
+  assert.equal(document.querySelector('#f_summary')?.value, 'F-existing-note', '舊手動記錄讀出第一行');
+  assert.equal(document.querySelector('#f_remark')?.value, '', '舊手動記錄沒有第二行');
+  document.querySelector('#f_summary').value = '新的手動摘要';
+  document.querySelector('#f_remark').value = '新的手動備註';
+  document.querySelector('#modalForm').dispatchEvent(new globalThis.Event('submit', { bubbles: true, cancelable: true }));
+  await settleRender();
+  assert.equal(lastWrite?.path, '/api/transactions/m1');
+  assert.equal(lastWrite?.body.summary, '新的手動摘要');
+  assert.equal(lastWrite?.body.remark, '新的手動備註');
+  assert.equal(Object.hasOwn(lastWrite.body, 'note'), false, '舊說明不再寫入');
+});
+
+test('舊版服務忽略新欄位時不可誤報儲存成功，編輯窗須保留', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  await renderCashflow();
+  legacyDropCashflowText = true;
+  document.querySelector('[data-edit="b3"]')?.click();
+  document.querySelector('#f_summary').value = '修改後摘要';
+  document.querySelector('#f_remark').value = '修改後備註';
+  document.querySelector('#modalForm').dispatchEvent(new globalThis.Event('submit', { bubbles: true, cancelable: true }));
+  await settleRender();
+  assert.ok(document.querySelector('#modal-root #modalForm'), '未儲存的新文字必須留在表單內');
+  assert.match(text('#toast-root .toast:last-child'), /摘要.*備註.*未儲存/);
+  const row = document.querySelector('[data-edit="b3"]')?.closest('tr');
+  assert.equal(row?.querySelector('.cf-note-summary')?.textContent, 'A-summary');
+  assert.equal(row?.querySelector('.cf-note-remark')?.textContent, 'A-note');
+  legacyDropCashflowText = false;
 });

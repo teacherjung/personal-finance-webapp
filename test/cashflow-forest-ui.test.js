@@ -12,19 +12,36 @@ import {
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-test('銀行收支月摘要：0 是合法金額、內轉不進收入支出與結餘', () => {
+test('銀行收支月摘要：0 是合法金額、內轉只計轉出且不進收入支出與結餘', () => {
   const rows = [
     { date: '2026-08-01', type: 'income', amount: 0 },
     { date: '2026-08-02', type: 'income', amount: 1000 },
     { date: '2026-08-03', type: 'expense', amount: 250 },
-    { date: '2026-08-04', type: 'transfer', amount: 99999 },
+    { date: '2026-08-04', type: 'transfer', dir: 'out', amount: 99999 },
+    { date: '2026-08-04', type: 'transfer', dir: 'in', amount: 99999 },
     { date: '2026-07-31', type: 'expense', amount: 700 },
   ];
   const out = cashflowMonthSummary(rows, '2026-08');
-  assert.equal(out.monthRows.length, 4);
-  assert.deepEqual({ income: out.income, expense: out.expense, net: out.net }, {
-    income: 1000, expense: 250, net: 750,
+  assert.equal(out.monthRows.length, 5);
+  assert.deepEqual({ income: out.income, expense: out.expense, transfer: out.transfer, net: out.net }, {
+    income: 1000, expense: 250, transfer: 99999, net: 750,
   });
+});
+
+test('銀行收支月摘要：舊銀行方向優先於可改的子分類；手動內轉按角色，方向不明不計', () => {
+  const rows = [
+    { date: '2026-08-01', type: 'transfer', amount: 100, dir: 'out', bankRef: 'bank|a|2026-08-01|in|100|', subcategory: '內轉入' },
+    { date: '2026-08-02', type: 'transfer', amount: 200, dir: 'in', bankRef: 'bank|a|2026-08-02|out|200|', subcategory: '內轉出' },
+    { date: '2026-08-03', type: 'transfer', amount: 300, bankRef: 'bank|a|2026-08-03|out|300|', subcategory: '內轉入' },
+    { date: '2026-08-04', type: 'transfer', amount: 400, bankRef: 'bank2|銀行|a|2026-08-04|in|400|', subcategory: '內轉出' },
+    { date: '2026-08-05', type: 'transfer', amount: 500, subcategory: '改名轉出' },
+    { date: '2026-08-06', type: 'transfer', amount: 600, subcategory: '內轉出' },
+    { date: '2026-08-07', type: 'transfer', amount: 700, subcategory: '自訂內轉' },
+    { date: '2026-08-08', type: 'transfer', amount: 800, subcategory: '交割' },
+    { date: '2026-07-31', type: 'transfer', amount: 900, dir: 'out' },
+  ];
+  const subs = [{ label: '改名轉出', role: 'out' }, { label: '自訂內轉' }];
+  assert.equal(cashflowMonthSummary(rows, '2026-08', subs).transfer, 1500);
 });
 
 test('銀行收支期間：月份鍵轉成中文年月，壞值不硬猜', () => {
@@ -75,6 +92,11 @@ test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的�
   assert.match(source, /data-del=/);
   assert.match(source, /class="cashflow-workspace"/);
   assert.match(source, /class="cashflow-summary"/);
+  assert.match(source, /cashflowMonthSummary\(all, monthFilter, Array\.isArray\(transferRes\) \? transferRes : \[\]\)/);
+  assert.match(source, /data-kind="transfer"><h3>內轉<\/h3>/);
+  assert.match(source, /const netTone = net >= 0 \? 'pos' : 'neg';/);
+  assert.match(source, /data-kind="net" data-tone="\$\{netTone\}"/);
+  assert.match(source, /class="stat sm \$\{netTone\}"/);
   assert.ok(source.indexOf('class="cashflow-summary"') < source.indexOf('class="cashflow-controls"'),
     '摘要區塊要排在年／月／金流篩選上方');
   assert.match(source, /const periodLabel = cashflowPeriodLabel\(monthFilter\);/);
@@ -91,8 +113,13 @@ test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的�
   assert.match(source, /th\('date', '日期'\)/);
   assert.doesNotMatch(source, /th\('date', '收支日'\)/);
   assert.match(source, /class="muted nowrap cashflow-account-cell"/);
+  assert.match(source, /th\('note', '摘要＋備註'\)/);
+  assert.doesNotMatch(source, /th\('note', '收支說明'\)/);
   assert.match(source, /class="cf-note-summary"/);
   assert.match(source, /class="cf-note-remark"/);
+  assert.match(source, /<th>日期<\/th><th>銀行帳戶<\/th><th>摘要＋備註<\/th><th>分類<\/th><th class="num">金額<\/th>/);
+  assert.match(source, /cashflowDateLabel\(x\.date\)/);
+  assert.match(source, /cashflowDescriptionLines\(\{ \.\.\.x/);
   assert.match(source, /<strong>\$\{esc\(periodLabel\)\}尚無銀行收支<\/strong>/);
   assert.doesNotMatch(source, /本月尚無銀行收支/);
   assert.doesNotMatch(source, /<div class="card cashflow-stat"/);
@@ -103,15 +130,26 @@ test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的�
 test('銀行收支樣式：摘要共用粗框、三組篩選、帳戶單行與說明雙行都固定', () => {
   const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8');
   assert.match(css, /\.cashflow-workspace/);
-  assert.match(css, /\.cashflow-summary-grid \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);[\s\S]*border: 2px solid var\(--frame\)/);
+  assert.match(css, /\.cashflow-summary-grid \{[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);[^}]*border: 2px solid var\(--frame\)/);
+  assert.match(css, /\.cashflow-stat\[data-kind="income"\]::before \{ background: var\(--pos\); \}/);
+  assert.match(css, /\.cashflow-stat\[data-kind="expense"\]::before \{ background: var\(--neg\); \}/);
+  assert.match(css, /--cashflow-neutral: #858585;/);
+  assert.match(css, /\.cashflow-stat\[data-kind="transfer"\]::before \{ background: var\(--cashflow-neutral\); \}/);
+  assert.match(css, /\.cashflow-stat\[data-kind="transfer"\] \.stat \{ color: var\(--cashflow-neutral\); \}/);
+  assert.match(css, /\.cashflow-stat\[data-kind="net"\]\[data-tone="pos"\]::before \{ background: var\(--pos\); \}/);
+  assert.match(css, /\.cashflow-stat\[data-kind="net"\]\[data-tone="neg"\]::before \{ background: var\(--neg\); \}/);
   assert.match(css, /\.cashflow-stat \+ \.cashflow-stat \{ border-left: 2px solid var\(--frame\); \}/);
   assert.match(css, /\.cashflow-controls \{[\s\S]*border: 2px solid var\(--frame\)/);
   assert.match(css, /\.cashflow-controls \{[\s\S]*grid-template-columns: minmax\(130px, 180px\) minmax\(130px, 180px\) minmax\(0, 1fr\)/);
+  assert.match(css, /\.cashflow-controls \{[^}]*align-items: start/,
+    '年份、月份、金流三組從頂端對齊，標題才會落在同一水平線');
   assert.match(css, /@media \(min-width: 641px\) and \(max-width: 960px\) \{[\s\S]*\.cashflow-flow-control \{ grid-column: 1 \/ -1; \}/);
   assert.match(css, /\.cashflow-flow-control \.chip-row \{[\s\S]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
   assert.match(css, /\.cashflow-flow-control \.chip:hover \{ background: var\(--card\); \}/);
   assert.match(css, /\.cashflow-account-cell \{[^}]*white-space: nowrap/);
   assert.match(css, /\.cf-note-summary, \.cf-note-remark \{[^}]*display: block/);
+  assert.match(css, /\.cf-note-summary \{[^}]*font-weight: 400/,
+    '摘要與備註維持層次但不用粗體強調摘要');
   assert.match(css, /@media \(max-width: 640px\)/);
   assert.match(css, /\.cashflow-summary-grid \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); \}/);
   assert.match(css, /\.cashflow-ledger table \{ min-width: 720px; \}/);

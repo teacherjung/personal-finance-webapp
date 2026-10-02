@@ -306,6 +306,7 @@
 | **IB 同步跨 await 的寫入安全**（Codex r3#1，高） | ——完整契約 → [契約：共用底層・跨 await 的寫入安全](docs/contracts/shared-foundation.md#跨-await-的寫入安全) |
 | **銀行收支「真·學習」的方向與內轉子分類**（Codex r13#2/#4） | ——完整契約 → [契約：收支記帳與匯入・銀行收支真學習的方向與內轉子分類](docs/contracts/income-expense.md#銀行收支真學習的方向與內轉子分類) |
 | **銀行交易的帳單原文＝ `bankSummary`／`bankNote` 兩欄**（Stage 2，使用者定 2026-08-22） | ——完整契約 → [契約：收支記帳與匯入・帳單原文摘要與備註分兩欄留底](docs/contracts/income-expense.md#帳單原文摘要與備註分兩欄留底) |
+| 銀行收支兩行文字與使用者選擇的「相同文字一起修改」（William 2026-10-02 裁示） | ——完整契約 → [契約：收支記帳與匯入・銀行收支可編輯摘要與備註](docs/contracts/income-expense.md#銀行收支可編輯摘要與備註) |
 | **機構名＝`lib/bank-alias.js` 的正規短名**（Stage 4，使用者 2026-08-20 排定「機構名別名對照表：台新／台新銀行／TAISHIN → 同一代碼」） | ——完整契約 → [契約：收支記帳與匯入・機構名正規化與祖父比對形](docs/contracts/income-expense.md#機構名正規化與祖父比對形) |
 | **「同類/同店一起改」＝單一原子指令**（護欄 G3，2026-07-22） | ——完整契約 → [契約：收支記帳與匯入・同類同店一起改是單一原子指令](docs/contracts/income-expense.md#同類同店一起改是單一原子指令) |
 | **停車費顯示包裝的觸發＝子類身分、非字面**（護欄 G4，2026-07-22；name/ID 分離） | ——完整契約 → [契約：收支記帳與匯入・停車費顯示包裝的觸發](docs/contracts/income-expense.md#停車費顯示包裝的觸發) |

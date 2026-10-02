@@ -3,11 +3,12 @@ import { birthText } from './recipe-birth-text.js';   // 規則卡出生結果�
 
 /**
  * 銀行收支頁的月份摘要。呼叫端先用 isCardTx 排除信用卡帳本；
- * 這裡只負責維持收入／支出／內轉的既有加總口徑。
+ * 內轉欄只計轉出，收入／支出與結餘仍排除所有內轉。
  * @param {any[]} transactions
  * @param {string} month
+ * @param {{label:string,role?:'out'|'in'|'settle'}[]} [transferSubcategories]
  */
-export function cashflowMonthSummary(transactions, month) {
+export function cashflowMonthSummary(transactions, month, transferSubcategories = []) {
   const monthRows = (Array.isArray(transactions) ? transactions : [])
     .filter(t => t?.date?.slice(0, 7) === month);
   const income = monthRows
@@ -16,7 +17,22 @@ export function cashflowMonthSummary(transactions, month) {
   const expense = monthRows
     .filter(t => t.type === 'expense')
     .reduce((sum, t) => sum + Number(t.amount || 0), 0);
-  return { monthRows, income, expense, net: income - expense };
+  const transfer = monthRows
+    .filter(t => t.type === 'transfer' && isTransferOut(t, transferSubcategories))
+    .reduce((sum, t) => sum + Number(t.amount || 0), 0);
+  return { monthRows, income, expense, transfer, net: income - expense };
+}
+
+/** 原始方向比可編輯的子分類可靠；缺方向時才退回內轉子分類角色。 @param {any} t @param {{label:string,role?:'out'|'in'|'settle'}[]} subs */
+function isTransferOut(t, subs) {
+  if (t.dir === 'out' || t.dir === 'in') return t.dir === 'out';
+  const parts = String(t.bankRef || '').split('|');
+  const refDir = parts[0] === 'bank' ? parts[3] : parts[0] === 'bank2' ? parts[4] : null;
+  if (refDir === 'out' || refDir === 'in') return refDir === 'out';
+  const sub = String(t.subcategory || '');
+  if (sub === '內轉出') return true;
+  if (!sub || sub === '內轉入' || sub === '交割') return false;
+  return subs.some(x => x?.label === sub && x.role === 'out');
 }
 
 /**
@@ -42,16 +58,26 @@ export function cashflowDateLabel(date) {
 
 /**
  * 收支明細的兩行文字。只做前端顯示，不改寫交易、分類或加總。
- * 新匯入列使用帳單原始摘要／備註；沒有完整兩欄的舊列與手動列顯示既有說明。
+ * 新匯入列預設使用帳單原文；摘要與備註各有獨立的使用者版本。
+ * 沒有完整原文的舊列才退讀共用的舊 note；信用卡帳本另有自己的用途。
  * @param {any} transaction
  * @returns {{summary: string, note: string}}
  */
 export function cashflowDescriptionLines(transaction) {
-  if (typeof transaction?.bankSummary === 'string' && typeof transaction?.bankNote === 'string') {
-    return { summary: transaction.bankSummary, note: transaction.bankNote };
-  }
+  const hasBankText = typeof transaction?.bankSummary === 'string' && typeof transaction?.bankNote === 'string';
+  return {
+    summary: typeof transaction?.summary === 'string' ? transaction.summary
+      : hasBankText ? transaction.bankSummary : (typeof transaction?.note === 'string' ? transaction.note : ''),
+    note: typeof transaction?.remark === 'string' ? transaction.remark : (hasBankText ? transaction.bankNote : ''),
+  };
+}
 
-  return { summary: typeof transaction?.note === 'string' ? transaction.note : '', note: '' };
+/** 批次替換以帳單原文為準；舊列／手動列沒有原文時才用目前顯示文字。 @param {any} transaction @param {'summary'|'remark'} part */
+export function cashflowTextKey(transaction, part) {
+  const hasBankText = typeof transaction?.bankSummary === 'string' && typeof transaction?.bankNote === 'string';
+  if (hasBankText) return part === 'summary' ? transaction.bankSummary : transaction.bankNote;
+  const lines = cashflowDescriptionLines(transaction);
+  return part === 'summary' ? lines.summary : lines.note;
 }
 
 // ---- 上傳銀行對帳單：密碼欄的告知文案（依模式分流）----

@@ -142,6 +142,7 @@
 - `lib/schema.js`（`refundOf`／`dir` 進 `FIELD_SCHEMA` 但**不**進 `WRITABLE_FIELDS`）
 - `lib/secret-fields.js`（projectAccount 機密投影——**與雲端領域多重命中**）〔籃C 補搬點名檔〕
 - `lib/services/bank-import.js`（`applyLearnedBankToDb`／`reconcileBankTxAccountNames`／`txDirection`）
+- `lib/services/cashflow-text.js`（摘要／備註原文替換與既有交易原子傳播）
 - `lib/services/categories.js`（`effectiveTree`）
 - `lib/services/health-check.js`
 - `lib/services/ib-sync.js`
@@ -198,6 +199,7 @@
 - `test/card-last-four.test.js`（helper／後綴 builder 行為題＋行級接線掃描）
 - `test/cashflow-bank-upload.test.js`（跨版式疑似重複的預覽文案與接線——**與雲端多重命中**）〔疑似重複提醒（2026-08-12）〕
 - `test/cashflow-forest-ui.test.js`
+- `test/cashflow-text-rules.test.js`（摘要／備註分開套用、未來匯入與原文不變）
 - `test/cd-split.test.js`（定存分開列管：解析 kind/period／cdKey 建戶與精確更新／到期不動／matchAccount 護欄／預覽＝套用／對帳閘跳過定存列）〔疑似重複提醒（2026-08-12）〕
 - `test/codex-r10.test.js`（types/server 類＝**多重命中**）〔籃C 補搬點名檔〕〔帳號 UI／型別／直接考題〕
 - `test/debit-card-ledger-http.test.js`（Stage 5b：單筆 DELETE 守門）

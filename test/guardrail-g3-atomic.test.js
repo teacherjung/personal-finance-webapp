@@ -87,7 +87,7 @@ test('PUT /transactions/:id applyAll（銀行）：同方向同鑰匙一起改�
   assert.equal(r.applied.skipped, 1, '出帳方向不符→略過');
   const after = await GET('/transactions');
   const in2 = after.find(t => t.id === 'in2'), out1 = after.find(t => t.id === 'out1');
-  assert.equal(in2.type, 'income'); assert.equal(in2.category, '工作'); assert.equal(in2.note, '家教費');
+  assert.equal(in2.type, 'income'); assert.equal(in2.category, '工作'); assert.equal(in2.note, '進帳B');
   assert.equal(out1.type, 'expense'); assert.equal(out1.category, '其他'); assert.equal(out1.subcategory, '未分類');   // 出帳原封不動
 });
 
@@ -156,8 +156,9 @@ test('applyLearnedBankToDb 是純的：改傳入的 db 物件、但不自己 sav
   db.learnedBank = { k1: { type: 'income', category: '工作', subcategory: '鐘點', name: '家教費' } };
   const r = applyLearnedBankToDb(db, 'k1');
   assert.equal(r.changed, 1);
-  assert.equal(db.transactions.find(t => t.id === 'in1').note, '家教費', '傳入 db 被改');
-  assert.equal((await getDb()).transactions.find(t => t.id === 'in1').note, '進帳', '未落檔：磁碟上仍是原 note');
+  assert.equal(db.transactions.find(t => t.id === 'in1').category, '工作', '傳入 db 的分類被改');
+  assert.equal(db.transactions.find(t => t.id === 'in1').note, '進帳', '文字仍原樣');
+  assert.equal((await getDb()).transactions.find(t => t.id === 'in1').category, '其他', '未落檔：磁碟上仍是原分類');
 });
 
 

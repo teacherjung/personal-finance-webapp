@@ -39,30 +39,30 @@ test('bankKeyOf：有帳號時，描述文字不影響鑰匙（同帳號＝同�
 });
 
 // ---------- learnFromBankEdit（編輯時學） ----------
-test('learnFromBankEdit：source:bank → 記 type/分類；這次改了 note 才記自訂顯示名', () => {
+test('learnFromBankEdit：只學金流與分類，不再把舊收支說明學成顯示名', () => {
   const db = { learnedBank: {} };
   learnFromBankEdit(db,
     { source: 'bank', bankKey: 'CD轉入|#806****1206', type: 'income', category: '工作', subcategory: '鐘點', note: 'William 家教費' },
     { note: 'CD轉入・ATM 806****1206' });
   assert.deepEqual(db.learnedBank['CD轉入|#806****1206'],
-    { type: 'income', category: '工作', subcategory: '鐘點', name: 'William 家教費' });
+    { type: 'income', category: '工作', subcategory: '鐘點' });
 });
-test('learnFromBankEdit：note 沒改 → 只記分類、不動 name', () => {
+test('learnFromBankEdit：note 沒改 → 記分類', () => {
   const db = { learnedBank: {} };
   learnFromBankEdit(db, { source: 'bank', bankKey: 'k', type: 'expense', category: '生活', subcategory: '外食', note: 'x' }, { note: 'x' });
   assert.deepEqual(db.learnedBank['k'], { type: 'expense', category: '生活', subcategory: '外食' });
 });
-test('learnFromBankEdit：改名成空 → 清除自訂名', () => {
+test('learnFromBankEdit：舊名稱留底相容，但不再由編輯動作更新', () => {
   const db = { learnedBank: { k: { type: 'income', category: '其他', name: '舊名' } } };
   learnFromBankEdit(db, { source: 'bank', bankKey: 'k', type: 'income', category: '其他', subcategory: '', note: '' }, { note: '舊名' });
-  assert.deepEqual(db.learnedBank['k'], { type: 'income', category: '其他', subcategory: '' });
+  assert.deepEqual(db.learnedBank['k'], { type: 'income', category: '其他', subcategory: '', name: '舊名' });
 });
-test('learnFromBankEdit：清空自訂說明 → 回復預設自動名（autoNote）＋清學習名（使用者定 2026-07-21）', () => {
+test('learnFromBankEdit：舊說明清空時仍補回相容欄，但不再改文字學習', () => {
   const db = { learnedBank: { k: { type: 'income', category: '其他', name: '小明還錢' } } };
   const item = { source: 'bank', bankKey: 'k', type: 'income', category: '其他', subcategory: '', note: '', autoNote: '轉帳存入・ATM 對方' };
   learnFromBankEdit(db, item, { note: '小明還錢' });
   assert.equal(item.note, '轉帳存入・ATM 對方', '清空→回復 autoNote');
-  assert.ok(!db.learnedBank['k']?.name, '清空→學習的自訂名清掉');
+  assert.equal(db.learnedBank['k']?.name, '小明還錢', '舊名稱留底但不再生效');
 });
 test('learnFromBankEdit：舊資料無 autoNote → 從 bankRef 尾兩段反解回復自動名', () => {
   const db = { learnedBank: { k: { type: 'income', category: '其他', name: '自訂' } } };
@@ -120,14 +120,14 @@ const btx = (o) => ({ acctSuffix: '3301', acctMasked: '900100****3301', date: '2
 const parsed = (txns) => ({ accounts: [], accountCurrency: { '900100****3301': 'TWD' }, transactions: txns });
 const baseDb = () => ({ transactions: [], accounts: [{ id: 'a', name: '台新 3301', type: 'cash', currency: 'TWD', accountNo: '900100****3301' }], learnedBank: {}, settings: {} });
 
-test('匯入：學過的鑰匙 → 套用學過的 type/分類/自訂名，蓋過關鍵字規則，並存 bankKey', () => {
+test('匯入：學過的鑰匙只套用 type/分類，舊 name 不再覆蓋文字', () => {
   const db = baseDb();
   db.learnedBank['CD轉入|#806-00204127****1206'] = { type: 'income', category: '工作', subcategory: '鐘點', name: 'William 家教費' };
   const r = importBankTxToDb(db, parsed([btx({ summary: 'CD轉入', note: 'ATM 806-00204127****1206', direction: 'in', amount: 24600 })]));
   assert.equal(r.imported, 1);
   const t = db.transactions.at(-1);
   assert.equal(t.type, 'income'); assert.equal(t.category, '工作'); assert.equal(t.subcategory, '鐘點');
-  assert.equal(t.note, 'William 家教費');
+  assert.equal(t.note, t.autoNote, '舊相容欄用自動文字，不重播已學名稱');
   assert.equal(t.bankKey, 'CD轉入|#806-00204127****1206');
 });
 test('匯入：沒學過 → 落關鍵字規則（原行為不變）', () => {
@@ -204,14 +204,14 @@ test('端到端：匯入→編輯(學)→重匯 自動套用（改一次、記�
   importBankTxToDb(db, parsed([btx({ summary: '轉帳存入', note: 'ATM 007-99901572****2074', direction: 'in', amount: 5000 })]));
   const t = db.transactions.at(-1);
   assert.equal(t.category, '其他');   // 關鍵字預設：轉帳存入→收入/其他/其他收入
-  // 使用者改成 內轉/內轉入、取名「小珍還錢」
+  // 使用者改成 內轉/內轉入；舊 note 改名不再變成銀行學習規則
   learnFromBankEdit(db, { ...t, type: 'transfer', category: '內轉', subcategory: '內轉入', note: '小珍還錢' }, t);
   // 下個月同對象再匯入（清掉舊的模擬新帳單）
   db.transactions = [];
   importBankTxToDb(db, parsed([btx({ summary: '轉帳存入', note: 'ATM 007-99901572****2074', direction: 'in', amount: 3000 })]));
   const t2 = db.transactions.at(-1);
   assert.equal(t2.type, 'transfer'); assert.equal(t2.category, '內轉'); assert.equal(t2.subcategory, '內轉入');
-  assert.equal(t2.note, '小珍還錢');
+  assert.equal(t2.note, t2.autoNote);
 });
 
 test('方向護欄：學過的「收入」規則遇到同鑰匙的「出帳」→ 不套用，落關鍵字規則（絕不把出帳當收入，對抗審查 2026-07-21）', () => {
@@ -244,25 +244,25 @@ test('學過的「交割」子分類是方向中性 → 不被改成內轉出/�
   assert.equal(t.type, 'transfer'); assert.equal(t.subcategory, '交割');   // 保留交割，不因方向改成內轉出
 });
 
-test('learnFromBankEdit｜改了 note → 逐字記為自訂顯示名（銀行 note 靜態、刻意不做 auto 自我修剪）', () => {
+test('learnFromBankEdit｜改了舊 note 仍只記金流與分類', () => {
   const db = { learnedBank: {} };
   learnFromBankEdit(db, { source: 'bank', bankKey: 'CD轉入|#806****1206', type: 'income', category: '工作', subcategory: '鐘點', note: 'William 家教費' }, { note: 'x' });
-  assert.equal(db.learnedBank['CD轉入|#806****1206'].name, 'William 家教費');
+  assert.equal(db.learnedBank['CD轉入|#806****1206'].name, undefined);
 });
-test('learnFromBankEdit｜真自訂名保留摘要前綴＋提到對方帳號 → 不被誤清（對抗審查 r2 false-prune 回歸）', () => {
+test('learnFromBankEdit｜舊 note 即使包含摘要與帳號，也不成為文字規則', () => {
   const db = { learnedBank: {} };
   learnFromBankEdit(db,
     { source: 'bank', bankKey: '轉帳支取|#288810****3047', type: 'expense', category: '養育', subcategory: '贍養費', note: '轉帳支取・付給前妻288810****3047的養育費' },
     { note: '轉帳支取・轉入288810****3047養育費' });
-  assert.equal(db.learnedBank['轉帳支取|#288810****3047'].name, '轉帳支取・付給前妻288810****3047的養育費');   // 逐字保留、不因反推鑰匙相同被誤清
+  assert.equal(db.learnedBank['轉帳支取|#288810****3047'].name, undefined);
 });
 
-test('預覽：套用學過的分類與自訂名，並標 learned:true', () => {
+test('預覽：套用學過的分類但不重播舊 name，仍標 learned:true', () => {
   const db = baseDb();
   db.learnedBank['轉帳存入|#007-99901572****2074'] = { type: 'transfer', category: '內轉', subcategory: '內轉入', name: '小珍還錢' };
   const { rows } = previewBankTxForDb(db, parsed([btx({ summary: '轉帳存入', note: 'ATM 007-99901572****2074', direction: 'in', amount: 5000 })]));
   assert.equal(rows[0].type, 'transfer'); assert.equal(rows[0].category, '內轉');
-  assert.equal(rows[0].note, '小珍還錢'); assert.equal(rows[0].learned, true);
+  assert.notEqual(rows[0].note, '小珍還錢'); assert.equal(rows[0].learned, true);
   assert.equal(rows[0].bankKey, '轉帳存入|#007-99901572****2074');
 });
 
@@ -306,9 +306,9 @@ test('listLearnedBank：攤成陣列並把鑰匙拆成可讀的摘要/對方（#
   const list = await listLearnedBank();
   assert.equal(list.length, 2);
   const a = list.find(x => x.key.startsWith('CD轉入'));
-  assert.equal(a.summary, 'CD轉入'); assert.equal(a.counterparty, '806-00204127****1206'); assert.equal(a.name, 'William 家教費');
+  assert.equal(a.summary, 'CD轉入'); assert.equal(a.counterparty, '806-00204127****1206'); assert.equal(a.name, undefined);
   const b = list.find(x => x.key.startsWith('媒體轉入'));
-  assert.equal(b.summary, '媒體轉入'); assert.equal(b.counterparty, '基金配息群益主權'); assert.equal(b.name, '');
+  assert.equal(b.summary, '媒體轉入'); assert.equal(b.counterparty, '基金配息群益主權'); assert.equal(b.name, undefined);
 });
 test('deleteLearnedBank：刪指定鑰匙、其他不動；不存在的鑰匙安全略過', async () => {
   const db = await getDb();
@@ -343,7 +343,7 @@ test('applyLearnedBankToExisting：把學過的規則套到所有既有同鑰匙
   assert.equal(r.changed, 2);
   const after = (await getDb()).transactions;
   const t1 = after.find(t => t.id === 't1');
-  assert.equal(t1.type, 'transfer'); assert.equal(t1.category, '內轉'); assert.equal(t1.subcategory, '交割'); assert.equal(t1.note, '基金申購');   // 有自訂名 → 覆蓋
+  assert.equal(t1.type, 'transfer'); assert.equal(t1.category, '內轉'); assert.equal(t1.subcategory, '交割'); assert.equal(t1.note, '原文1');
   assert.equal(after.find(t => t.id === 't3').type, 'income', '別鑰匙不動');
   assert.equal(after.find(t => t.id === 'm1').type, 'income', '手動來源不動');
 });
@@ -377,7 +377,7 @@ test('applyLearnedBankToExisting：逐筆方向護欄——同鑰匙進帳/出�
   assert.equal(r.changed, 1); assert.equal(r.skipped, 1);   // 只進帳被套；出帳方向不符略過
   const after = (await getDb()).transactions;
   const inTx = after.find(t => t.id === 'in1'), outTx = after.find(t => t.id === 'out1');
-  assert.equal(inTx.type, 'income'); assert.equal(inTx.category, '工作'); assert.equal(inTx.note, '家教費');
+  assert.equal(inTx.type, 'income'); assert.equal(inTx.category, '工作'); assert.equal(inTx.note, '進帳');
   assert.equal(outTx.type, 'expense'); assert.equal(outTx.category, '其他'); assert.equal(outTx.subcategory, '未分類');   // 出帳原封不動
 });
 test('applyLearnedBankToExisting：內轉規則套到同鑰匙進帳與出帳 → 子分類各依本筆方向（in→內轉入、out→內轉出）', async () => {
