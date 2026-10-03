@@ -189,7 +189,7 @@ check 'F. 契約標題含連結（GitHub 的 anchor 會不一樣）' 紅
 
 # ── 標題形式：會產生 anchor、卻不在原本掃描範圍裡的四種（Codex #384 r14）──
 # 共同的傷害：**搶走正式標題的裸 anchor**，正式那節被 GitHub 改成 `…-1`，
-# AGENTS 的索引連結就默默指到別的地方——而畫面上完全看不出來。
+# 同步點索引連結就默默指到別的地方——而畫面上完全看不出來。
 
 mutate 'R. 同名 #### 搶走 anchor（Codex r14 實證）' <<'PY'
 import pathlib

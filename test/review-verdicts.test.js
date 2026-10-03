@@ -39,7 +39,7 @@ test('套件範本與規矩本文要寫下「只有同一位能解除」與自�
   //    不剝的話，把整段規則包進 `<!-- -->` 就能讓「文件寫了」變成假的——
   //    而這支 PR 自己新增的固定維度第 2 條講的就是這件事，我在自己的考題裡違反了它。
   // 切換前這一題讀 AGENTS.md 的「取聯集，不取最後一則」原句與 `🤖 <角色>｜來源：` 格式行；那一節已隨
-  // 切換日拿掉，正本改成套件範本（標頭行逐字）＋RULES F4／F5（規矩），AGENTS 附則只指路。
+  // 切換日拿掉，正本改成套件範本（標頭行逐字）＋RULES F4／F5（規矩），docs/project-collaboration.md 附則只指路。
   const strip = (/** @type {string} */ s) => s.replace(/<!--[\s\S]*?-->/g, '');
   const tmpl = strip(readFileSync(join(ROOT, 'templates/verdict-header.md'), 'utf8'));
   assert.ok(tmpl.includes('🤖 <角色識別值>｜來源：<來源字串>｜審 `<短版本碼>`｜r<輪次>｜結論：<通過｜需修改後再審｜不可合併>'),

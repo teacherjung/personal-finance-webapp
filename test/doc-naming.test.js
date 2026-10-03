@@ -93,7 +93,7 @@ const DOCS = {
   'PROJECT.md': { readers: 'all', title: '個人理財中心（榮祥森）— 專案共同記憶' },
   'README.md': { readers: 'all', title: '個人理財中心' },
   // 協作套件 ai-collab-kit 的三份根目錄文件（搬家第 2 步放進來；2026-09-17 切換日起生效：協作規矩正本＝RULES.md，
-  // AGENTS.md 只留本專案附則；舊的 REVIEW-AND-MERGE.md／COLLAB-MAP.md 同日刪除）
+  // 當時 AGENTS.md 只留本專案附則；舊的 REVIEW-AND-MERGE.md／COLLAB-MAP.md 同日刪除）
   'RULES.md': { readers: 'all', title: '協作規矩本文' },
   'MACHINES.md': { readers: 'all', title: '機器索引' },
   'PROJECT-SETTINGS.md': { readers: 'all', title: '專案設定' },

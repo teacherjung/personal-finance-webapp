@@ -1,7 +1,7 @@
 /**
  * 「不准有藏身處」考題（2026-08-03，Codex #387 r4 Medium 之後補）
  *
- * 病因：AGENTS.md 立了規則「沒用到的程式直接刪」，同一天我卻在 `.gitignore` 加了
+ * 病因：當時 AGENTS.md 立了規則（現於 docs/development-workflow.md）「沒用到的程式直接刪」，同一天我卻在 `.gitignore` 加了
  * `/retired/`、在 `eslint.config.js` 加了 `retired/**` 豁免——**一邊說不准藏，
  * 一邊把藏身處做得比刪除更順手**。規則於是變成裝飾：機制在反方向使力。
  *
@@ -22,7 +22,7 @@
  *
  * ⚠️ **這道閘抓不到什麼（誠實劃界）**：
  *   - 它只看這兩個檔案。死程式碼**沒有**被忽略、大方躺在 `lib/` 裡，這道閘看不見
- *     （那是人的判斷，AGENTS.md 的規則管，本檔不假裝能機械判斷）。
+ *     （那是人的判斷，docs/development-workflow.md 的規則管，本檔不假裝能機械判斷）。
  *   - 它不判斷豁免「合不合理」，只判斷**有沒有人偷偷改**。理由要人寫在下面的註解裡。
  *   - `.gitignore` 只比對 repo 根目錄這一份；子目錄若另有 `.gitignore`，本檔看不到。
  *   - `.git/info/exclude`、`core.excludesFile` 這種**不在版控裡**的忽略機制看不到，

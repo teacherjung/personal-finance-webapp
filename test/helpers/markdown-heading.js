@@ -43,7 +43,7 @@
 /**
  * 第 i 行開啟的 ATX 標題層級；不是 ATX 標題回 0。
  * ⚠️ 井號後面一定要接空白、tab 或行尾——`#348（2026-08-02 合併）…` 這種「井號緊接數字」
- * 是 AGENTS.md 的真實內文（而且就坐在鏈最嚴格的那一段裡），少了這個條件就是當場假紅。
+ * 是切換日前 AGENTS.md 的真實內文（當時坐在鏈最嚴格的那一段裡），少了這個條件就是當場假紅。
  * @param {string[]} arr @param {number} i
  */
 export function headingAt(arr, i) {
