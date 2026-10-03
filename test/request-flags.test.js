@@ -172,7 +172,7 @@ test('掃描集合的遞迴：子目錄裡的 .js 也要進得來（路由目錄
 });
 
 /** 本族開關名：新開關要加進來，這道網才看得到它。 */
-const FLAG_NAMES = ['force', 'dryRun', 'reset', 'clearAll', 'clearBrand', 'applyAll', 'stream', 'useAi'];
+const FLAG_NAMES = ['force', 'dryRun', 'reset', 'clearAll', 'clearBrand', 'applyAll', 'applySameSummary', 'applySameRemark', 'stream', 'useAi'];
 
 /** `lib/routes/` 底下遞迴的每一支 .js（相對路徑）。 @param {URL} dir @param {string} [prefix] @returns {string[]} */
 function routeFiles(dir, prefix = '') {

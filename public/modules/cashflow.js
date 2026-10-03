@@ -12,7 +12,7 @@ import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
 import { fileToBase64 } from './file-util.js';
 import { deriveMonths, deriveYears, fallbackMonth, monthNumbersForYear, monthNumberOptionsHtml, yearOptionsHtml } from './month-select.js';
 import { openModalShell } from './modal-shell.js';
-import { cashflowDateLabel, cashflowDescriptionLines, cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_SUBMIT_LABEL, BANK_UPLOAD_BUSY_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankApplyLabel, bankApplyDoneText, bankSimilarWarningHtml, bankSimilarTagHtml, bankSkipSimilarOptionHtml, bankCardLedgerNote, bankBatchCountText, bankBatchDeleteConfirmText } from './cashflow-model.js';
+import { cashflowDateLabel, cashflowDescriptionLines, cashflowTextKey, cashflowMonthSummary, cashflowPeriodLabel, bankUploadGate, runBankUpload, REMEMBER_PW_LABEL, openWhenOnPage, BANK_UPLOAD_FILE_LABEL, BANK_UPLOAD_SUBMIT_LABEL, BANK_UPLOAD_BUSY_LABEL, bankPreviewFootnote, bankBlockedWarningHtml, bankApplyLabel, bankApplyDoneText, bankSimilarWarningHtml, bankSimilarTagHtml, bankSkipSimilarOptionHtml, bankCardLedgerNote, bankBatchCountText, bankBatchDeleteConfirmText } from './cashflow-model.js';
 import { selectOptionsHtml, effectiveSelectValue, subcategoryOptionsHtml } from './form-options.js';
 import { gateSummaryHtml } from './reconcile-summary.js';
 import { snapshotUpload, previewBody, applyBody, runAiFallback, shouldOfferAi, shouldAskBeforeSend, aiErrorText, isAiTicketDeadCode, aiConsentBodyHtml, aiPreviewBadgeHtml, recipePreviewBadgeHtml, AI_CONSENT_TITLE, AI_CONSENT_SUBMIT_LABEL, AI_CONSENT_BUSY_LABEL, AI_PREVIEW_LOST_TEXT } from './ai-consent.js';   // AI 同意路線（P1b-2）：判準與文案的家
@@ -52,12 +52,13 @@ export async function renderCashflow() {
 
   const th = thBuilder(listSort);
   // 所選月份摘要（內轉不進收入/支出加總，只影響帳戶間流動——與後端 derive.computeCashflow 同口徑）
-  const { monthRows, income, expense, net } = cashflowMonthSummary(all, monthFilter);
+  const { monthRows, income, expense, transfer, net } = cashflowMonthSummary(all, monthFilter, Array.isArray(transferRes) ? transferRes : []);
+  const netTone = net >= 0 ? 'pos' : 'neg';
   const periodLabel = cashflowPeriodLabel(monthFilter);
   // 篩選金流後再排序
   const filteredRows = monthRows.filter(t => flowFilter === 'all'
     || (flowFilter === 'transfer' ? t.type === 'transfer' : t.type === flowFilter));
-  // 這頁的「收支說明」第一行是帳單原始摘要；排序鍵也必須跟畫面看見的文字一致。
+  // 這頁的「摘要＋備註」第一行是帳單原始摘要；排序鍵也必須跟畫面看見的文字一致。
   const sortableRows = listSort.key === 'note'
     ? filteredRows.map(t => ({ ...t, note: cashflowDescriptionLines(t).summary }))
     : filteredRows;
@@ -84,18 +85,19 @@ export async function renderCashflow() {
         <div class="cashflow-summary-grid">
           <div class="cashflow-stat" data-kind="income"><h3>收入</h3><div class="stat sm pos">${wan(income)}</div></div>
           <div class="cashflow-stat" data-kind="expense"><h3>支出</h3><div class="stat sm neg">${wan(expense)}</div></div>
-          <div class="cashflow-stat" data-kind="net"><h3>結餘</h3><div class="stat sm ${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : ''}${wan(net)}</div></div>
+          <div class="cashflow-stat" data-kind="transfer"><h3>內轉 <small>只計轉出</small></h3><div class="stat sm">${wan(transfer)}</div></div>
+          <div class="cashflow-stat" data-kind="net" data-tone="${netTone}"><h3>結餘</h3><div class="stat sm ${netTone}">${net >= 0 ? '+' : ''}${wan(net)}</div></div>
         </div>
       </section>
 
       <section class="cashflow-controls" aria-label="銀行收支篩選">
         <div class="cashflow-control">
           <label for="yearSel">年份</label>
-          <select id="yearSel">${yearOptionsHtml(years, selectedYear, esc)}</select>
+          <div class="cashflow-select"><select id="yearSel">${yearOptionsHtml(years, selectedYear, esc)}</select><span class="cashflow-select-arrow" aria-hidden="true">${icon('chevron-down', 14)}</span></div>
         </div>
         <div class="cashflow-control">
           <label for="monthSel">月份</label>
-          <select id="monthSel">${monthNumberOptionsHtml(monthsInYear, selectedMonth, esc)}</select>
+          <div class="cashflow-select"><select id="monthSel">${monthNumberOptionsHtml(monthsInYear, selectedMonth, esc)}</select><span class="cashflow-select-arrow" aria-hidden="true">${icon('chevron-down', 14)}</span></div>
         </div>
         <div class="cashflow-control cashflow-flow-control">
           <span class="cashflow-control-label">金流</span>
@@ -105,10 +107,10 @@ export async function renderCashflow() {
 
       <section class="cashflow-ledger-section" aria-labelledby="cashflow-ledger-title">
         <div class="cashflow-ledger-head">
-          <div class="cashflow-ledger-title"><h2 id="cashflow-ledger-title">收支明細</h2><span aria-live="polite">${rows.length} 筆</span><button type="button" class="info-link" id="noteNamingInfo">「收支說明」是什麼？</button></div>
+          <div class="cashflow-ledger-title"><h2 id="cashflow-ledger-title">收支明細</h2><span aria-live="polite">${rows.length} 筆</span></div>
         </div>
         <div class="tbl-wrap cashflow-ledger">
-          <table><thead><tr>${th('date', '日期')}${th('account', '銀行帳戶')}${th('note', '收支說明')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
+          <table><thead><tr>${th('date', '日期')}${th('account', '銀行帳戶')}${th('note', '摘要＋備註')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
           <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty"><div class="cashflow-empty-state"><img src="assets/guide-return-neutral.webp" alt=""><div><strong>${esc(periodLabel)}尚無銀行收支</strong><span>可用右上角「記一筆」手動新增，或上傳銀行對帳單。</span></div></div></td></tr>`}</tbody></table>
         </div>
       </section>
@@ -116,7 +118,6 @@ export async function renderCashflow() {
   `;
 
   byId('addCf').onclick = () => openCashflowForm(null, accounts);
-  byId('noteNamingInfo').onclick = openNoteNamingInfo;   // 預覽與明細同名但用途不同，就地講清楚
   byId('uploadBank').onclick = () => openBankUpload();
   { const bb = byId('bankBatches'); if (bb) bb.onclick = () => openBankBatchManager(); }
   byId('yearSel').onchange = (e) => {
@@ -190,16 +191,6 @@ function subOptionsFor(flow, parent, cur = '') {
 // 上傳窗的連點鎖＝模組層級（不掛在按鈕元素上：月份／金流篩選會同路由重繪整頁、
 // 換掉 #uploadBank 元素，掛在元素上的鎖會跟著蒸發——審查 r3 實測兩顆新舊按鈕各開一窗）。
 let bankUploadBusy = false;
-
-// 就地解釋（使用者鐵則）：預覽是匯入判讀用的整理後白話；明細改為帳單原始摘要／備註兩行。
-function openNoteNamingInfo() {
-  openInfo('「收支說明」是什麼？', `
-    <p><strong>銀行匯入：</strong>收支明細第一行顯示帳單「摘要」原文，第二行顯示帳單「備註」原文，方便直接與帳單核對。</p>
-    <p><strong>預覽窗：</strong>匯入前仍顯示 app 整理後的白話，讓你先判斷每一筆交易；它不會取代明細裡保留的帳單原文。</p>
-    <p><strong>舊資料：</strong>如果當時尚未分開保存兩欄，第一行顯示既有收支說明，第二行顯示「—」；不從內部去重資料推測帳單原文。</p>
-    <p><strong>手動記帳：</strong>第一行顯示你輸入的說明，第二行以「—」表示沒有帳單備註。</p>
-  `, { size: 'md' });
-}
 
 function openBankUpload() {
   // 為什麼開窗前要先問模式、為什麼有連點鎖與切頁作廢＝runBankUpload／bankUploadGate 的註解
@@ -360,7 +351,6 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   // 交易明細預覽（**全部即將匯入的筆數**，William 2026-08-12：只給前 12 筆看不出這次會匯入什麼；
   // 表格自帶捲動，筆數多也不會把窗撐爆）。已匯入過的重複筆不列（它們不會再進帳本），只在上面計數。
   const flowCls = (/** @type {string} */ t) => t === 'income' ? 'pos' : t === 'transfer' ? 'muted' : 'neg';
-  const flowLbl = (/** @type {string} */ t) => t === 'income' ? '收入' : t === 'transfer' ? '內轉' : '支出';
   // ⚠️ **外幣也要排除**（r1#2）：正式匯入對非 TWD 直接跳過（bank-import 的 importBankTxToDb），
   //    把它算進「會匯入的全部內容」＝畫面說會進 N 筆、實際只進 N−外幣筆數，使用者會以為漏記。
   const previewTx = (tx.rows || []).filter((/** @type {any} */ x) => !x.duplicate && !x.foreign);
@@ -378,15 +368,22 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
     <p class="muted" style="margin:8px 0 18px;font-size:12px">將更新 ${willUpdate} 個、新建 ${willCreate} 個帳戶（反映在「資產配置」）。</p>
 
     <div class="section-title">交易明細</div>
-    <p class="muted" style="margin-bottom:8px">收入 <b class="pos">${c.income || 0}</b> 筆・支出 <b class="neg">${c.expense || 0}</b> 筆・內轉 <b>${c.transfer || 0}</b> 筆${c.duplicate ? `・重複略過 ${c.duplicate} 筆` : ''}。內轉（帳戶互轉、證券劃撥）不計入收支。金流與分類是自動判斷的，匯入後可在收支列表逐筆改。</p>
+    <p class="bank-preview-flow-counts"><span class="pos">收入 <b>${c.income || 0}</b> 筆</span>・<span class="neg">支出 <b>${c.expense || 0}</b> 筆</span>・<span class="bank-preview-transfer-count">內轉 <b>${c.transfer || 0}</b> 筆</span></p>
     ${c.similar ? bankSimilarWarningHtml(c.similar) : ''}
-    ${previewTx.length ? `<div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>日期</th><th>帳戶</th><th>收支說明</th><th>金流・分類</th><th class="num">金額</th></tr></thead>
-    <tbody>${previewTx.map((/** @type {any} */ x) => `<tr>
-      <td>${esc(x.date)}</td><td class="muted">${esc(String(x.account || '').slice(0, 10))}</td>
-      <td class="muted">${x.similar ? bankSimilarTagHtml() : ''}${x.learned ? '<span class="flow-tag" title="用你之前教過的分類／名稱自動套用">已學</span> ' : ''}${esc(String(x.note || x.summary || ''))}</td>
-      <td><span class="flow-tag ${flowCls(x.type)}">${flowLbl(x.type)}</span> ${esc(x.category || '（不分類）')}${x.subcategory ? '・' + esc(x.subcategory) : ''}</td>
-      <td class="num ${flowCls(x.type)}">${money(x.amount)}</td>
-    </tr>`).join('')}</tbody></table></div>` : ''}
+    ${previewTx.length ? `<div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>日期</th><th>銀行帳戶</th><th>摘要＋備註</th><th>分類</th><th class="num">金額</th></tr></thead>
+    <tbody>${previewTx.map((/** @type {any} */ x) => {
+      const description = cashflowDescriptionLines(x);
+      const descriptionTitle = [description.summary, description.note].filter(Boolean).join('｜');
+      const learnedBadge = x.learned ? '<span class="flow-tag" title="用你之前教過的金流與分類自動套用">已學</span>' : '';
+      const amountSign = x.type === 'income' ? '+' : x.type === 'transfer' ? '' : '−';
+      return `<tr>
+        <td class="nowrap">${esc(cashflowDateLabel(x.date))}</td>
+        <td class="muted nowrap cashflow-account-cell" title="${esc(x.account || '')}">${esc(x.account || '—')}</td>
+        <td class="muted cashflow-description-cell"><div class="cf-note" title="${esc(descriptionTitle)}"><span class="cf-note-summary">${x.similar ? bankSimilarTagHtml() : ''}${x.similar ? ' ' : ''}${learnedBadge}${learnedBadge ? ' ' : ''}${esc(description.summary || '—')}</span><span class="cf-note-remark">${esc(description.note || '—')}</span></div></td>
+        <td>${esc(x.category || '（不分類）')}${x.subcategory ? '<span class="muted">・' + esc(x.subcategory) + '</span>' : ''}</td>
+        <td class="num nowrap ${flowCls(x.type)}">${amountSign}${money(x.amount)}</td>
+      </tr>`;
+    }).join('')}</tbody></table></div>` : ''}
     <p id="bankPreviewFootnote" class="${previewTx.length ? 'muted' : 'empty'}"${previewTx.length ? ' style="font-size:11px;margin-top:6px"' : ''}>${esc(bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate, foreign: c.foreign, similar: c.similar, skipSimilarChecked: !!c.similar }))}</p>
     ${bankCardLedgerNote(/** @type {any} */ (r).cardLedger) ? `<p class="muted" style="font-size:11px;margin-top:6px">${esc(bankCardLedgerNote(/** @type {any} */ (r).cardLedger))}</p>` : ''}
 
@@ -504,21 +501,41 @@ function openCashflowForm(tx, accounts = [], all = []) {
   // 內轉＝全部同類可套；收入/支出＝同方向（或方向不明的舊資料，交給後端護欄判）者才算
   const applicable = tx?.type === 'transfer' ? siblings : siblings.filter(x => { const d = dirOf(x); return d == null || d === txDir; });
   const propagable = applicable.length;
+  const description = tx ? cashflowDescriptionLines(tx) : { summary: '', note: '' };
+  const summaryKey = tx ? cashflowTextKey(tx, 'summary') : '';
+  const remarkKey = tx ? cashflowTextKey(tx, 'remark') : '';
+  const sameTextCount = (part, key) => key.trim() ? (all || []).filter(x => x.id !== tx.id && !isCardTx(x)
+    && cashflowTextKey(x, part) === key).length : 0;
+  const sameSummaryCount = tx ? sameTextCount('summary', summaryKey) : 0;
+  const sameRemarkCount = tx ? sameTextCount('remark', remarkKey) : 0;
   openForm({
     title: tx ? '編輯收支' : '記一筆收支',
     fields: [
       { key: 'flow', label: '金流', type: 'select', options: [
         { value: 'income', label: '收入' }, { value: 'expense', label: '支出' }, { value: 'transfer', label: '內轉（帳戶互轉）' }], default: initFlow },
-      { key: 'date', label: '存提日', type: 'date', required: true, default: todayStr() },
+      { key: 'date', label: '日期', type: 'date', required: true, default: todayStr() },
       { key: 'account', label: '銀行帳戶', type: 'select', options: accountOptions(accounts, tx?.account) },
+      { key: 'amount', label: '金額', type: 'number', required: true, placeholder: '0' },
       { key: 'category', label: '分類', type: 'select', options: [] },       // onMount 依金流連動
       { key: 'subcategory', label: '子分類', type: 'select', options: [] },   // onMount 依分類連動
-      { key: 'amount', label: '金額', type: 'number', required: true, placeholder: '0' },
-      { key: 'note', label: '收支說明', type: 'text', full: true, placeholder: '例：房租、William 鐘點、統一發票中獎' },
-      ...(propagable ? [{ key: 'applyAll', label: `同時套用到其他 ${propagable} 筆同類（同摘要＋對方帳號）`, type: 'checkbox', full: true }] : []),
+      { key: 'summary', label: '摘要', type: 'text', full: true, required: !tx, placeholder: '例：房租、薪水、利息' },
+      ...(summaryKey.trim() ? [{ key: 'applySameSummary', label: `相同摘要是否一起修改（目前 ${sameSummaryCount} 筆）`, type: 'checkbox', full: true }] : []),
+      { key: 'remark', label: '備註', type: 'text', full: true, placeholder: '可留空' },
+      ...(remarkKey.trim() ? [{ key: 'applySameRemark', label: `相同備註是否一起修改（目前 ${sameRemarkCount} 筆）`, type: 'checkbox', full: true }] : []),
+      ...(propagable ? [{ key: 'applyAll', label: `將金流與分類套用到其他 ${propagable} 筆同類（摘要、備註不包含）`, type: 'checkbox', full: true }] : []),
     ],
-    values: tx ? { ...tx, flow: initFlow } : {},
+    values: tx ? { ...tx, flow: initFlow, summary: description.summary, remark: description.note } : {},
     onMount: (/** @type {any} */ root) => {
+      for (const key of ['summary', 'remark']) {
+        root.querySelector('#f_' + key)?.parentElement?.classList.add('cashflow-text-divider');
+      }
+      for (const select of root.querySelectorAll('#modalForm select')) {
+        const wrap = document.createElement('div');
+        wrap.className = 'cashflow-select';
+        select.before(wrap);
+        wrap.append(select);
+        wrap.insertAdjacentHTML('beforeend', `<span class="cashflow-select-arrow" aria-hidden="true">${icon('chevron-down', 14)}</span>`);
+      }
       const flowSel = root.querySelector('#f_flow');
       const catSel = root.querySelector('#f_category');
       const subSel = root.querySelector('#f_subcategory');
@@ -540,18 +557,30 @@ function openCashflowForm(tx, accounts = [], all = []) {
     onSubmit: async (data) => {
       const flow = data.flow;
       const type = flow === 'income' ? 'income' : flow === 'transfer' ? 'transfer' : 'expense';
-      const body = {
-        type, date: data.date, account: data.account || '', note: data.note || '',
+      /** @type {Record<string, any>} */ const body = {
+        type, date: data.date, account: data.account || '',
         category: flow === 'transfer' ? '內轉' : (data.category || ''),
         subcategory: data.subcategory || '', amount: data.amount,
       };
+      if (!tx || typeof tx.summary === 'string' || data.summary !== description.summary) body.summary = data.summary || '';
+      if (!tx || typeof tx.remark === 'string' || data.remark !== description.note) body.remark = data.remark || '';
       if (tx) {
         // 同類一起改（Q2乙）原子化（護欄 G3）：勾了就把 applyAll 併進 PUT，後端一次寫檔完成編輯（含學習）＋傳播——
         // 不再前端第二次呼叫（原本第二次失敗只能靠 try/catch 補救成「已儲存但套用失敗」的半套用狀態）
         if (data.applyAll && bankKey) body.applyAll = true;
+        if (data.applySameSummary && data.summary !== description.summary) body.applySameSummary = true;
+        if (data.applySameRemark && data.remark !== description.note) body.applySameRemark = true;
         const r = await api('/transactions/' + tx.id, { method: 'PUT', body });   // PUT 會觸發 learnFromBankEdit（銀行交易）＋同鑰匙傳播
-        if (r.applied) toast(`已儲存，並把其他 ${r.applied.changed} 筆同類一起改了${r.applied.skipped ? `（${r.applied.skipped} 筆方向不符，未動）` : ''}`);
-        else toast('已儲存');
+        // 舊版服務會靜默略過新欄位；HTTP 200 不代表摘要與備註真的存進去。
+        if (['summary', 'remark'].some(key => Object.hasOwn(body, key) && r?.[key] !== body[key])) {
+          throw new Error('摘要或備註未儲存；目前可能仍在使用舊版預覽，請開啟新版網址。');
+        }
+        const changes = [];
+        if (r.applied) changes.push(`分類同步 ${r.applied.changed} 筆${r.applied.skipped ? `（${r.applied.skipped} 筆方向不符）` : ''}`);
+        const hasBankOriginal = typeof tx.bankSummary === 'string' && typeof tx.bankNote === 'string';
+        if (r.appliedText && body.applySameSummary) changes.push(`摘要同步 ${r.appliedText.summary} 筆${hasBankOriginal ? '，未來相同帳單原文匯入也適用' : ''}`);
+        if (r.appliedText && body.applySameRemark) changes.push(`備註同步 ${r.appliedText.remark} 筆${hasBankOriginal ? '，未來相同帳單原文匯入也適用' : ''}`);
+        toast(changes.length ? `已儲存；${changes.join('；')}` : '已儲存');
       } else {
         await api('/transactions', { method: 'POST', body });
         toast('已儲存');

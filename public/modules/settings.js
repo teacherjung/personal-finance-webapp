@@ -118,8 +118,14 @@ export async function renderSettings() {
 
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-bottom:6px">銀行收支學習</h3>
-      <p class="muted" style="font-size:12px;margin-bottom:14px">你在收支頁改過的銀行交易分類／說明，系統會以「<b>摘要＋對方帳號</b>」記起來，未來匯入自動套用（改一次記一輩子）。這裡可以<b>檢視</b>教過哪些規則、<b>刪掉</b>教錯的（刪掉不影響已匯入的交易；下次匯入該對象就回到自動判斷）。</p>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">編輯銀行交易後，系統以帳單原始「<b>摘要＋對方帳號</b>」記住金流與分類；沒有對方帳號時改用原始備註。未來匯入同類交易、方向相容才會套用。刪除規則只影響未來匯入，不回改既有交易。</p>
       <div><button class="btn-ghost" id="manageBankLearnedBtn">${icon('history', 16) || ''}管理已學規則</button></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
+      <h3 style="margin-bottom:6px">摘要與備註套用</h3>
+      <p class="muted" style="font-size:12px;margin-bottom:14px">在銀行收支編輯時選擇「相同摘要」或「相同備註」一起修改，會分別更新現有紀錄，並記住帳單原文到新文字的對應。下次匯入相同原文也會套用；刪除對應只停止未來套用。</p>
+      <div><button class="btn-ghost" id="manageCashflowTextRulesBtn">${icon('history', 16) || ''}管理文字套用</button></div>
     </div>
 
 
@@ -456,6 +462,10 @@ export async function renderSettings() {
   byId('manageBankLearnedBtn').onclick = async () => {
     try { openBankLearnedManager(await api('/bank-learned')); }
     catch (err) { toast('讀取已學規則失敗：' + err.message, true); }
+  };
+  byId('manageCashflowTextRulesBtn').onclick = async () => {
+    try { openCashflowTextRulesManager((await api('/settings')).cashflowTextRules); }
+    catch (err) { toast('讀取文字套用規則失敗：' + err.message, true); }
   };
   byId('manageTransferSubsBtn').onclick = async () => {
     try { openTransferSubEditor(await api('/transfer-subcategories')); }
@@ -890,7 +900,7 @@ function openTransferSubEditor(list) {
 }
 
 // ---------- 銀行收支「真·學習」已學規則管理（使用者定 2026-07-21）----------
-// 一列＝一條「摘要＋對方帳號 → type/分類/顯示名」的學過規則。可檢視、逐條刪除（教錯的救援）。
+// 一列＝一條「摘要＋對方帳號 → type/分類」的學過規則。可檢視、逐條刪除（教錯的救援）。
 // 刪除只影響「下次匯入該對象」（回自動判斷），不動已匯入的交易。
 /** @param {any[]} list */
 // 規則卡（配方）管理面板（解析器優化 B1，2026-08-25）：學會的版面「看得到、刪得掉」＋畢業進度接上讀端。
@@ -940,17 +950,16 @@ function openBankLearnedManager(list) {
     const body = rows.map(r => `<tr>
       <td>${esc(r.summary)}${r.counterparty ? `<br><span class="muted" style="font-size:11px">→ ${esc(r.counterparty)}</span>` : ''}</td>
       <td><span class="flow-tag ${flowCls(r.type)}">${flowLbl(r.type)}</span> ${esc(r.category || '（不分類）')}${r.subcategory ? '・' + esc(r.subcategory) : ''}</td>
-      <td class="muted">${r.name ? esc(r.name) : '<span class="muted">（用原始說明）</span>'}</td>
       <td><button class="btn-danger btn-sm" data-del="${esc(r.key)}" title="刪除這條規則">${icon('trash', 15)}</button></td>
     </tr>`).join('');
     // 外殼歸戶（U3 擴大）：render() 每次重畫都重開外殼（刪除後就地重繪的既有行為不變）
     const { close } = openModalShell({
       title: '銀行收支學習', size: 'lg',
       bodyHtml: `
-        <p class="muted" style="font-size:12px;margin-bottom:10px">每一列是你教過的一條規則（摘要＋對方帳號 → 分類／顯示名）。刪掉只是讓下次匯入該對象回到自動判斷，<b>不影響</b>已經匯入的交易。</p>
+        <p class="muted" style="font-size:12px;margin-bottom:10px">每一列是你教過的一條金流與分類規則。刪除只影響下次匯入，不會回改既有紀錄。</p>
         <div class="tbl-wrap"><table>
-          <thead><tr><th>摘要／對方</th><th>金流・分類</th><th>顯示說明</th><th></th></tr></thead>
-          <tbody>${body || '<tr><td colspan="4" class="empty">還沒有學過任何規則。到收支頁改一筆銀行交易的分類／說明，就會自動學起來。</td></tr>'}</tbody>
+          <thead><tr><th>摘要／對方</th><th>金流・分類</th><th></th></tr></thead>
+          <tbody>${body || '<tr><td colspan="3" class="empty">還沒有學過任何規則。編輯銀行交易的金流或分類後，系統會記住判斷。</td></tr>'}</tbody>
         </table></div>
         <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>`,
     });
@@ -967,6 +976,41 @@ function openBankLearnedManager(list) {
     });
   };
   render(list || []);
+}
+
+/** 摘要與備註的未來匯入規則獨立於金流／分類學習；刪規則不改舊交易。 @param {any} rules */
+function openCashflowTextRulesManager(rules) {
+  const root = byId('modal-root');
+  const entries = /** @type {{part:'summary'|'remark',key:string,to:string}[]} */ (
+    /** @type {('summary'|'remark')[]} */ (['summary', 'remark']).flatMap(part =>
+      Object.entries(rules?.[part] || {}).map(([key, to]) => ({ part, key, to: String(to) }))));
+  const render = (/** @type {typeof entries} */ rows) => {
+    const body = rows.map((r, i) => `<tr>
+      <td>${r.part === 'summary' ? '摘要' : '備註'}</td>
+      <td style="overflow-wrap:anywhere">${esc(r.key)}</td>
+      <td style="overflow-wrap:anywhere">${r.to ? esc(r.to) : '（空白）'}</td>
+      <td><button class="btn-danger btn-sm" data-rule-index="${i}" title="停止未來套用">${icon('trash', 15)}</button></td>
+    </tr>`).join('');
+    const { close } = openModalShell({
+      title: '摘要與備註套用', size: 'lg',
+      bodyHtml: `<p class="muted" style="font-size:12px;margin-bottom:10px">這裡列的是帳單原文到你修改後文字的對應。刪除只停止未來匯入套用，已存紀錄不變。</p>
+        <div class="tbl-wrap"><table><thead><tr><th>欄位</th><th>原文</th><th>改成</th><th></th></tr></thead>
+        <tbody>${body || '<tr><td colspan="4" class="empty">還沒有文字套用規則。</td></tr>'}</tbody></table></div>
+        <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>`,
+    });
+    root.querySelector('[data-close]').onclick = close;
+    root.querySelectorAll('[data-rule-index]').forEach(btn => /** @type {HTMLElement} */ (btn).onclick = async () => {
+      const i = Number(/** @type {HTMLElement} */ (btn).dataset.ruleIndex);
+      const row = rows[i];
+      if (!row || !window.confirm(`停止未來匯入時將「${row.key}」自動改成「${row.to || '空白'}」嗎？已存紀錄不會改動。`)) return;
+      try {
+        await api('/cashflow-text-rules/delete', { method: 'POST', body: { part: row.part, key: row.key } });
+        toast('已停止未來套用');
+        render(rows.filter((_, at) => at !== i));
+      } catch (e) { toast('刪除失敗：' + /** @type {any} */ (e).message, true); }
+    });
+  };
+  render(entries);
 }
 
 // 孤兒學習條目：對不上任何現存交易的學習規則——刪過整批帳單、或改規則讓鑰匙搬家後留下的。

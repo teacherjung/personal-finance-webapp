@@ -716,6 +716,7 @@ const MANIFEST = {
       '帳戶完整帳號與餘額匯入',
       '帳單原文取法 origFromStmtRef',
       '帳單原文摘要與備註分兩欄留底',
+      '銀行收支可編輯摘要與備註',
       '機構名正規化與祖父比對形',
       '匯入對帳閘',
       '匯入密碼池',
@@ -747,6 +748,7 @@ const MANIFEST = {
       'lib/schema.js',
       'lib/secret-fields.js',
       'lib/services/bank-import.js',
+      'lib/services/cashflow-text.js',
       'lib/services/categories.js',
       'lib/services/health-check.js',
       'lib/services/ib-sync.js',   // #454：IB 現金帳戶那行小字的資料來源（只寫 balance、不寫 balanceAsOf）
@@ -803,6 +805,7 @@ const MANIFEST = {
       'test/card-last-four.test.js',
       'test/cashflow-bank-upload.test.js',   // 疑似重複的收支行為＋預覽文案（與雲端多重命中）
       'test/cashflow-forest-ui.test.js',
+      'test/cashflow-text-rules.test.js',
       'test/cd-split.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
       'test/codex-r10.test.js',
       'test/debit-card-ledger-http.test.js',   // Stage 5b：兩本帳互為條件的單筆 DELETE 守門（走正式 HTTP）
@@ -811,7 +814,7 @@ const MANIFEST = {
       'test/ib-cash-freshness.test.js',   // #454 r1：用真的 syncIb 釘住那句文案的前提
       'test/ledger-split-behavior.test.js',   // 批四 4A：兩頁分堆的行為考題（jsdom 載整張路由圖）
       'test/multi-currency-account.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
-      'test/note-naming.test.js',   // 名詞統一（William 2026-08-14；r1 事實修正）：預覽與收支頁統一「收支說明」＋誠實 ⓘ
+      'test/note-naming.test.js',   // 預覽與收支明細統一「摘要＋備註」，顯示值與帳單原文分開
       'test/parse-recipe-card.test.js',
       'test/parse-recipe-store.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
       'test/parse-recipe.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）

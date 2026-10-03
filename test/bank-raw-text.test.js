@@ -207,6 +207,20 @@ test('★所有權：兩欄不進 CRUD 白名單——一般 POST／PUT 帶著�
   assert.equal(Object.hasOwn(value, 'bankNote'), false, '★CRUD 剝掉 bankNote');
 });
 
+test('使用者備註可寫且不覆蓋帳單原文，清空與較長文字都能保存', () => {
+  assert.ok(WRITABLE_FIELDS.transactions.includes('remark'));
+  assert.equal(FIELD_SCHEMA.transactions.remark, 'str');
+  assert.ok(LONG_TEXT_FIELDS.transactions.includes('remark'));
+  assert.equal(lengthErrorOf('transactions', 'remark', '字'.repeat(300)), null);
+  const { value, errors } = pickWritable('transactions', {
+    remark: '', bankSummary: '偽造摘要', bankNote: '偽造備註',
+  });
+  assert.deepEqual(errors, []);
+  assert.equal(value.remark, '');
+  assert.equal(Object.hasOwn(value, 'bankSummary'), false);
+  assert.equal(Object.hasOwn(value, 'bankNote'), false);
+});
+
 test('登記：兩欄進 FIELD_SCHEMA（壞型別被剝除）與長內容名單（匯入原文不被短欄位上限誤傷）', () => {
   assert.equal(FIELD_SCHEMA.transactions.bankSummary, 'str');
   assert.equal(FIELD_SCHEMA.transactions.bankNote, 'str');

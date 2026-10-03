@@ -306,6 +306,7 @@
 | **IB 同步跨 await 的寫入安全**（Codex r3#1，高） | ——完整契約 → [契約：共用底層・跨 await 的寫入安全](docs/contracts/shared-foundation.md#跨-await-的寫入安全) |
 | **銀行收支「真·學習」的方向與內轉子分類**（Codex r13#2/#4） | ——完整契約 → [契約：收支記帳與匯入・銀行收支真學習的方向與內轉子分類](docs/contracts/income-expense.md#銀行收支真學習的方向與內轉子分類) |
 | **銀行交易的帳單原文＝ `bankSummary`／`bankNote` 兩欄**（Stage 2，使用者定 2026-08-22） | ——完整契約 → [契約：收支記帳與匯入・帳單原文摘要與備註分兩欄留底](docs/contracts/income-expense.md#帳單原文摘要與備註分兩欄留底) |
+| 銀行收支兩行文字與使用者選擇的「相同文字一起修改」（William 2026-10-02 裁示） | ——完整契約 → [契約：收支記帳與匯入・銀行收支可編輯摘要與備註](docs/contracts/income-expense.md#銀行收支可編輯摘要與備註) |
 | **機構名＝`lib/bank-alias.js` 的正規短名**（Stage 4，使用者 2026-08-20 排定「機構名別名對照表：台新／台新銀行／TAISHIN → 同一代碼」） | ——完整契約 → [契約：收支記帳與匯入・機構名正規化與祖父比對形](docs/contracts/income-expense.md#機構名正規化與祖父比對形) |
 | **「同類/同店一起改」＝單一原子指令**（護欄 G3，2026-07-22） | ——完整契約 → [契約：收支記帳與匯入・同類同店一起改是單一原子指令](docs/contracts/income-expense.md#同類同店一起改是單一原子指令) |
 | **停車費顯示包裝的觸發＝子類身分、非字面**（護欄 G4，2026-07-22；name/ID 分離） | ——完整契約 → [契約：收支記帳與匯入・停車費顯示包裝的觸發](docs/contracts/income-expense.md#停車費顯示包裝的觸發) |
@@ -335,7 +336,7 @@
 
 | 集合 | 使用者可寫（CRUD 白名單） | 服務層擁有（誰寫、不進白名單） | 唯讀/衍生 |
 |---|---|---|---|
-| `transactions` | date, type, category, subcategory, amount, account, note | **帳單匯入**（statement-import）：stmtRef, storeKey, source, importBatch, importedAt, autoCat, autoSub, stmtMonth, stmtDue, refundOf, isAdjustment（AI 帳單具名調整列，#529）；**銀行匯入**（bank-import）：ledger, source, dir, autoNote, bankRef, bankKey, bankSummary/bankNote（帳單原文留底，Stage 2）；ledger 亦由遷移寫 | — |
+| `transactions` | date, type, category, subcategory, amount, account, note, summary, remark（後兩欄也可由銀行匯入規則與明確選擇的同原文傳播寫入） | **帳單匯入**（statement-import）：stmtRef, storeKey, source, importBatch, importedAt, autoCat, autoSub, stmtMonth, stmtDue, refundOf, isAdjustment（AI 帳單具名調整列，#529）；**銀行匯入**（bank-import）：ledger, source, dir, autoNote, bankRef, bankKey, bankSummary/bankNote（帳單原文留底，Stage 2）；ledger 亦由遷移寫 | — |
 | `accounts` | name, type, class, currency, balance, accountNo（PII，前端可填、GET 剝成末 4 碼） | **balanceAsOf**（銀行對帳單「較新才覆蓋」的餘額參考日——**服務層寫、非 CRUD 白名單**，Codex r14#5：勿誤列成使用者可寫）、ibCashCur（IB 同步）、**bank**（開戶機構戳，P1a 機構維度——銀行匯入**新建**帳戶時蓋、比對成功不回填；matchAccount 憑它擋跨行誤配；FIELD_SCHEMA 驗字串（P1a r1#3）） | — |
 | `holdings` | symbol, name, layer, currency, quantity, price, avgCost, cost, quoteSymbol | source（IB 同步；`source:'ib'` 決定融資槓桿，假值會藏風險） | ⚠️`price` **多方合法寫**：使用者手動＋前端「更新報價」按鈕＋後端 D1 `refreshQuotesIfStale`（開 app 自動）——都合法，非違規 |
 | `watchlist` | symbol, name, targetPrice, currency, quoteSymbol, note | — | ⚠️`lastPrice`/`lastAt`＝**報價衍生**，目前**前端「更新報價」按鈕**寫（PUT）故**仍在白名單**。低風險（觀察清單不進淨值）。**待辦**：D-engine market-data 服務化後，把持股/觀察清單報價更新全移到後端（比照 D1），`lastPrice`/`lastAt`（＋或 `holdings.price`）退出白名單＝純服務擁有 |

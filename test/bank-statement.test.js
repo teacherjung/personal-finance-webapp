@@ -291,14 +291,17 @@ test('匯入｜寫進現金流帳本（ledger:cashflow、source:bank）；bankRe
 
 test('預覽交易｜統計 income/expense/transfer＋重複標記（已匯入的標 duplicate）', () => {
   const parsed = { bank: '台新', referenceDate: '2026-06-30', accounts: [{ suffix: '3302', masked: '900200****3302' }],
-    transactions: [btx({ summary: '存款息', direction: 'in', amount: 23, balance: 23 }), btx({ summary: 'CD提款', amount: 20000, balance: 100 })] };
+    transactions: [btx({ summary: '存款息', note: '合成利息備註', direction: 'in', amount: 23, balance: 23 }), btx({ summary: 'CD提款', amount: 20000, balance: 100 })] };
   // 先把第一筆的 bankRef 種進 db（模擬已匯過）
   const db0 = { accounts: [], transactions: [] };
   importBankTxToDb(db0, { ...parsed, transactions: [parsed.transactions[0]] });
   const pv = previewBankTxForDb(db0, parsed);
   assert.equal(pv.counts.duplicate, 1, '已匯過的存款息標 duplicate');
   assert.equal(pv.counts.expense, 1, 'CD提款算支出');
-  assert.ok(pv.rows.find(r => r.summary === '存款息').duplicate);
+  const interest = pv.rows.find(r => r.summary === '存款息');
+  assert.ok(interest.duplicate);
+  assert.equal(interest.bankSummary, '存款息', '預覽回應另帶帳單原始摘要');
+  assert.equal(interest.bankNote, '合成利息備註', '預覽回應另帶帳單原始備註');
 });
 
 // ---- stage 3 對抗審查補強 ----

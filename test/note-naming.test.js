@@ -1,19 +1,12 @@
-// 名詞統一（William 2026-08-14 拍板；r1/r2 兩輪事實修正後定案）：
-//
-// ⚠️ **r1 證偽了「摘要・備註」**：預覽欄內容不是帳單照抄——服務層會翻譯摘要
-// （「CD轉出」→「現金轉出」）、刪通路詞、整理備註。
-// ⚠️ **r2 證偽了我第一版的「同一份內容」**：預覽樣板對未學列讀的是生的 `x.summary`、
-// 匯入後保存的卻是整理後 `note`＝同名欄位、內容不同。修正＝樣板改讀 `x.note`
-// （服務層的 displayNote 與匯入保存的 noteText 是**同一條產生式**），預覽所見＝匯入所得。
-//
-// 2026-10-01 更新：兩處欄名仍叫「收支說明」，但內容刻意分工：預覽表顯示整理後的白話，
-// 收支明細改成兩行顯示帳單原始「摘要／備註」，方便逐字核對。
+// 名詞統一（William 2026-10-02 更新）：銀行預覽與收支明細都叫「摘要＋備註」。
+// 預覽顯示套用文字規則後會入帳的兩行；帳單原文另行留底。
+// 整理後的 `note` 仍供匯入與學習使用，不冒充帳單原文。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bankPreviewFootnote, bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml, bankCardLedgerNote } from '../public/modules/cashflow-model.js';
+import { bankPreviewFootnote, bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml, bankCardLedgerNote, cashflowDateLabel, cashflowDescriptionLines } from '../public/modules/cashflow-model.js';
 import { aiPreviewBadgeHtml } from '../public/modules/ai-consent.js';
 import { previewBankTxForDb, importBankTxToDb } from '../lib/services/bank-import.js';
 
@@ -34,10 +27,12 @@ function renderPreviewBody(/** @type {any} */ r) {
   return Function('r', 'esc', 'money', 'ACTION_LABEL', 'gateSummaryHtml',
     'bankBlockedWarningHtml', 'bankSimilarWarningHtml', 'bankSimilarTagHtml',
     'bankPreviewFootnote', 'aiPreviewBadgeHtml', 'recipePreviewBadgeHtml', 'bankCardLedgerNote',
+    'cashflowDateLabel', 'cashflowDescriptionLines',
     `${chunk}\n return body;`)(
     r, esc, String, { update: '更新餘額' }, () => '<div data-stub="gate"></div>',
     bankBlockedWarningHtml, bankSimilarWarningHtml, bankSimilarTagHtml,
-    bankPreviewFootnote, aiPreviewBadgeHtml, () => '', bankCardLedgerNote);
+    bankPreviewFootnote, aiPreviewBadgeHtml, () => '', bankCardLedgerNote,
+    cashflowDateLabel, cashflowDescriptionLines);
 }
 
 /** 外殼合成資料（rows 由各題自帶）。全部假值、零真實帳單內容。 */
@@ -47,16 +42,15 @@ const SHELL = Object.freeze({
 const wrap = (/** @type {any[]} */ rows) =>
   ({ ...SHELL, transactions: { counts: { expense: rows.length }, rows } });
 
-test('統一欄名｜預覽表與收支頁同叫「收支說明」，明細內文可拆成原始兩行', () => {
-  assert.match(src(), /<th>日期<\/th><th>帳戶<\/th><th>收支說明<\/th><th>金流・分類<\/th>/u,
-    '★預覽表欄名＝「收支說明」（與收支頁同名＝真正的統一）');
-  assert.match(src(), /th\('note', '收支說明'\)/u, '★收支頁欄名不變');
+test('統一欄名｜預覽表與收支頁都叫「摘要＋備註」，預覽固定五欄', () => {
+  assert.match(src(), /<th>日期<\/th><th>銀行帳戶<\/th><th>摘要＋備註<\/th><th>分類<\/th><th class="num">金額<\/th>/u,
+    '★預覽表＝日期、銀行帳戶、摘要＋備註、分類、金額');
+  assert.match(src(), /th\('note', '摘要＋備註'\)/u, '★收支頁欄名同步更新');
   assert.match(src(), /cashflowDescriptionLines\(t\)/u,
-    '★收支明細要透過兩行顯示函式讀帳單原始摘要與備註');
+    '★收支明細要透過兩行顯示函式讀可編輯文字，未設定時才讀帳單原文');
 });
 
-test('跨層｜預覽顯示的＝匯入後會保存的那份文字（走真的 previewBankTxForDb，不手塞想像值）', () => {
-  // r2 教訓：手工把「整理後文字」塞進 summary 是在驗自己的想像——跨層差異就是這樣漏掉的。
+test('跨層｜預覽保留原始摘要／備註，沒有文字規則時顯示相同原文', () => {
   const raw = { acctSuffix: '0001', acctMasked: '999900****0001', date: '2026-05-02',
     summary: 'CD轉出', direction: 'out', amount: 100, balance: null, note: '合成分行 0000123 Wei' };
   const db = { transactions: [], accounts: [], settings: {} };
@@ -67,41 +61,83 @@ test('跨層｜預覽顯示的＝匯入後會保存的那份文字（走真的 p
   assert.ok(row.note && row.note !== row.summary,
     `★前提自檢：整理後說明（${row.note}）必須≠原始摘要（${row.summary}）——相同的話本題什麼都證明不了`);
   assert.match(String(row.note), /現金轉出/u, '★「CD轉出」要被翻成白話（服務層既有行為）');
+  assert.equal(row.bankSummary, raw.summary, '★預覽回應另帶原始摘要');
+  assert.equal(row.bankNote, raw.note, '★預覽回應另帶原始備註');
   const html = renderPreviewBody(wrap([row]));
-  assert.ok(html.includes(String(row.note).replaceAll('&', '&amp;')) || html.includes(String(row.note)),
-    '★預覽格顯示的必須是整理後說明（row.note）');
-  assert.doesNotMatch(html, />CD轉出</u,
-    '★預覽格不可顯示生的摘要——預覽給人看「CD轉出」、匯入後帳本卻寫「現金轉出…」＝預覽在騙人');
-  // ⚠️ r4：題名說「＝匯入後保存」就要**真的呼叫寫入端**——只走預覽是在宣稱沒驗過的等式
-  //    （竄改 importBankTxToDb 的保存值，只走預覽的版本照樣綠）。
+  assert.match(html, />CD轉出<\/span>/u, '★預覽第一行顯示帳單原始摘要');
+  assert.match(html, />合成分行 0000123 Wei<\/span>/u, '★預覽第二行顯示帳單原始備註');
+  assert.doesNotMatch(html, />現金轉出[^<]*<\/span>/u, '★整理後說明不可取代帳單原文');
+  assert.match(html, />5\/2<\/td>/u, '★預覽日期只顯示月／日');
+  // 整理後說明仍是正式匯入保存的相容欄；沒有文字規則時，預覽顯示帳單原文。
   const db2 = { transactions: [], accounts: [], settings: {} };
   importBankTxToDb(db2, {
     bank: '台新', accounts: [], accountCurrency: { '999900****0001': 'TWD' }, transactions: [raw] });
   assert.equal(db2.transactions.length, 1, '寫入端要真的落一筆');
   assert.equal(db2.transactions[0].note, row.note,
-    '★匯入後保存的 note 必須逐字＝預覽顯示的那份——兩邊各自產生但同一條產生式，走散＝預覽在騙人');
+    '★既有整理後 note 的保存語意不因預覽改顯示原文而改變');
 });
 
-test('行為｜已學列顯示自訂名＋「已學」標籤；沒有 note 的列退回 summary（fail-open 顯示）', () => {
+test('行為｜已學列保留「已學」標籤，文字規則後的摘要與備註優先顯示', () => {
   const html = renderPreviewBody(wrap([
-    { date: '2026-05-03', account: '合成帳戶', summary: '轉帳支出', note: '合成鋼琴課', learned: true, type: 'expense', amount: 200, category: '教育' },
+    { date: '2026-05-03', account: '合成帳戶', summary: '規則後摘要', remark: '規則後備註', note: '合成鋼琴課', bankSummary: '原始支出', bankNote: '原始備註', learned: true, type: 'expense', amount: 200, category: '教育' },
     { date: '2026-05-04', account: '合成帳戶', summary: '合成無整理摘要', learned: false, type: 'expense', amount: 50, category: '（不分類）' },
   ]));
-  assert.match(html, />已學<\/span> 合成鋼琴課/u, '★已學標籤要貼著自訂名（在預覽窗）');
+  assert.match(html, />已學<\/span> 規則後摘要/u, '★已學標籤保留，後面接真正會入帳的摘要');
+  assert.match(html, />規則後備註<\/span>/u);
+  assert.doesNotMatch(html, />原始支出<\/span>|>原始備註<\/span>|>合成鋼琴課<\/span>/u,
+    '★原文與舊整理後說明不可蓋掉會入帳的文字');
   assert.match(html, /合成無整理摘要/u, '★note 缺席的列退回 summary——留白比顯示原文更糟');
 });
 
-test('就地解釋｜預覽與收支明細的內容分工講清楚', () => {
+test('收支明細標題不再開「摘要＋備註」說明窗', () => {
   const s = src();
-  assert.match(s, /byId\('noteNamingInfo'\)\.onclick = openNoteNamingInfo;/u, '按鈕要綁上');
-  const start = s.indexOf('function openNoteNamingInfo()');
-  assert.ok(start >= 0);
-  const body = s.slice(start, s.indexOf('\n}', start));
-  assert.match(body, /預覽窗/u, '★要點出預覽窗顯示的是另一種用途');
-  assert.match(body, /整理後的白話/u, '★預覽仍然顯示整理後文字');
-  assert.match(body, /第一行.*「摘要」原文/u, '★收支明細第一行的來源要講清楚');
-  assert.match(body, /第二行.*「備註」原文/u, '★收支明細第二行的來源要講清楚');
-  assert.match(body, /舊資料/u, '★舊資料沒有原文欄時的退路要誠實說明');
-  assert.match(body, /手動記帳/u, '★手動記帳沒有銀行原文時也要說明');
-  assert.doesNotMatch(body, /同名欄位＝同一份內容/u, '★兩處內容已不相同，不可留下舊宣稱');
+  assert.doesNotMatch(s, /id="noteNamingInfo"|function openNoteNamingInfo\(/u);
+  assert.doesNotMatch(s, /「摘要＋備註」是什麼？/u);
+});
+
+test('預覽統計只留收入、支出、內轉筆數，三種顏色各自對應', () => {
+  const html = renderPreviewBody({ ...SHELL, transactions: {
+    counts: { income: 9, expense: 13, transfer: 7, duplicate: 2 }, rows: [],
+  } });
+  const line = html.match(/<p class="bank-preview-flow-counts">([\s\S]*?)<\/p>/u)?.[1];
+  assert.ok(line, '預覽統計要有獨立的三色行');
+  assert.equal(line.replace(/<[^>]*>/gu, ''), '收入 9 筆・支出 13 筆・內轉 7 筆');
+  assert.match(line, /class="pos">收入 <b>9<\/b> 筆<\/span>/u);
+  assert.match(line, /class="neg">支出 <b>13<\/b> 筆<\/span>/u);
+  assert.match(line, /class="bank-preview-transfer-count">內轉 <b>7<\/b> 筆<\/span>/u);
+  assert.match(read('public/styles.css'), /\.bank-preview-transfer-count \{ color: var\(--cashflow-neutral\); \}/u);
+});
+
+test('編輯收支使用「日期」與銀行收支同款下拉箭頭', () => {
+  const s = src();
+  assert.match(s, /\{ key: 'date', label: '日期', type: 'date'/u);
+  assert.match(s, /root\.querySelectorAll\('#modalForm select'\)/u);
+  assert.match(s, /className = 'cashflow-select'/u);
+  assert.match(s, /icon\('chevron-down', 14\)/u);
+});
+
+test('編輯窗的摘要與備註分隔線只套用桌機，使用現有淡色細線', () => {
+  const css = read('public/styles.css');
+  assert.match(css, /@media \(min-width: 901px\) \{\s*\.cashflow-text-divider \{[^}]*border-top: 1px solid var\(--line\);/u);
+});
+
+test('銀行帳單原文留底，編輯後的備註優先顯示；清空也不會復活原文', () => {
+  const bank = { note: '整理後名稱', bankSummary: 'CD轉出', bankNote: '轉入帳號 1234' };
+  assert.deepEqual(cashflowDescriptionLines(bank), { summary: 'CD轉出', note: '轉入帳號 1234' });
+  assert.deepEqual(cashflowDescriptionLines({ ...bank, remark: '自己寫的備註' }),
+    { summary: 'CD轉出', note: '自己寫的備註' });
+  assert.deepEqual(cashflowDescriptionLines({ ...bank, remark: '' }),
+    { summary: 'CD轉出', note: '' });
+  assert.deepEqual(cashflowDescriptionLines({ note: '手動記帳說明' }),
+    { summary: '手動記帳說明', note: '' });
+});
+
+test('銀行收支的摘要與備註各自可編輯，手動記帳分別顯示兩行', () => {
+  const bank = { note: '舊收支說明', bankSummary: 'CD轉出', bankNote: '轉入帳號 1234' };
+  assert.deepEqual(cashflowDescriptionLines({ ...bank, summary: '現金轉出', remark: '付房租' }),
+    { summary: '現金轉出', note: '付房租' });
+  assert.deepEqual(cashflowDescriptionLines({ summary: '房租', remark: '十月租金' }),
+    { summary: '房租', note: '十月租金' });
+  assert.deepEqual(cashflowDescriptionLines({ note: '舊手動說明', remark: '補充備註' }),
+    { summary: '舊手動說明', note: '補充備註' }, '舊資料保留相容讀取');
 });
