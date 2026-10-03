@@ -412,8 +412,8 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
   const { fileURLToPath } = await import('node:url');
   // ⚠️ 一定要 fileURLToPath：這個 repo 的路徑含空白與中文，`new URL(...).pathname` 會回百分號編碼
   const ROOT = pjoin(pdirname(fileURLToPath(import.meta.url)), '..');
-  // ⚠️ 為什麼不能只掃字面 `fetch(`（#335 複審 important，William 2026-08-01 裁決修）：可注入 fetchImpl 正是
-  // AGENTS 要求的可測試慣例，字面掃描下全部隱形。r1–r5 對抗共實測十四種「日常寫法」繞法，全數入矩陣。
+  // ⚠️ 為什麼不能只掃字面 `fetch(`（#335 複審 important，William 2026-08-01 裁決修）：可注入 fetchImpl 是
+  // 下方「外連寫法契約」涵蓋的寫法，只掃 fetch 呼叫字面就看不見它。r1–r5 對抗共實測十四種「日常寫法」繞法，全數入矩陣。
   // 🏗️ **架構（r5 結構性收官）＝雙軌偵測**：手寫剝離器不可能完美（JS 詞法需要真 parser——巢狀模板、
   //   regex vs 除法…每輪都能再挖出一種）。與其追求完美，改變失敗方向：
   //   乾淨軌＝去註解後掃（正常判定）；**生掃軌＝原始碼直接掃（安全網）**。剝離器任何 bug 吃掉真程式碼
@@ -431,7 +431,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     '(^|[^.\\w])WebSocket\\b',                 // Node 22+ 內建全域（r6：不需 import 就能對外）
     '(?:\\.|\\?\\.)\\s*WebSocket\\b',            // globalThis.WebSocket 成員形（r19 繞法）
     '[\'"`]WebSocket[\'"`]',                    // computed 存取
-    'fetchImpl',                                // AGENTS 慣例
+    'fetchImpl',                                // 外連寫法契約的可注入形式
     '(?:\\.|\\?\\.)\\s*fetch\\b',               // 成員存取：globalThis.fetch／(globalThis).fetch／?.fetch／跨行（r4+r5）
     '[\'"`]fetch[\'"`]',                       // computed 存取
     `node:(?:${CORE_NET})\\b`,

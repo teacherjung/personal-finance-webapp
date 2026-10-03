@@ -257,7 +257,7 @@ William 於 `https://noteasy-wp1j.onrender.com` 實跑，九組全綠。關鍵�
   ①**上線前確認上傳端點有大小與解析上限**（C6 考題⑨會驗）
   ②官方修好的版本只在 SheetJS 自家的 registry（`https://cdn.sheetjs.com`）發佈，
   **要不要改用自家 registry 是需要你拍板的事**（會多一個非 npm 的相依來源）。
-  在你拍板之前，現況＝**記錄在案、不擋上線**（AGENTS.md 早就寫了這一條）。
+  在你拍板之前，現況＝**記錄在案、不擋上線**（此為當時的說明與舊路標；現行相依版本及處置見 docs/contracts/cloud-security.md「部署設定與版號單一真相」）。
 - **fast-xml-parser**：這個**有修**，但要升大版本。它只用來解析 **IBKR Flex XML**（你自己的報表），
   而且我們只**讀**不**寫** XML——那個 advisory 講的是 `XMLBuilder`（寫），**我們沒有用到**。
   所以風險實際上是零，但既然有修，建議**另開一支小 PR 升版＋跑回歸**，不要夾在階段 C 裡。
