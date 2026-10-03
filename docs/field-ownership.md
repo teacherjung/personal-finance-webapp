@@ -20,4 +20,3 @@
 | `portfolioSnapshots` / `ibTrades` / `dailyValues` / `stockFundamentals` / `snapshots` | —（`READONLY_COLLECTIONS`＋snapshots，前端只 GET；securityTrades 同屬 READONLY、見上列） | portfolioSnapshots・ibTrades＝IB 同步；dailyValues＝`snapshot.js recordDailyValue`（D0）；stockFundamentals＝SEC 官方資料快取（stock-fundamentals 服務）；snapshots＝`snapshot.js`（月快照） | 純服務寫、前端唯讀 |
 
 **改欄位所有權時**：搬進/搬出白名單都要想「這個值可信嗎」——使用者能捏造的值不可決定財務判準（槓桿/方向/帳本/學習鑰匙）。新增服務欄位一律補 `FIELD_SCHEMA` 型別、**不要**加進 `WRITABLE_FIELDS`（測試種假資料走 repo 直寫＝`server.test.js seedTx`，不可為了種資料把白名單加回去）。
-

@@ -97,4 +97,3 @@
 | 帳單匯入批次／事後整批改卡片 | ——完整契約 → [契約：收支記帳與匯入・帳單匯入批次與事後整批改卡片](contracts/income-expense.md#帳單匯入批次與事後整批改卡片) |
 | 帳單「自動學習」店名＋分類（`db.learnedCategories`＝{ `storeKey`(cleanStore後原名) → {category?,subcategory?,name?} }） | ——完整契約 → [契約：收支記帳與匯入・帳單自動學習店名與分類](contracts/income-expense.md#帳單自動學習店名與分類) |
 | **店家消費檔案**（收支列表點店名開彈窗；使用者定 2026-07-18） | ——完整契約 → [契約：收支記帳與匯入・店家消費檔案](contracts/income-expense.md#店家消費檔案) |
-
