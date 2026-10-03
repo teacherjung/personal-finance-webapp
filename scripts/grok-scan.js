@@ -18,7 +18,7 @@
 //
 // ## 用法（呼叫紀律；2026-09-17 自 AGENTS 舊「Grok 的邊界」節搬來，正本從此在這裡）
 //   node scripts/grok-scan.js --base <sha> --head <sha> --prompt <指示檔> [--out <輸出檔>]
-//   一律經這支跑；**不准手動啟動 grok 的 CLI、不在任何 repo 目錄啟動它**（在 repo 目錄啟動時它會自動讀規則書與 CLAUDE.md，
+//   一律經這支跑；**不准手動啟動 grok 的 CLI、不在任何 repo 目錄啟動它**（在 repo 目錄啟動時它會自動讀AGENTS.md 規則入口，
 //   而它的正式通道都在站外＝材料制；主目錄有 data/store.db，連在那裡啟動都算違規）。
 //   base／head 兩顆都寫死 SHA，不用 origin/main 這類會移動的名稱。
 //

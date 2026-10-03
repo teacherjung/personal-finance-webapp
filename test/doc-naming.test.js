@@ -82,8 +82,6 @@ const ROLE_NAMES = ['CODEX', 'CLAUDE', 'WILLIAM'];
  * **宣告**：每一份根目錄文件是給誰讀的。
  *
  * - `readers`: `'all'`＝三方都要照做；`'claude'`／`'codex'`＝只有那一方。
- * - `toolFixedName`: **工具規定的檔名**，改了就失效 ⇒ 不受「名字不可掛一方」那條限制。
- *   （William 2026-08-03 明確要求留這個例外。）
  * - `title`: **宣告目前的 H1**（必須以它開頭）。
  *   ⚠️ 它不是「從檔名推出來的規則」——`PROJECT.md` 的標題是中文的「專案共同記憶」，
  *   意思一致、字面不同，硬要求字面相符只會逼人改一個本來就對的標題。
@@ -92,13 +90,6 @@ const ROLE_NAMES = ['CODEX', 'CLAUDE', 'WILLIAM'];
  */
 const DOCS = {
   'AGENTS.md': { readers: 'all', title: 'AGENTS.md' },
-  'CLAUDE.md': {
-    readers: 'claude',
-    title: 'CLAUDE.md',
-    // ⚠️ 這個檔名是 Claude Code **工具自動載入**的固定名稱，改掉整份規則就不會被讀到。
-    //    它掛 Claude 的名字是**正確的**——它本來就只給 Claude 讀。
-    toolFixedName: true,
-  },
   'PROJECT.md': { readers: 'all', title: '個人理財中心（榮祥森）— 專案共同記憶' },
   'README.md': { readers: 'all', title: '個人理財中心' },
   // 協作套件 ai-collab-kit 的三份根目錄文件（搬家第 2 步放進來；2026-09-17 切換日起生效：協作規矩正本＝RULES.md，
@@ -112,15 +103,7 @@ const DOCS = {
 
 test('⭐ 三方都要照做的文件，名字不可以只掛一方（除非是工具規定的檔名）', () => {
   for (const [file, spec] of Object.entries(DOCS)) {
-    // ⚠️ **`toolFixedName` 只有 `CLAUDE.md` 能用**（Codex #387 r1）：
-    //    它現在其實用不到（`CLAUDE.md` 的 `readers` 是 `'claude'`，本來就跳過），
-    //    但留著會變成一個「未來任何共用文件都能自稱工具固定檔名」的後門。
-    if (spec.toolFixedName) {
-      assert.equal(file, 'CLAUDE.md',
-        `只有 CLAUDE.md 可以用 toolFixedName（那是 Claude Code 工具自動載入的固定檔名）。\n`
-        + `「${file}」不是——不要用這個旗標繞過「共用文件不可只掛一方」。`);
-    }
-    if (spec.readers !== 'all' || spec.toolFixedName) continue;
+    if (spec.readers !== 'all') continue;
     const upper = file.toUpperCase();
     for (const role of ROLE_NAMES) {
       assert.ok(!upper.includes(role),
@@ -128,7 +111,7 @@ test('⭐ 三方都要照做的文件，名字不可以只掛一方（除非是�
         + '⚠️ 起因：合併步驟原本寫在 `CODEX-REVIEW.md`，而 AGENTS.md 有 13 處叫**任何人**照它做——\n'
         + '   一個 Claude 照 CLAUDE.md 指示去讀 AGENTS.md，會被指到一份掛 Codex 名字的檔案。\n'
         + '   **名字會決定誰覺得「這關我的事」。**\n'
-        + `   如果它其實是工具規定的固定檔名（像 CLAUDE.md），請在 DOCS 標 toolFixedName: true。`);
+        + '   共用文件請使用不帶角色名稱的檔名。');
     }
   }
 });

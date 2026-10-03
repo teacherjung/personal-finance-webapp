@@ -1,6 +1,6 @@
 # 個股研究頁施工計畫
 
-> 狀態（2026-07-31 更新）：**P1–P5 與 F1–F4 已完工上線**（P 系列＝#268／#271／#277／#281／#283；F1＝#327、F2＝#328、F3＝#330、F4＝#335＋2026-07-30 補做高風險複審與修復 #357／#358／#359／#361）；**F5 頁籤接線已完工上線＝#341（2026-08-02 合併，含「誠實標示基本面單季期間」收官修正）；目前未完的是 F6 端到端收官**（2026-08-05 更新）。現行真相以 repo 程式與 AGENTS.md 同步點為準；本文件保留為當時的規劃紀錄。正式裁決與審查紀錄見 `docs/stock-research-page-rulings.md`。
+> 狀態（2026-07-31 更新）：**P1–P5 與 F1–F4 已完工上線**（P 系列＝#268／#271／#277／#281／#283；F1＝#327、F2＝#328、F3＝#330、F4＝#335＋2026-07-30 補做高風險複審與修復 #357／#358／#359／#361）；**F5 頁籤接線已完工上線＝#341（2026-08-02 合併，含「誠實標示基本面單季期間」收官修正）；目前未完的是 F6 端到端收官**（2026-08-05 更新）。現行真相以 repo 程式與 docs/sync-index.md 路由的同步點為準；本文件保留為當時的規劃紀錄。正式裁決與審查紀錄見 `docs/stock-research-page-rulings.md`。
 >
 > 角色分工（William 2026-07-24 更新）：Claude 主要實作 App、Codex 主要審核；Codex 在審核空檔可獨立製作本功能。審核永遠優先，本功能使用 Codex 獨立工作樹、獨立分支與獨立 PR，不與 Claude 共用未合併分支。
 >
@@ -192,7 +192,7 @@ test/stock-fundamentals.test.js          （未來）
 | `public/index.html` | 載入研究頁專用 CSS（若採獨立 CSS） | 和路由同一支 P4 |
 | `public/modules/portfolio-tables.js` | 個股代號變成入口 | 獨立 P5，最後才接 |
 | `public/modules/portfolio-research.js` | 舊摘要卡增加「詳細研究」入口 | P5 必須修改；兩邊讀同一筆 `research` |
-| `AGENTS.md` | 新模組邊界與同步點 | 功能落地的對應 PR 更新 |
+| `docs/sync-index.md` 及對應契約 | 新模組邊界與同步點 | 功能落地的對應 PR 更新 |
 | `PROJECT.md` | 進度與產品裁決 | 每段完成者更新；不要兩邊同時改 |
 
 ### 4. Claude 目前工作期間的禁止區
@@ -811,7 +811,7 @@ test/stock-research-entry.test.js
 - 使用 `encodeURIComponent`、`target="_blank"`、`rel="noopener"`。
 - 投資組合既有研究摘要卡保留並增加「詳細研究」入口；摘要卡與新頁讀同一筆 `research`。
 - 名稱、ETF、債券與其他按鈕不受影響。
-- 更新 AGENTS 模組邊界、同步點與 PROJECT 進度。
+- 更新 docs/sync-index.md 與對應契約的模組邊界、同步點及 PROJECT 進度。
 
 **這是 v1 收官 PR。**
 

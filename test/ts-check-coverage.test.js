@@ -1,5 +1,5 @@
 // @ts-check
-// 型別檢查的射程要有考題釘著：AGENTS「型別檢查」節說 jsconfig 是逐檔 opt-in（`checkJs:false`＋檔頭 `// @ts-check`），
+// 型別檢查的射程要有考題釘著：docs/project-overview.md「型別檢查」段說 jsconfig 是逐檔 opt-in（`checkJs:false`＋檔頭 `// @ts-check`），
 // 型別檢查那一關有沒有看某支檔，取決於它**被設定直接選入**（TypeScript 對 jsconfig 算出來的集合）或被選入的檔 import 進來、且檔頭有 TypeScript 認得的指令——沒人數就會漂。
 // 本題只守「直接選入」那一半：exclude 掉的目錄若仍被別的檔 import，`tsc` 照樣載入並檢查（Codex #598 r5 實測 lib/services）；本題會紅，因為守的是「這幾個目錄必須直接納入」這條政策，不是在證明 tsc 實跑集合。
 // 檔案集合**問 TypeScript 自己**（`parseJsonConfigFileContent`＝include 減 exclude 的實際結果），不自己展開 glob：
@@ -59,7 +59,7 @@ test('型別檢查射程：TypeScript 對 jsconfig 算出來的每一支 .js（l
   const files = programFiles().filter((f) => f.endsWith('.js') && tracked.has(f));
   // 集合有沒有靜靜縮水：這幾個目錄底下追蹤中的每一支 .js 都要在 TypeScript 算出來的集合裡——
   // include 被拿掉、遞迴 glob 換成單一檔、另加 exclude，都會在這裡紅（Grok #598 掃：「換成單一檔」「另加 exclude」這兩種舊版假綠；「拿掉 include」舊版本來就紅——Codex r5 抓到上一版用序數指錯）。
-  // test-doubles／prototype 2026-09-11 起納入（12 支、0 錯；William 裁「甲」；test/ 刻意不在，理由見 AGENTS「型別檢查」節）。
+  // test-doubles／prototype 2026-09-11 起納入（12 支、0 錯；William 裁「甲」；test/ 刻意不在，理由見 docs/project-overview.md「型別檢查」段）。
   for (const dir of ['lib/', 'public/', 'scripts/', 'test-doubles/', 'prototype/']) {
     const trackedUnder = [...tracked].filter((f) => f.startsWith(dir));
     assert.ok(trackedUnder.length > 0, `${dir} 底下 git 追蹤中找不到任何 .js——目錄搬了或路徑打錯，這題的對照組空了`);

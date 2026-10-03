@@ -135,7 +135,7 @@ test('CI 對草稿也要跑：ci.yml 生效行不准出現 draft（2026-08-29 �
     'ci.yml 的生效設定又出現 draft（草稿跳過？）——省錢的理由已隨 repo 公開消失，而「草稿不考」'
       + '的代價實測過：本機三關全在 macOS，Linux 才壞的東西要到轉 ready 才現形、每修一條'
       + '重拿一張「通過」＝燒審查輪。真有正當理由要在設定裡寫 draft 的話，改這題時必須連'
-      + ' RULES E3（草稿也跑）、AGENTS「本專案協作附則」的「自動守門的現況」與 docs/github-branch-protection-setup.md 一起改'
+      + ' RULES E3（草稿也跑）、docs/project-collaboration.md「本專案協作附則」的「自動守門的現況」與 docs/github-branch-protection-setup.md 一起改'
       + '——別留兩種相反答案並存。');
   // ⚠️ 本題的身分＝**防「不小心加回去」的絆線，不是防惡意 YAML 的安全閘**（Codex #526
   //    r1 中①→r2 中① 兩輪釐清出來的劃界）：安全不變量「能合併的 head 一定跑過真考卷」
@@ -252,5 +252,5 @@ test('CI：dev-machine 探照燈 job 還在、而且仍是 continue-on-error（�
 test('三關登記：settings.json 的 checks.commands 仍是 校對（typecheck）→糾察（lint）→考試（test）三道、順序不變', () => {
   const { checks } = JSON.parse(read('settings.json'));
   assert.deepEqual(checks.commands, [['npm', 'run', 'typecheck'], ['npm', 'run', 'lint'], ['npm', 'test']],
-    'checks.commands 變了——它是本機推送前鉤子與雲端上線 job 共用的唯一正本，少一道或換順序＝兩邊同時少跑；真要改，連本題與 AGENTS「本專案協作附則」的「自動守門的現況」那段一起改');
+    'checks.commands 變了——它是本機推送前鉤子與雲端上線 job 共用的唯一正本，少一道或換順序＝兩邊同時少跑；真要改，連本題與 docs/project-collaboration.md「本專案協作附則」的「自動守門的現況」那段一起改');
 });
