@@ -365,6 +365,9 @@ test('命名｜useAi 不可再叫「同意旗標」——那個名字誤示每�
   for (const f of ['server.js', 'lib/routes/statement.js', 'lib/services/bank-import.js',
     'public/modules/cashflow.js', 'public/modules/ai-consent.js',
     'docs/contracts/income-expense.md', 'AGENTS.md',
+    'docs/project-overview.md', 'docs/sync-index.md', 'docs/development-workflow.md',
+    'docs/money-guard-operations.md', 'docs/ui-conventions.md', 'docs/investment-semantics.md',
+    'docs/field-ownership.md', 'docs/project-collaboration.md',
     'docs/parser-generalization-plan.md']) {   // r5#2：現行規格也在射程（變更紀錄行用棄用標記）
     // ⚠️ r4：不可用「檔裡有標記就整檔豁免」——那是檔案級放行，標記後面再塞一個
     //    未標示的舊名照樣綠。**逐一出現**驗證：把合法的「舊名『同意旗標』」整串剝掉，

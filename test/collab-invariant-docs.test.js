@@ -1,11 +1,11 @@
-// PR 範本、AGENTS.md 與 CLAUDE.md 的幾句話：套件的協作欄位閘讀得到範本、AGENTS 不重述合併步驟、工作區方案的承重句。
+// PR 範本、共同入口與協作附則的幾句話：套件的協作欄位閘讀得到範本、共同入口與附則不重述合併步驟、工作區方案的承重句。
 //
 // ## 這個檔案現在守什麼（2026-09-18 搬家第 7 步之後）
 //
 // - **PR 範本**（`.github/pull_request_template.md`）：四個欄位行要在說明**開頭那一段**——套件閘只讀第一個特殊行之前
 //   （讀法只有一份＝`tools/markdown-effective.js`），寫在後面的欄位機器讀不到；範本原封不動送出去套件閘要擋、換成合法值要過。
-// - **AGENTS.md** 不可再出現舊的「五步驟合併」說法、也不可有把合併步驟串起來的摘要（摘要會落後）；
-//   「本專案協作附則」裡的工作區方案承重句（路徑、指令列、模型名）與 CLAUDE.md 那句 symlink 分工，用出現次數釘住。
+// - **共同入口 AGENTS.md 與協作附則 docs/project-collaboration.md** 不可再出現舊的「五步驟合併」說法、也不可有把合併步驟串起來的摘要（摘要會落後）；
+//   「本專案協作附則」裡的工作區方案承重句（路徑、指令列、模型名）與 AGENTS.md 那句 symlink 分工，用出現次數釘住。
 //
 // 唯一不變量「沒有任何一份產出，由寫它的人做正式複審與放行」的正本＝`RULES.md` A2；本檔不釘它的字面，
 // 只釘機器怎麼執行它的那一半（範本餵得進套件閘）。套件閘的行為題在套件自己的考題檔（`tests/check-collab-fields.test.js`）。
@@ -82,14 +82,14 @@ test('套件閘｜模板原封不動送出去也必須不通過；角括號換�
     '把範本的佔位字換成合法值仍然不通過——欄位行不在機器讀得到的那一段，或欄位行的形狀套件閘認不得');
 });
 
-// ── AGENTS.md 不可以重述合併步驟（重述的摘要會落後）─────────────────
+// ── 共同入口與協作附則不可以重述合併步驟（重述的摘要會落後）─────────────────
 
 test('舊的「五步驟合併」說法不可以再出現（掃法要夠廣——只掃三個字串已經漏掉一處）', () => {
   // ⚠️ 這題的第一版只掃三個固定字串，結果**漏掉 `五步驟＝確認審查結論…` 那種寫法**
   //    （Codex #379 r2 High②，同一種漂移的第三次）。改成掃「五步驟」出現在合併語境裡的**任何**形式。
-  // ⚠️ 2026-09-17 起只掃 AGENTS.md：合併程序那份文件已刪、正本搬去套件（合併＝`node tools/merge.js`，
+  // ⚠️ 2026-09-17 起掃 AGENTS.md；2026-10-03 起連搬出的協作附則一起掃：合併程序那份文件已刪、正本搬去套件（合併＝`node tools/merge.js`，
   //    它跑的閘登記在 settings.json 的 gates，幾道刻意不寫死）。
-  for (const f of ['AGENTS.md']) {
+  for (const f of ['AGENTS.md', 'docs/project-collaboration.md']) {
     const txt = read(f);
     for (const [i, line] of txt.split('\n').entries()) {
       // 「五步驟審查循環」是舊 AGENTS 那張審查循環表的名字（切換日起不在本檔），那種提法五步是對的——
@@ -105,18 +105,18 @@ test('舊的「五步驟合併」說法不可以再出現（掃法要夠廣—�
   }
 });
 
-test('AGENTS.md 不可以再有「重述合併步驟」的摘要（重述的摘要注定落後）', () => {
+test('共同入口與協作附則不可以再有「重述合併步驟」的摘要（重述的摘要注定落後）', () => {
   // Codex r1 High② 抓到一處、r2 High② 又抓到第二處——判準改成「有沒有把步驟串起來寫」，
   // 而不是「有沒有出現某個字串」。
-  const agents = read('AGENTS.md');
+  const agents = read('AGENTS.md') + '\n' + read('docs/project-collaboration.md');
   const arrowChains = agents.split('\n').filter((l) =>
     /gh pr merge/.test(l) && /→|->/.test(l));
   assert.deepEqual(arrowChains.map((l) => l.trim().slice(0, 100)), [],
-    'AGENTS.md 又出現把合併步驟串起來的摘要。\n'
+    '共同入口或協作附則又出現把合併步驟串起來的摘要。\n'
     + '附則刻意只寫合併指令與閘的登記位置（settings.json 的 gates），不重述步驟：摘要會落後，登記不會。');
 });
 
-// ── 工作區方案的承重句（AGENTS 附則＋CLAUDE.md）───────────────────
+// ── 工作區方案的承重句（協作附則＋共同入口）───────────────────
 
 test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出現次數（改任何一份複本都會紅）', () => {
   // 三代被打穿史：v1 關鍵字→覆寫假綠＋誤擋（r2）；v2/v3 解析式→位置顛倒／逃逸／重複-b／
@@ -124,26 +124,26 @@ test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出�
   // 同一句活兩處、改壞一處由另一處滿足 includes ⇒ v5 改**出現次數精確比對**。
   // ⇒ 特性不是缺陷：改這些指令或承重句＝必先來改本考題（變更必經考題）。
   // ⚠️ 2026-09-17 搬家第 5 步：合併程序與路由表兩份文件已刪、協作規矩正本＝RULES.md。本題只剩
-  //    AGENTS.md「本專案協作附則」裡真的還在的句子（路徑、指令列、模型名）與 CLAUDE.md 那句 symlink 分工；
+  //    docs/project-collaboration.md「本專案協作附則」裡真的還在的句子（路徑、指令列、模型名）與 AGENTS.md 那句 symlink 分工；
   //    以前釘在那兩份裡的備樹指令、歷史模型名、零次釘與第 6 題承重句全部拿掉——那些要嘛已不在本 repo 的活文字裡，
   //    要嘛由套件自己的考題守。
   // ⚠️ 誠實劃界：它證明「白名單句在兩份文件各出現規定次數」，證明不了「別處沒有另立
   //    覆寫段落」（歸審查制度）、也證明不了「執行者真的照做」（歸事後稽核與指派詞）。
-  const docs = { 'AGENTS.md': read('AGENTS.md'), 'CLAUDE.md': read('CLAUDE.md') };
+  const docs = { 'docs/project-collaboration.md': read('docs/project-collaboration.md'), 'AGENTS.md': read('AGENTS.md') };
   const count = (/** @type {string} */ hay, /** @type {string} */ needle) => hay.split(needle).length - 1;
   const PINS = [
-    ['AGENTS.md', '實作＝常設樹、審查＝拋棄式樹、絕不動主目錄', 1],
-    ['AGENTS.md', '`git fetch origin && git checkout -B codex/<分支> origin/main`', 1],
-    ['AGENTS.md', '功能分支（`git checkout -B codex/<分支> origin/main`）', 1],
-    ['AGENTS.md', '`/private/tmp/codex-review-pr<N>`／`/private/tmp/claude-review-pr<N>`', 1],
-    ['AGENTS.md', '-C "/private/tmp/codex-review-pr<N>"', 1],   // 發射審查的指令列裡那一處
-    ['AGENTS.md', '釘住受審 commit', 2],
-    ['AGENTS.md', '審查樹由實作者備與收，複審者不得自建 worktree', 1],
-    ['AGENTS.md', '由實作者備樹時建、收尾時 unlink，複審者不得自行建立／安裝／移除', 1],
-    // 審查模型＝William 的裁示（2026-09-07）。**這一列守的是「全檔出現幾次」，不是「出現在哪裡」**。
-    // 哪天換模型：把這一列改成新模型名、次數照附則實際次數——它買到的是：單純增刪任一個模型名一定會紅。
-    ['AGENTS.md', 'gpt-6-astra', 1],
-    ['CLAUDE.md', '正式審查的 symlink 一律由實作者備樹時處理', 1],
+    ['docs/project-collaboration.md', '實作＝常設樹、審查＝拋棄式樹、絕不動主目錄', 1],
+    ['docs/project-collaboration.md', '`git fetch origin && git checkout -B codex/<分支> origin/main`', 1],
+    ['docs/project-collaboration.md', '功能分支（`git checkout -B codex/<分支> origin/main`）', 1],
+    ['docs/project-collaboration.md', '`/private/tmp/codex-review-pr<N>`／`/private/tmp/claude-review-pr<N>`', 1],
+    ['docs/project-collaboration.md', '-C "/private/tmp/codex-review-pr<N>"', 1],   // 發射審查的指令列裡那一處
+    ['docs/project-collaboration.md', '釘住受審 commit', 2],
+    ['docs/project-collaboration.md', '審查樹由實作者備與收，複審者不得自建 worktree', 1],
+    ['docs/project-collaboration.md', '由實作者備樹時建、收尾時 unlink，複審者不得自行建立／安裝／移除', 1],
+    // 歷史審查模型＝William 的 2026-09-07 裁示；現行模型選法依 AGENTS C28。**這一列只守歷史模型名的出現次數，不守當輪模型**。
+    // 保留這顆釘是為了讓歷史句被增刪時可見；每輪是否真的選了最強模型與最高推理由發審者核對，這一列驗不到。
+    ['docs/project-collaboration.md', 'gpt-6-astra', 1],
+    ['AGENTS.md', '正式審查的 symlink 一律由實作者備樹時處理', 1],
   ];
   for (const [file, pin, expected] of PINS) {
     const got = count(docs[file], pin);

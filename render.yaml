@@ -28,7 +28,7 @@ services:
     # 仍可直連＝繞過 Cloudflare 的 DDoS／WAF／速率限制，邊緣層等於白裝。
     # ⚠️ 這同時是「限速的來源判定」能不能成立的前提：`app.set('trust proxy', 1)` 取
     #    X-Forwarded-For 的**最後一個**＝前面那層代理實際看到的來源。只要源站可直達，
-    #    那個值就變成攻擊者自己填的（見 AGENTS.md 速率限制那一列）。
+    #    那個值就變成攻擊者自己填的（見 docs/contracts/cloud-security.md「速率限制」節）。
     # ⚠️ Render 規定：要設 disabled，服務**至少要有一個 custom domain**（沒有就會設定失敗）。
     #    所以 C6 測試期先明寫 enabled（明寫＝以後不會「忘記有這回事」），
     #    C7 指好 DNS 的同一支 PR 裡改成下面註解那三行——`test/deploy-config.test.js` 會盯著兩者一起改。

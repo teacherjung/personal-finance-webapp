@@ -182,7 +182,7 @@ test('⓪共用字表的整張矩陣只餵釘指紋那一組（HOME＝本檔的�
   // 只斷言擋＝假綠）。只有真清單這一份：Claude 那一行釘了指紋、換不了清單，家族網本身的擋與不誤殺在 codex-global-hook ③ 的夾具那一輪真跑。
   // 名字像錢、掛在沒登記的連接器上（換了編號的下單工具、家族矩陣）＝尾句要是規則 3 那一句（當誤觸或冒名、立即回報裁示者）；
   // IMPERSONATION_TAIL 錨在結尾，對上它就不是登記制「看不出像錢」那一種尾句（那一種的逐字不抄，理由在 helper）。
-  // 換了編號之後的券商唯讀查詢（白名單那一族名字掛在新編號上）＝同樣被登記制擋——AGENTS「券商重新連線、編號換了」那一則的承重。
+  // 換了編號之後的券商唯讀查詢（白名單那一族名字掛在新編號上）＝同樣被登記制擋——docs/money-guard-operations.md「券商重新連線、編號換了」那一則的承重。
   /** @type {[string, string[], (name: string) => string, boolean][]} 組名、名字、期望的理由類別、是否要冒名那一句尾句 */
   const mustDeny = [
     ['FORBIDDEN_TOOLS', FORBIDDEN_TOOLS, () => 'denylist', true],

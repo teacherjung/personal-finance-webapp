@@ -4,7 +4,7 @@
 // ## 為什麼需要它
 //
 // `docs/contracts/` 的拆分做過三次，**一直沒有任何機械檢查**。
-// 實測：拆分省下的篇幅兩天之內被吃回去大半——AGENTS.md 的「一行索引」會慢慢長胖，
+// 實測：拆分省下的篇幅兩天之內被吃回去大半——同步點索引（現於 docs/sync-index.md）的「一行索引」會慢慢長胖，
 // 長到跟原本的整條規則一樣長，拆分就等於沒發生（更糟：同一條規則變成兩份，會各自漂）。
 //
 // ## r1／r2 連兩輪被打穿，根因是同一個
@@ -20,7 +20,7 @@
 //
 // 下面的 `MANIFEST` 是**手寫的真相**：每份契約有哪些規則、哪些責任檔。判準全部改成**精確集合相等**：
 //   ・契約檔裡的標題集合 **==** `rules ∪ exempt`（多一個少一個都紅——刪 marker 沒有用）
-//   ・`rules` 與 AGENTS 索引列 **雙向一一對應**（拆掉索引＝紅；索引指到不存在的規則＝紅）
+//   ・`rules` 與 docs/sync-index.md 索引列 **雙向一一對應**（拆掉索引＝紅；索引指到不存在的規則＝紅）
 //   ・README 領域小節的檔案集合 **==** `files`（精確路徑，不接受 basename 子字串）
 //   ・契約內文提到的 repo 路徑 **⊆** `files`（新提到一個檔就強迫更新 manifest）
 //
@@ -126,15 +126,15 @@ function read(p) {
   // ⚠️ **raw HTML block 也會吞掉標題**（Codex #384 r13）：`<pre>` `<div>` `<script>` `<table>`
   //    `<![CDATA[` `<? ?>` …CommonMark 有六類入口，把一整節包起來，GitHub 就不產生那個標題。
   //    Codex 給的完整性宣告：**「不改 `##` 那一行、只靠前後文吞掉它」的手段，就是 fence 與 raw HTML**。
-  //    這五個檔案現在**行首 HTML 是 0 行** ⇒ 一起關門，不要再逐類補。
+  //    當時那五個檔案量到**行首 HTML 是 0 行** ⇒ 一起關門，不要再逐類補。
   //    ⚠️ 這裡判的是**行首**。契約檔另有更嚴的一刀（連行「中」的 `<` 都不准，見 assertHeadingForm）——
-  //    AGENTS.md 刻意不吃那一刀：它合法地在行中寫 `<路徑>`／`<N>` 這種角括號佔位（切換日前還寫著結論標頭
+  //    RULE_DOCUMENTS 裡的共同入口與搬出文件刻意不吃那一刀：原 AGENTS.md 合法地在行中寫 `<路徑>`／`<N>` 這種角括號佔位（切換日前還寫著結論標頭
   //    `🤖 <角色>｜來源：…` 的格式範例，那個範例現在住 templates/verdict-header.md），
-  //    而它的 anchor 零消費者、索引列又是考題直接讀原始文字，藏不掉東西。
+  //    當時 AGENTS.md 的 anchor 零消費者、索引列是考題直接讀原始文字；本次沿用該界線到搬出文件，不宣稱所有新路標都沒有 anchor 消費者。
   //    （r21 我把嚴格版裝在這裡，當場擋掉 #385 那段範例——兩支各自全綠、試合併才紅。
   //      跟 r15 同一個錯：**門裝到不承重的地方，就只剩下誤擋**。）
   const html = raw.split('\n').findIndex((l) => /^\s*</.test(stripContainers(l)));
-  // ⚠️ **AGENTS.md 的同步點路由表本身承重**（Codex #384 r23 High③）：
+  // ⚠️ **同步點路由表本身承重（現於 docs/sync-index.md）**（Codex #384 r23 High③）：
   //    它的標題 anchor 沒有消費者，但那張表就是索引本身。Codex 在表前後加了行「中」的
   //    `<details>`，GitHub 把整張表收進預設摺疊區——**人看不到、而考題照讀 raw 行，7/7 全綠**。
   //
@@ -142,7 +142,7 @@ function read(p) {
   //    不構成 code span，但任何「先剝 code span 再判斷」的前處理都會被它騙過去——
   //    r24 的版本就是這樣讓 `<details>` 溜進去的。所以判準直接看原始文字。
   //
-  //    代價：AGENTS.md 只擋**會把內容藏起來**的那兩個元素，不是通用的 raw HTML 禁令。
+  //    代價：共同入口與搬出文件只擋**會把內容藏起來**的那兩個行中元素，不是通用的 raw HTML 禁令。
   //    理由是它合法地用角括號當佔位（`<編號>`、`<N>`、`<受審commit>`），
   //    也曾引用外部語法（XBRL／IB Flex／Notion 的標籤，切換日前的舊文），把那些改掉是失真。**這條界線寫在這裡，不要以為它擋得更多。**
   const hider = raw.split('\n').findIndex((l) => /<\/?(?:details|summary)\b/iu.test(l));
@@ -167,7 +167,7 @@ function read(p) {
  * anchor 是 GitHub 依**每一個標題**產生的，而我原本只掃 `##` 與 `###`。
  * Codex 在正式的 `## 月度回顧總覽卡` 前面加一個**同名 `####`**（另試 Setext 標題）：
  * 七題全綠，但 GitHub 把裸 anchor 給了先出現的 `####`，正式那節變成 `…-1`
- * ⇒ **AGENTS 的索引連結默默指到錯的一節**，畫面上完全看不出來。
+ * ⇒ **同步點索引連結默默指到錯的一節**，畫面上完全看不出來。
  *
  * 這是同一個錯的第八次：我又在列舉（「標題就是 `##` 和 `###`」）。
  * CommonMark 的標題其實只有兩種（ATX `#`×1–6、Setext 底線），列舉是封閉的——
@@ -176,7 +176,7 @@ function read(p) {
  *
  * ## 這道門只裝在**契約檔**上，不裝在 AGENTS.md
  *
- * 因為承重的只有契約檔的 anchor：AGENTS.md 的每一條契約索引都連進契約檔的某一節，
+ * 因為承重的只有契約檔的 anchor：docs/sync-index.md 的每一條契約索引都連進契約檔的某一節，
  * 而**指進 AGENTS.md 某一節的連結是 0 條**——它的標題被誰搶走 anchor 都不會有人踩到。
  * 我 r15 原本連 AGENTS.md 一起關，結果當場誤擋了 #385 裡一個完全正當的 `#### 兩條規則`
  * （兩支 PR 各自全綠、合起來才紅）。**護欄裝在不承重的地方，就只剩下誤擋。**
@@ -459,7 +459,7 @@ function sectionFiles(readme, domain) {
 
 /**
  * **宣告的真相**（不是從文字推導的）。
- * - `rules`：每一條規則的標題原文。**每一條都必須有一列 AGENTS 索引指過來。**
+ * - `rules`：每一條規則的標題原文。**每一條都必須有一列 docs/sync-index.md 索引指過來。**
  * - `exempt`：確定不是獨立規則的小節，必須逐一寫理由。
  * - `files`：這個領域**宣告的**責任檔清單（README 該領域小節必須剛好是這一組）。
  *   ⚠️ **它是下限，不是窮舉**（Codex #384 r29 逼出來的誠實劃界）：
@@ -1020,10 +1020,13 @@ const TABLE_BREAKERS = [
   [/^(?: {4,}|\t)\S/u, '四格縮排（程式碼區塊）'],
 ];
 
-const LINK_RE = /\[契約：[^\]]+\]\((?:\.\/)?((?:docs\/contracts\/)?[^)#]+\.md)#([^)]+)\)/;
+// 原 AGENTS 的承重檢查隨全部搬出內容移動，避免只剩入口與索引受到檢查。
+const RULE_DOCUMENTS = ['AGENTS.md', 'docs/project-overview.md', 'docs/development-workflow.md', 'docs/money-guard-operations.md', 'docs/ui-conventions.md', 'docs/investment-semantics.md', 'docs/field-ownership.md', 'docs/project-collaboration.md', 'docs/sync-index.md'];
+
+const LINK_RE = /\[契約：[^\]]+\]\((?:\.\/)?((?:(?:docs\/)?contracts\/)?[^)#]+\.md)#([^)]+)\)/;
 
 /**
- * AGENTS.md 裡所有「指向契約檔」的同步點列。
+ * docs/sync-index.md 裡所有「指向契約檔」的同步點列。
  *
  * ## ⚠️ 索引列是一份**封閉契約**，不是「看起來像表格列就算」（Codex #384 r29）
  *
@@ -1048,7 +1051,7 @@ const LINK_RE = /\[契約：[^\]]+\]\((?:\.\/)?((?:docs\/contracts\/)?[^)#]+\.md
  * 規格要對得上現況才有用。
  */
 function indexRows() {
-  const lines = read('AGENTS.md').split('\n');
+  const lines = read('docs/sync-index.md').split('\n');
   // 從每一條表頭分隔線開始逐行追「表格還活著嗎」：breaker 讓它死，新的分隔線讓它復活。
   const liveTableRows = new Set();
   let live = false;
@@ -1061,7 +1064,7 @@ function indexRows() {
   const rows = [];
   lines.forEach((line, i) => {
     if (!LINK_RE.test(line)) return;
-    const where = `AGENTS.md:${i + 1}`;
+    const where = `docs/sync-index.md:${i + 1}`;
     const shown = line.trim().slice(0, 70);
     assert.ok(line.startsWith('|'),
       `${where} 的索引列沒有從行首的 \`|\` 開始：${shown}…\n`
@@ -1148,7 +1151,7 @@ function indexRows() {
       `${where} 的契約連結不是第二格的最後一個東西：…${cell2.slice(-60)}\n`
       + '⚠️ 連結後面還有東西時，最常見的原因是它被包進了 code span（`` `[契約：…](…)` ``）——\n'
       + '   那只會渲染成 `<code>`，**不是連結**，索引就指不到契約。');
-    rows.push({ line, file: normalize(m2[1]), anchor: m2[2] });
+    rows.push({ line, file: normalize(m2[1].startsWith('contracts/') ? `docs/${m2[1]}` : m2[1]), anchor: m2[2] });
   });
   return rows;
 }
@@ -1254,7 +1257,7 @@ test('拆分護欄｜契約裡的標題集合＝manifest 的 rules＋exempt（�
   }
 });
 
-test('拆分護欄｜rules 與 AGENTS 索引列**雙向**一一對應', () => {
+test('拆分護欄｜rules 與 docs/sync-index.md 索引列**雙向**一一對應', () => {
   const rows = indexRows();
   for (const [file, m] of Object.entries(MANIFEST)) {
     const declared = m.rules.map((r) => slug(r));
@@ -1264,7 +1267,7 @@ test('拆分護欄｜rules 與 AGENTS 索引列**雙向**一一對應', () => {
     const pointed = rows.filter((r) => r.file === normalize(file)).map((r) => r.anchor);
     assert.deepEqual(sorted(pointed), sorted(declared),
       `${file} 的索引列與 manifest 的 rules 不是一一對應。\n`
-      + `  AGENTS 指過來的：${sorted(pointed).join('、') || '（無）'}\n`
+      + `  同步點索引指過來的：${sorted(pointed).join('、') || '（無）'}\n`
       + `  manifest 宣告的：${sorted(declared).join('、')}\n`
       + '⚠️ 少一個＝那條規則變成孤兒（改到相關檔案的人不會被導過去）；\n'
       + '   多一個＝索引指到不存在的段落（連結會落在檔頭）。');
@@ -1300,10 +1303,10 @@ test('⭐ 拆分護欄｜索引列**整行由契約決定**（第一格＝改這
       + '⚠️ 2 條以上：不敢猜要拿哪一條當索引——**多出來的那條會完全隱形**，'
       + '契約可以說一套、索引寫另一套而考題全綠（Grok 複審後掃 #639 實測）。');
     const domain = MANIFEST[file].domain;
-    const expected = `| ${s.trigger} | ——完整契約 → [契約：${domain}・${s.title}](${file}#${anchor}) |`;
+    const expected = `| ${s.trigger} | ——完整契約 → [契約：${domain}・${s.title}](${file.replace(/^docs\//, '')}#${anchor}) |`;
     assert.equal(line, expected,
       '索引列與契約對不上。**索引不准手寫**——整行由契約決定。\n'
-      + '把下面這一行**逐字**貼回 AGENTS.md 取代那一列：\n'
+      + '把下面這一行**逐字**貼回 docs/sync-index.md 取代那一列：\n'
       + expected + '\n'
       + `（來源：${file} 的「${s.title}」那一節）`);
     assert.ok(line.length <= MAX_INDEX_LEN,
@@ -1344,9 +1347,9 @@ test('⭐ 拆分護欄｜同步點清單那一節**整節的形狀**是固定的
   //    **reference-style 的 `[契約：X][ref]`＋另一行 `[ref]: 目的地` 抓不到**（實測 17 pass、全綠）。
   //    所以這裡不可以寫成「任何契約連結」——**只有命中 `LINK_RE` 的那種**。
   // ⚠️ **不加 Markdown 剖析器、不加相依套件**——那正是上面說的「重做別人做好的東西」。
-  const lines = read('AGENTS.md').split('\n');
+  const lines = read('docs/sync-index.md').split('\n');
   const start = lines.findIndex((l) => /^## .*同步點清單/u.test(l));
-  assert.ok(start >= 0, 'AGENTS.md 找不到「同步點清單」那一節的標題 ⇒ 這一題自己壞了');
+  assert.ok(start >= 0, 'docs/sync-index.md 找不到「同步點清單」那一節的標題 ⇒ 這一題自己壞了');
   let end = lines.findIndex((l, i) => i > start && /^## /u.test(l));
   if (end < 0) end = lines.length;
   const sec = lines.slice(start, end);
@@ -1398,7 +1401,7 @@ test('⭐ 拆分護欄｜同步點清單那一節**整節的形狀**是固定的
     .map((l, i) => ({ l, i }))
     .filter(({ i }) => i !== hi && i !== hi + 1 && (i < hi + 2 || i >= hi + 2 + 索引列.length))
     .filter(({ l }) => l.includes('|'))
-    .map(({ l, i }) => `AGENTS.md:${start + i + 1}：${l.trim().slice(0, 60)}…`);
+    .map(({ l, i }) => `docs/sync-index.md:${start + i + 1}：${l.trim().slice(0, 60)}…`);
   assert.deepEqual(多的, [],
     '同步點清單那一節裡，索引表之外還有含 `|` 的行 ⇒ 那可能是第二張表或一列手寫規則，\n'
     + '**完全不受「整行由契約決定」那一題檢查**（#639 r4〜r6 實測四種打法）。\n'
@@ -1408,7 +1411,7 @@ test('⭐ 拆分護欄｜同步點清單那一節**整節的形狀**是固定的
 test('⭐ 拆分護欄｜用名字指到同步點清單的句子，那個名字必須真的在表上（#639）', () => {
   // ## 為什麼有這一題
   //
-  // `AGENTS.md` 別處有九句用**名字**指路：「索引見同步點清單「X」列」。
+  // `AGENTS.md` 與其搬出的領域文件用**名字**指路：「索引見同步點清單「X」列」。
   // 它們指的是索引列的第一格或契約那一節的標題——**而那兩個都會改**。
   // #639 把索引整行改成由契約產出時，「本機檔案操作經櫃檯」那一句當場指不到
   //（新的名字多了「一律」兩個字）。**指路寫的是位置、不是內容，所以內容的 grep 抓不到它。**
@@ -1424,7 +1427,7 @@ test('⭐ 拆分護欄｜用名字指到同步點清單的句子，那個名字�
   //     `同步點清單「**」`（只對上粗體記號）都會過——**沒有名叫「**」的規則**（同上實測）。
   //   ②抽到之後**只驗名字在表上找得到**，**不驗**它指的是不是**對的**那一列
   //     （同名兩列、或指到語意不符的那一列，這一題都看不出來）。
-  const md = read('AGENTS.md');
+  const md = RULE_DOCUMENTS.map(read).join('\n');
   const rows = indexRows();
   const 可指的 = new Set();
   for (const { line } of rows) {
@@ -1437,7 +1440,7 @@ test('⭐ 拆分護欄｜用名字指到同步點清單的句子，那個名字�
   assert.ok(refs.length >= 5, `只找到 ${refs.length} 句「同步點清單「X」」——抽取式壞了？`);
   const 指不到 = [...new Set(refs)].filter((r) => ![...可指的].some((c) => c.includes(r)));
   assert.deepEqual(指不到, [],
-    '這幾個名字在同步點清單上找不到 ⇒ AGENTS 裡那句指路是**死路標**。\n'
+    '這幾個名字在同步點清單上找不到 ⇒ 共同入口或搬出文件裡那句指路是**死路標**。\n'
     + '⚠️ 索引列的第一格與節標題都由契約決定（上一題），所以**要改的是指路那句話**，不是索引。\n'
     + `指不到：${指不到.join('、')}`);
 });
@@ -1638,7 +1641,7 @@ test('拆分護欄｜契約內文提到的 repo 路徑，都要在 files 裡（�
  *
  * 演算法與 `test/hosted-auth.test.js`、`test/form-options.test.js` 那兩支同源——本 repo 的考題
  * **不共用 helper 檔**（`test/` 底下任何 .js 都會被 `node --test` 當考題跑），所以這裡是刻意的區域副本。
- * 為什麼下面那題需要它：AGENTS.md 的硬規則「掃原始碼的形狀考題**要先去掉註解**」，而本 repo 的註解
+ * 為什麼下面那題需要它：AGENTS.md 鐵則 9 的硬規則「掃原始碼的形狀考題**要先去掉註解**」，而本 repo 的註解
  * 極常**逐字引用舊程式碼**（`// 原本寫 from './modules/xxx.js'`）——不去註解就會掃到不存在的 import。
  * @param {string} src
  */
@@ -1755,7 +1758,7 @@ test('⭐ 拆分護欄｜宣告過的正式程式 import 進來的模組，自�
   //      也沒有 quotes 規則）就轉紅，而訊息說「剝離器把正式程式吃掉了」＝**歸因完全錯**，
   //      下一個人會跑去 debug stripComments。（#409 r7（2026-08-06）Codex 實測。）
   //      fixture 是考題自己控制的字串，正式程式怎麼重構都不會製造假紅。
-  //   ⚠️ fixture 兩種引號都放，而且**與下面那圈共用同一份正規式**：AGENTS.md「掃原始碼的形狀
+  //   ⚠️ fixture 兩種引號都放，而且**與下面那圈共用同一份正規式**：AGENTS.md 鐵則 9「掃原始碼的形狀
   //      考題要先去掉註解、**不可只認得一種寫法**」——r6 這一題自己就只認得單引號（Codex 實測的繞法：
   //      在已宣告的 `settings.js` 頂端用**雙引號** import 一個未宣告的新模組 → 九題全綠，
   //      同一顆突變改成單引號才紅）。這道 fixture 就是那個盲區的看門狗：漏掉任一種寫法就轉紅。
@@ -1806,11 +1809,11 @@ test('⭐ 拆分護欄｜宣告過的正式程式 import 進來的模組，自�
 // 索引列那一題（#639 起）只管**表格裡帶契約連結的列**：它要求整行逐字等於契約算出來的那一行。
 // 表格**外面**貼一段契約全文照樣是第二份副本、拆分等於沒發生——這題掃的就是那一塊以外的可見文字。
 // 索引列＝「表格列（以 | 開頭）且帶契約連結」，與 indexRows() 的認法一致；表外一行就算掛了契約連結也不是索引列。
-// 判準＝任何連續 W 字的逐字副本一定被抓（AGENTS 那邊建 W-gram 集合、契約內文逐字滑動）；W 要高過合法的重疊
+// 判準＝任何連續 W 字的逐字副本一定被抓（共同入口與搬出文件建 W-gram 集合、契約內文逐字滑動）；W 要高過合法的重疊
 // （函式名清單那種；設門檻時量到 57 字，2026-09-04）。
-test('AGENTS.md 索引列以外不得出現契約內文的長段逐字副本（拆分不可被「表外貼全文」繞過）', () => {
+test('共同入口與搬出文件的索引列以外不得出現契約內文的長段逐字副本（拆分不可被「表外貼全文」繞過）', () => {
   const W = 60;
-  const hay = visibleText(read('AGENTS.md').split('\n').filter((l) => !(l.startsWith('|') && LINK_RE.test(l))).join('\n'));
+  const hay = visibleText(RULE_DOCUMENTS.map(read).join('\n').split('\n').filter((l) => !(l.startsWith('|') && LINK_RE.test(l))).join('\n'));
   const grams = new Set();
   for (let i = 0; i + W <= hay.length; i++) grams.add(hay.slice(i, i + W));
   for (const file of Object.keys(MANIFEST)) {
@@ -1819,7 +1822,7 @@ test('AGENTS.md 索引列以外不得出現契約內文的長段逐字副本（�
       for (let i = 0; i + W <= body.length; i++) {
         const gram = body.slice(i, i + W);
         assert.ok(!grams.has(gram),
-          `${file}#${s.anchor} 的內文有連續 ${W} 字逐字出現在 AGENTS.md 的索引列以外：「${gram}」\n`
+          `${file}#${s.anchor} 的內文有連續 ${W} 字逐字出現在共同入口或搬出文件的索引列以外：「${gram}」\n`
           + '⚠️ 索引列本身由題名關鍵字「整行由契約決定」那一題守著\n'
           + `   （外加 ${MAX_INDEX_LEN} 的硬上限——那是**整列原始碼**的 UTF-16 長度，不是畫面可見字數），\n`
           + '   但表格**外面**貼一段全文不在那一題的射程內——那就是第二份副本，拆分等於沒發生。');

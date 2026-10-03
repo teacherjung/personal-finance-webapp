@@ -51,7 +51,7 @@
  *   - deny 清單點名的是**當下連接器 UUID**的工具全名，連接器重連換 UUID 後 deny
  *     會漏接——第二層 hook 接住它：2026-09-27（⑧，套件登記制同步進來）起是**登記制**（新編號沒登記＝整個連接器擋，
  *     名字像錢的，理由的尾句照接規則 3 那一句）；在那之前是家族網只認工具名、不認 UUID。
- *     所以本考題對 hook 做**逐名行為驗證**（含假 UUID 情境），不只驗「字串有出現」；換了編號之後的登記手續＝AGENTS「錢的絕對邊界」機械層。
+ *     所以本考題對 hook 做**逐名行為驗證**（含假 UUID 情境），不只驗「字串有出現」；換了編號之後的登記手續＝docs/money-guard-operations.md 機械層。
  *   - 正則自 2026-08-04 起擴編為**家族攔截**（William 指示「所有轉帳相關詞都進攔截器」）：
  *     動詞×名詞鎖（place/submit/cancel…×order/trade/position…）＋出入金關鍵詞
  *     （transfer/withdraw/deposit…；唯讀動詞前綴 get_/list_/search_… 放行）＋換匯三動詞。
@@ -77,7 +77,7 @@
  *     混合語意（純文字＝全等、含特殊字元才是正規式）＋ '^mcp__' 字面釘＋非 MCP 反向探針。
  *   - 擴編的取捨方向＝**寧可誤殺、不可漏擋**（生存優先）。
  *     ⚠️ 2026-09-27（⑧，登記制）起真實誤攔面的第一名是**「沒有登記」**：沒登記的連接器上什麼名字都擋、理由是登記制不是家族網
- *     （處置＝AGENTS「錢的絕對邊界」機械層的登記手續，碰不碰錢由 William 裁）；登記為不碰錢的連接器上，下面①②那種名字整個放行、
+ *     （處置＝docs/money-guard-operations.md 機械層的登記手續，碰不碰錢由 William 裁）；登記為不碰錢的連接器上，下面①②那種名字整個放行、
  *     根本不經過家族網。**下面①②只剩碰錢連接器白名單上的工具（與不是 mcp__ 開頭的名字）會遇到。**
  *     家族網本身的誤攔面（照實劃界，r1 抓過
  *     描述不準）：①唯讀豁免＝**前綴動詞封閉名單**（get/list/…/retrieve/export/download）——
@@ -294,14 +294,14 @@ test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實
   // 套件 ⑮②g 也釘著；這裡讓本專案自己的考題也釘（#643 Grok 複審後掃：本專案這幾支單獨看會漏）
   const readShaped = decide(`${FAKE_UUID}get_withdraw_status`, forbidden);
   assert.equal(readShaped.kind, 'registry-money', `唯讀前綴開頭、只命中額外樣式的名字：沒登記＝kind 'registry-money'（拿到 ${readShaped.kind}）`);
-  // 券商重新連線、編號換了之後，AI 實際最先碰到的是白名單上那些工具（唯讀查詢、提醒、觀察清單；AGENTS「券商重新連線、編號換了」那一則）：
-  // 新編號沒登記＝照樣擋，而且名字看不出像錢＝kind 'registry'（尾句不是當冒名回報那一種）——AGENTS 因此寫明「不管尾句怎麼說都照規則 4 先通報」。
-  // 套件哪天把它們改判成像錢（kind 'registry-money'）這裡會紅：那時 AGENTS 那一則的描述要一起改。
+  // 券商重新連線、編號換了之後，AI 實際最先碰到的是白名單上那些工具（唯讀查詢、提醒、觀察清單；docs/money-guard-operations.md「券商重新連線、編號換了」那一則）：
+  // 新編號沒登記＝照樣擋，而且名字看不出像錢＝kind 'registry'（尾句不是當冒名回報那一種）——該操作手冊因此寫明「不管尾句怎麼說都照規則 4 先通報」。
+  // 套件哪天把它們改判成像錢（kind 'registry-money'）這裡會紅：那時 docs/money-guard-operations.md 那一則的描述要一起改。
   assert.equal(MONEY_SERVER_ALLOW.length, EXPECTED_MONEY_SERVER_ALLOW, 'MONEY_SERVER_ALLOW 被增刪時字面釘要一起改');
   for (const t of MONEY_SERVER_ALLOW) {
     const d = decide(FAKE_UUID + t, forbidden);
     assert.equal(reasonClass(d.why), 'registry', `換了編號的券商白名單工具「${t}」：真清單下擋它的要是登記制「沒有登記」（${String(d.why).slice(0, 80)}）`);
-    assert.equal(d.kind, 'registry', `換了編號的券商白名單工具「${t}」：名字看不出像錢＝kind 'registry'（拿到 ${d.kind}；變了就要改 AGENTS 那一則）`);
+    assert.equal(d.kind, 'registry', `換了編號的券商白名單工具「${t}」：名字看不出像錢＝kind 'registry'（拿到 ${d.kind}；變了就要改 docs/money-guard-operations.md 那一則）`);
   }
 });
 

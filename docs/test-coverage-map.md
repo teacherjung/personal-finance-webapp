@@ -47,14 +47,14 @@ npm run test:coverage
 | 每日洞察引擎（差異引擎／書籤） | `lib/services/insights.js`、`lib/schema.js sanitizeInsightState` | `test/insights.test.js`（16 題）；行覆蓋 100% | 強 |
 | 快照與自動整理 | `lib/services/snapshot.js`、`normalizeIfRulesChanged` | `test/snapshot-safety.test.js`（跨 await 不整包蓋回、時鐘倒退——月快照＋日線兩道（階段三 H2）、三匯率留痕）、`test/auto-normalize-gate.test.js` | 強 |
 | 訂閱攤提前後端一致 | `public/modules/subscriptions-model.js` ↔ `lib/derive.js subCostForMonth` | `test/subscriptions-model.test.js`（**前後端對照考題**＋schema 邊界題；走散點 2026-07-24 結案 #264） | 強 |
-| 請求大小分流 | `lib/http-body.js` | `test/request-limits.test.js`（大檔放行／一般 1MB 擋／備份還原 50MB） | 中強；真正風險＝新增大檔路由忘進分流表（考題抓不到，靠 AGENTS 同步點） |
+| 請求大小分流 | `lib/http-body.js` | `test/request-limits.test.js`（大檔放行／一般 1MB 擋／備份還原 50MB） | 中強；真正風險＝新增大檔路由忘進分流表（考題抓不到，靠 docs/sync-index.md 同步點） |
 | 店名規則資料化 | `lib/store-rules.js`＋`lib/services/store-rules.js` | `test/store-rules.test.js` | 強 |
 | 前端純函式層 | `securities-view`／`goal-tracking`／`subscriptions-model`／`month-select`／`monthly-review-card`／`portfolio-*`（27 模組幾乎全數 100% 行覆蓋） | 各自的 UI 考題直測（esc/fmt 注入式） | 強 |
 | 前端 DOM 接線層 | `dashboard`／`transactions`／`settings`／`securities`／`subscriptions` 等頁面模組 | **不在 node coverage 內**——靠隔離瀏覽器工作流驗證（隔離 DB＋合成資料＋fetch 樁；涉及畫面的 PR 必做） | 刻意分工：純函式抽出直測、接線層瀏覽器驗證 |
 
 ## 誠實缺口（已知、有記錄，非疏漏）
 
-1. **pdfjs 抽字層三胞胎**：`statement.js extractLines`／`bank-statement.js extractBankLines`／`taishin-securities.js extractSecuritiesLines` 逐字或近似重複、所有解析考題都從「合成座標列」進場——pdfjs 升級只會在使用者實際上傳時暴露。三份為**刻意分工**（AGENTS 同步點有列），日後若歸戶可一併補一條合成 PDF 端到端考題，順帶蓋住 `parseTaishinSecuritiesPdf` 的 async 包裝。
+1. **pdfjs 抽字層三胞胎**：`statement.js extractLines`／`bank-statement.js extractBankLines`／`taishin-securities.js extractSecuritiesLines` 逐字或近似重複、所有解析考題都從「合成座標列」進場——pdfjs 升級只會在使用者實際上傳時暴露。三份為**刻意分工**（docs/sync-index.md 同步點有列），日後若歸戶可一併補一條合成 PDF 端到端考題，順帶蓋住 `parseTaishinSecuritiesPdf` 的 async 包裝。
 2. **匯入落盤薄殼**：`applyBankStatement`／`importTaishinPdf` 這種「解析→套用→saveDb」的接線零直測（純函式層全測過）；接線回歸＝按匯入回 ok 但資料沒落盤。需要合成 PDF 端到端，與第 1 條同根因、留待歸戶時一併補。
 3. **證券兩個 POST 路由殼**（import／batch-delete）缺的是**成功路徑**的 HTTP 煙霧測（服務層有完整直測；失敗與防線路徑已有 HTTP 級考題打到 `/api/securities/import`——大檔分流 `test/request-limits.test.js`、未登入 401 `test/hosted-auth.test.js`、名額 back-pressure `test/heavy-admission.test.js`）；漏的是「成功時路由接線」一類錯，價值中等。
 

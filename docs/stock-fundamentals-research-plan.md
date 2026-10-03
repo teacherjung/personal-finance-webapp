@@ -349,7 +349,7 @@ test/stock-research-page.test.js
 - 合成資料走入口→頁籤→官方基本面→評分→估值→追蹤→交易。
 - AAPL→GOOGL 快切、重新整理深連結、離線／429／timeout、無研究、有研究無持股各跑一次。
 - 桌面與手機截圖、console error 0、頁面無橫向溢出。
-- 更新 `AGENTS.md` 模組邊界／同步點、`PROJECT.md` 進度與對應 Notion 前端架構頁。
+- 更新 `docs/sync-index.md` 及對應契約的模組邊界／同步點、`PROJECT.md` 進度與對應 Notion 前端架構頁。
 
 每支 PR 都必須 `npm run typecheck`、`npm run lint`、`npm test` 全綠；一步一 PR，前一支合併後才開下一支。
 
