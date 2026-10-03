@@ -87,7 +87,7 @@ test('套件閘｜模板原封不動送出去也必須不通過；角括號換�
 test('舊的「五步驟合併」說法不可以再出現（掃法要夠廣——只掃三個字串已經漏掉一處）', () => {
   // ⚠️ 這題的第一版只掃三個固定字串，結果**漏掉 `五步驟＝確認審查結論…` 那種寫法**
   //    （Codex #379 r2 High②，同一種漂移的第三次）。改成掃「五步驟」出現在合併語境裡的**任何**形式。
-  // ⚠️ 2026-09-17 起只掃 AGENTS.md：合併程序那份文件已刪、正本搬去套件（合併＝`node tools/merge.js`，
+  // ⚠️ 2026-09-17 起掃 AGENTS.md；2026-10-03 起連搬出的協作附則一起掃：合併程序那份文件已刪、正本搬去套件（合併＝`node tools/merge.js`，
   //    它跑的閘登記在 settings.json 的 gates，幾道刻意不寫死）。
   for (const f of ['AGENTS.md', 'docs/project-collaboration.md']) {
     const txt = read(f);
@@ -140,8 +140,8 @@ test('工作區方案（實作常設／審查拋棄）：白名單句庫＋出�
     ['docs/project-collaboration.md', '釘住受審 commit', 2],
     ['docs/project-collaboration.md', '審查樹由實作者備與收，複審者不得自建 worktree', 1],
     ['docs/project-collaboration.md', '由實作者備樹時建、收尾時 unlink，複審者不得自行建立／安裝／移除', 1],
-    // 審查模型＝William 的裁示（2026-09-07）。**這一列守的是「全檔出現幾次」，不是「出現在哪裡」**。
-    // 哪天換模型：把這一列改成新模型名、次數照附則實際次數——它買到的是：單純增刪任一個模型名一定會紅。
+    // 歷史審查模型＝William 的 2026-09-07 裁示；現行模型選法依 AGENTS C28。**這一列只守歷史模型名的出現次數，不守當輪模型**。
+    // 保留這顆釘是為了讓歷史句被增刪時可見；每輪是否真的選了最強模型與最高推理由發審者核對，這一列驗不到。
     ['docs/project-collaboration.md', 'gpt-6-astra', 1],
     ['AGENTS.md', '正式審查的 symlink 一律由實作者備樹時處理', 1],
   ];

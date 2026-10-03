@@ -146,7 +146,7 @@ test('CI 對草稿也要跑：ci.yml 生效行不准出現 draft（2026-08-29 �
   //    後兩種），不引入 YAML 解析器去追殺 flow-map、explicit-key、跳脫鍵這些沒人會
   //    不小心寫出來的形狀（列舉補不完；為非安全絆線加相依不成比例）。
   //    本檔兩個 job（required 的上線 Node＋探照燈 dev-machine）必須無條件執行；日後真需要條件（如 step 級 if: failure()）＝
-  //    有意識地連同本題、ci.yml 註解、RULES E3 與 AGENTS 附則「自動守門的現況」一起改。
+  //    有意識地連同本題、ci.yml 註解、RULES E3 與 docs/project-collaboration.md 附則「自動守門的現況」一起改。
   //    間接層（composite action／reusable workflow）同樣掃不到——靠審查（`uses:` 本地
   //    路徑＝訊號）。
   // 清單項寫法也收（Grok #526 低）：step 級 if 常寫成 `- if: …`（dash 後才是鍵）。
@@ -155,7 +155,7 @@ test('CI 對草稿也要跑：ci.yml 生效行不准出現 draft（2026-08-29 �
     'ci.yml 出現 if: 條件——本檔兩個 job（required 的「上線用的 Node」＋探照燈 dev-machine，與其步驟）必須無條件執行，否則「草稿也照跑」'
       + '只是註解宣稱。2026-08-15〜08-29 的草稿跳過正是一條 job 級 if；等價寫法'
       + '（event_name/action 判斷）不含 draft 字也一樣跳過草稿場次。真有正當理由加條件，'
-      + '請連本題、ci.yml 註解、RULES E3 與 AGENTS 附則「自動守門的現況」一起改。');
+      + '請連本題、ci.yml 註解、RULES E3 與 docs/project-collaboration.md 附則「自動守門的現況」一起改。');
   // 「草稿也跑」的前提是 pull_request 事件本身有訂閱（opened/synchronize 對草稿也會發）；
   // ready_for_review 留著＝補考保險。types 列表變動＝這個前提可能被抽走，要人來看。
   // ⚠️ 只對**生效行**斷言（預審抓到）：掃全文的話，types 行被改掉、而某條註解引用舊字面

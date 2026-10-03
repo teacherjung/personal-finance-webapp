@@ -1641,7 +1641,7 @@ test('拆分護欄｜契約內文提到的 repo 路徑，都要在 files 裡（�
  *
  * 演算法與 `test/hosted-auth.test.js`、`test/form-options.test.js` 那兩支同源——本 repo 的考題
  * **不共用 helper 檔**（`test/` 底下任何 .js 都會被 `node --test` 當考題跑），所以這裡是刻意的區域副本。
- * 為什麼下面那題需要它：docs/development-workflow.md 的硬規則「掃原始碼的形狀考題**要先去掉註解**」，而本 repo 的註解
+ * 為什麼下面那題需要它：AGENTS.md 鐵則 9 的硬規則「掃原始碼的形狀考題**要先去掉註解**」，而本 repo 的註解
  * 極常**逐字引用舊程式碼**（`// 原本寫 from './modules/xxx.js'`）——不去註解就會掃到不存在的 import。
  * @param {string} src
  */
@@ -1758,7 +1758,7 @@ test('⭐ 拆分護欄｜宣告過的正式程式 import 進來的模組，自�
   //      也沒有 quotes 規則）就轉紅，而訊息說「剝離器把正式程式吃掉了」＝**歸因完全錯**，
   //      下一個人會跑去 debug stripComments。（#409 r7（2026-08-06）Codex 實測。）
   //      fixture 是考題自己控制的字串，正式程式怎麼重構都不會製造假紅。
-  //   ⚠️ fixture 兩種引號都放，而且**與下面那圈共用同一份正規式**：docs/development-workflow.md「掃原始碼的形狀
+  //   ⚠️ fixture 兩種引號都放，而且**與下面那圈共用同一份正規式**：AGENTS.md 鐵則 9「掃原始碼的形狀
   //      考題要先去掉註解、**不可只認得一種寫法**」——r6 這一題自己就只認得單引號（Codex 實測的繞法：
   //      在已宣告的 `settings.js` 頂端用**雙引號** import 一個未宣告的新模組 → 九題全綠，
   //      同一顆突變改成單引號才紅）。這道 fixture 就是那個盲區的看門狗：漏掉任一種寫法就轉紅。

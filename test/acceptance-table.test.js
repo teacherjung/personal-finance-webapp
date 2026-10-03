@@ -238,7 +238,7 @@ test('⭐ 文件｜AGENTS.md「開工前」的編號步驟裡叫的是套件的�
   assert.ok(agentsStartupStepProblem(claude.replace('`node tools/pending-rulings.js`', '`node scripts/pending-rulings.js`')), '改指舊路徑沒被抓到');
 });
 
-test('⭐ 文件｜AGENTS 附則寫出分級的跑法、只指路不抄分級表；PR 範本「怎麼驗收」只指路、固定小標只認真正的標題行', () => {
+test('⭐ 文件｜協作附則寫出分級的跑法、只指路不抄分級表；PR 範本「怎麼驗收」只指路、固定小標只認真正的標題行', () => {
   const agents = read('docs/project-collaboration.md');
   const at = agents.indexOf('\n## 本專案協作附則');
   assert.ok(at >= 0, '找不到 docs/project-collaboration.md「本專案協作附則」那一節——這題變空包彈');

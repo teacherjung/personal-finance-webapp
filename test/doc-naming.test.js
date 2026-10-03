@@ -101,7 +101,7 @@ const DOCS = {
   'GLOSSARY.md': { readers: 'all', title: '用語對照表' },
 };
 
-test('⭐ 三方都要照做的文件，名字不可以只掛一方（除非是工具規定的檔名）', () => {
+test('⭐ 三方都要照做的文件，名字不可以只掛一方', () => {
   for (const [file, spec] of Object.entries(DOCS)) {
     if (spec.readers !== 'all') continue;
     const upper = file.toUpperCase();

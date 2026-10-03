@@ -14,10 +14,10 @@ import globals from 'globals';
 const XLSX_SELECTORS = [
       { selector: "ImportExpression[source.value=/^xlsx(\\/|$)/]",
         message: 'XLSX 只能由 lib/statement.js 的 readXlsxForIsolation 讀（HOSTED 走子行程隔離）。'
-      + '別處直接引入會繞過隔離——見 AGENTS.md「解析器資源上限」那一列。' },
+      + '別處直接引入會繞過隔離——見 docs/sync-index.md「解析器資源上限」那一列。' },
       { selector: "CallExpression[callee.name='require'][arguments.0.value=/^xlsx(\\/|$)/]",
         message: 'XLSX 只能由 lib/statement.js 的 readXlsxForIsolation 讀（HOSTED 走子行程隔離）。'
-      + '別處直接引入會繞過隔離——見 AGENTS.md「解析器資源上限」那一列。' },
+      + '別處直接引入會繞過隔離——見 docs/sync-index.md「解析器資源上限」那一列。' },
       // 非字面量的動態 import（`const s = 'xlsx'; await import(s)`）：靜態分析**判不出來**，
       // 是上面幾條唯一還繞得過的路。production 全樹的動態 import 都是字面量，所以連同關掉。
       { selector: "ImportExpression:not([source.type='Literal'])",
@@ -111,7 +111,7 @@ export const ENTRY_GUARD_SELECTORS = [
 export default [
   { ignores: [
     // ⚠️ 這裡**不要**加「退役／封存資料夾」的豁免（2026-08-03 加過又拿掉）：
-    //    沒用到的程式碼的規則是**直接刪**（AGENTS.md），不是搬到一個工具都不看的角落。
+    //    沒用到的程式碼的規則是**直接刪**（docs/development-workflow.md），不是搬到一個工具都不看的角落。
     //    豁免一加下去，糾察就照不到那裡，「藏起來」在機制上就變得比「刪掉」容易。
     'node_modules/**', 'public/vendor/**', 'data/**'] },   // vendor 與資料檔不糾察
   js.configs.recommended,
@@ -157,7 +157,7 @@ export default [
         paths: [
           { name: 'xlsx',
             message: 'XLSX 只能由 lib/statement.js 的 readXlsxForIsolation 讀（HOSTED 走子行程隔離）。'
-          + '別處直接引入會繞過隔離——見 AGENTS.md「解析器資源上限」那一列。' },
+          + '別處直接引入會繞過隔離——見 docs/sync-index.md「解析器資源上限」那一列。' },
           // ⚠️ **整個模組都禁，不是只禁 createRequire 這個名字**（Codex #374 r3 High）：
           //    只列 `importNames: ['createRequire']` 的話，`import mod from 'node:module'`
           //    （default）與 `import { Module } from 'node:module'` 都拿得到 `createRequire`，
