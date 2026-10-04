@@ -317,7 +317,7 @@ test('身分牆前的 body 上限（接線）｜牆前四條 POST 逐條超過�
     '這句話只有 services/auth.js 的 signIn 會說——證明 body 真的被解析、handler 真的跑到了');
 
   // ③ 同一份大小的 body 打**備份入口**（登入後）不可以被擋：證明「登入入口嚴格更小」是真的接在路上，
-  //    不是常數表上的一行字。備份還原是 docs/contracts/cloud-security.md 明定不可掐死的救援入口。
+  //    不是常數表上的一行字。備份還原是 docs/development-workflow.md「驗證與三關」明定不可繼承一般 1 MB 上限的救援入口。
   const backup = await fetch(`${base}/api/import`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Origin: GOOD_ORIGIN, Cookie: SESSION },
     body: JSON.stringify({ settings: { usdTwd: 32 }, transactions: [], pad: 'y'.repeat(probe) }),

@@ -419,6 +419,7 @@
 - `public/modules/transactions-import.js`（信用卡上傳密碼窗：借同一份挑句問 `/api/mode` 再開窗——P0.5；**與收支多重命中**）
 - `server.js`
 - `test-doubles/fake-supabase.js`
+- `test/agents-entry.test.js`（入口檔名存在性檢查的實體走訪劃界）
 - `test/ai-consent.test.js`
 - `test/ai-key-settings.test.js`
 - `test/backup-export.test.js`

@@ -558,6 +558,7 @@ const MANIFEST = {
       'public/modules/transactions-import.js',   // P0.5：信用卡上傳密碼窗＝/api/mode 第三個消費者
       'server.js',
       'test-doubles/fake-supabase.js',
+      'test/agents-entry.test.js',
       'test/ai-consent.test.js',   // P1b-2
       'test/ai-key-settings.test.js',   // P1b-2
       'test/backup-export.test.js',

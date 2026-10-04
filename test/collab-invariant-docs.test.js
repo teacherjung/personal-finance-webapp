@@ -1,10 +1,10 @@
-// PR 範本、共同入口與協作附則的幾句話：套件的協作欄位閘讀得到範本、共同入口與附則不重述合併步驟、工作區方案的承重句。
+// PR 範本與共同規則正本：範本可被協作欄位閘讀取、合併程序不重述、工作區方案的承重句。
 //
 // ## 這個檔案現在守什麼（2026-09-18 搬家第 7 步之後）
 //
 // - **PR 範本**（`.github/pull_request_template.md`）：四個欄位行要在說明**開頭那一段**——套件閘只讀第一個特殊行之前
 //   （讀法只有一份＝`tools/markdown-effective.js`），寫在後面的欄位機器讀不到；範本原封不動送出去套件閘要擋、換成合法值要過。
-// - **共同入口 AGENTS.md 與協作附則 docs/project-collaboration.md** 不可再出現舊的「五步驟合併」說法、也不可有把合併步驟串起來的摘要（摘要會落後）；
+// - **共同入口與各搬出正本（下方 RULE_DOCUMENTS）** 不可再出現舊的「五步驟合併」說法、也不可有把合併步驟串起來的摘要（摘要會落後）；
 //   「本專案協作附則」裡的工作區方案承重句（路徑、指令列、模型名）與 AGENTS.md 那句 symlink 分工，用出現次數釘住。
 //
 // 唯一不變量「沒有任何一份產出，由寫它的人做正式複審與放行」的正本＝`RULES.md` A2；本檔不釘它的字面，
@@ -27,6 +27,8 @@ import { leadingLines } from '../tools/markdown-effective.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (/** @type {string} */ p) => readFileSync(join(ROOT, p), 'utf8');
+// 搬家前兩題掃整份 AGENTS.md；內容移走不能讓原有檢查範圍跟著消失。
+const RULE_DOCUMENTS = ['AGENTS.md', 'docs/project-overview.md', 'docs/development-workflow.md', 'docs/money-guard-operations.md', 'docs/ui-conventions.md', 'docs/investment-semantics.md', 'docs/field-ownership.md', 'docs/project-collaboration.md', 'docs/sync-index.md'];
 
 // ── PR 範本 ──────────────────────────────────────────────────────
 
@@ -82,14 +84,14 @@ test('套件閘｜模板原封不動送出去也必須不通過；角括號換�
     '把範本的佔位字換成合法值仍然不通過——欄位行不在機器讀得到的那一段，或欄位行的形狀套件閘認不得');
 });
 
-// ── 共同入口與協作附則不可以重述合併步驟（重述的摘要會落後）─────────────────
+// ── 共同入口與搬出正本不可以重述合併步驟（重述的摘要會落後）─────────────────
 
 test('舊的「五步驟合併」說法不可以再出現（掃法要夠廣——只掃三個字串已經漏掉一處）', () => {
   // ⚠️ 這題的第一版只掃三個固定字串，結果**漏掉 `五步驟＝確認審查結論…` 那種寫法**
   //    （Codex #379 r2 High②，同一種漂移的第三次）。改成掃「五步驟」出現在合併語境裡的**任何**形式。
-  // ⚠️ 2026-09-17 起掃 AGENTS.md；2026-10-03 起連搬出的協作附則一起掃：合併程序那份文件已刪、正本搬去套件（合併＝`node tools/merge.js`，
+  // ⚠️ 2026-09-17 起掃 AGENTS.md；2026-10-03 入口整併起連搬出的正本一起掃：合併程序那份文件已刪、正本搬去套件（合併＝`node tools/merge.js`，
   //    它跑的閘登記在 settings.json 的 gates，幾道刻意不寫死）。
-  for (const f of ['AGENTS.md', 'docs/project-collaboration.md']) {
+  for (const f of RULE_DOCUMENTS) {
     const txt = read(f);
     for (const [i, line] of txt.split('\n').entries()) {
       // 「五步驟審查循環」是舊 AGENTS 那張審查循環表的名字（切換日起不在本檔），那種提法五步是對的——
@@ -105,14 +107,14 @@ test('舊的「五步驟合併」說法不可以再出現（掃法要夠廣—�
   }
 });
 
-test('共同入口與協作附則不可以再有「重述合併步驟」的摘要（重述的摘要注定落後）', () => {
+test('共同入口與搬出正本不可以再有「重述合併步驟」的摘要（重述的摘要注定落後）', () => {
   // Codex r1 High② 抓到一處、r2 High② 又抓到第二處——判準改成「有沒有把步驟串起來寫」，
   // 而不是「有沒有出現某個字串」。
-  const agents = read('AGENTS.md') + '\n' + read('docs/project-collaboration.md');
+  const agents = RULE_DOCUMENTS.map(read).join('\n');
   const arrowChains = agents.split('\n').filter((l) =>
     /gh pr merge/.test(l) && /→|->/.test(l));
   assert.deepEqual(arrowChains.map((l) => l.trim().slice(0, 100)), [],
-    '共同入口或協作附則又出現把合併步驟串起來的摘要。\n'
+    '共同入口或搬出正本又出現把合併步驟串起來的摘要。\n'
     + '附則刻意只寫合併指令與閘的登記位置（settings.json 的 gates），不重述步驟：摘要會落後，登記不會。');
 });
 
