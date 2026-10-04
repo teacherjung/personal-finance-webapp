@@ -64,7 +64,7 @@ export const OUTBOUND_ENDPOINTS = [
   { host: 'www.multpl.com + fred.stlouisfed.org', why: '每日洞察（內部再呼叫上面兩者）', paths: ['/api/insights'] },
   { host: 'www.sec.gov + data.sec.gov', why: 'SEC 官方基本面（三份 JSON）', paths: ['/api/stock-fundamentals/:symbol/refresh'] },
   // r12：Supabase 一直是實際上游（HOSTED auth），補登記。me／logout 刻意不在 paths：
-  // 輕量讀取不限速＝2026-07-28 既有裁決（見 AGENTS 速率限制列），只列有限速的三條登入類。
+  // 輕量讀取不限速＝2026-07-28 既有裁決（見 docs/contracts/cloud-security.md「速率限制」節），只列有限速的三條登入類。
   { host: 'SUPABASE_URL（環境變數指定的 Supabase 主機）', why: 'Supabase Auth（HOSTED 登入／驗證；@supabase/ssr）', paths: ['/api/auth/login', '/api/auth/confirm', '/api/auth/set-password'] },
   // P1b-1：AI 解析路線（★3 拍板＝Anthropic）。兩條路徑＝既有銀行上傳端點（AI 是其中的 fallback 分支，
   // 需 useAi **AI 要求旗標**（確認窗僅 aiAskBeforeSend 開啟時出現、預設直接帶——舊名「同意旗標」棄用：那個名字誤示每次都問過）；HOSTED 停止線寫死）。⚠️ 限速誠實句（r1#4）：表上的「上傳解析類」只在 HOSTED

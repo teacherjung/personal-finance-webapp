@@ -231,7 +231,7 @@ export const EXPECTED_OUT_OF_MATCHER = 5;
  * 這些**不在名單上**的名字都通過了＝把名單擴張成等價類，未來新增的同形工具會繞過）。
  * ⚠️ 誠實劃界：連接器身分是那串 UUID。**重連換了 UUID＝新編號沒登記＝整個連接器被登記制擋**（連唯讀查詢也擋；
  * 名字像錢的那幾支，理由的尾句照接規則 3 那一句（當誤觸或冒名、回報裁示者）——FORBIDDEN_AFTER_RECONNECT 那兩支就是這個情境）。
- * 那時的手續（新編號登記進哪一欄、下單類新全名補到哪幾層、登記前先問 William）＝AGENTS「錢的絕對邊界」機械層。
+ * 那時的手續（新編號登記進哪一欄、下單類新全名補到哪幾層、登記前先問 William）＝docs/money-guard-operations.md。
  * ⚠️ 白名單掃的是**每一段** `__`（與家族網的候選切法對齊，Grok #540 掃第 1 條：
  * 原本只認第一段，於是 `mcp__prefix__<uuid>__market_order` 這種多段前綴整層不開火）。
  */
@@ -305,7 +305,7 @@ export function splitProbe(name) {
 export const FAMILY_NET_PROBES = [...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAMILY, ...LOOKALIKES_REGISTERED, ...LOOKALIKES_UNREGISTERED];
 
 /**
- * 家族網夾具（全專案只有這一份；AGENTS「錢的絕對邊界」考題那一則指到這裡）。
+ * 家族網夾具（全專案只有這一份；docs/money-guard-operations.md「考題」那一則指到這裡）。
  * 為什麼：登記制之後，mcp__ 名字只有碰錢連接器白名單上的工具才走到家族網（沒登記＝整個擋、不碰錢＝整個放行，都沒問到它）。
  * 做法：把 names 裡每個名字的連接器登記成**碰錢**（servers）、工具名那一段放上白名單（allowlist），讓每個名字都走
  * 「碰錢白名單 → 家族網雙保險」那條路。原本登記在 safeServers 的連接器（跨連接器那四支）**從那一欄搬走**——

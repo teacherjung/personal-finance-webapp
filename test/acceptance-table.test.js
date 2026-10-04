@@ -203,15 +203,15 @@ test('⭐ 待裁清單與驗收分級都不是閘：CI 設定、pre-push、packa
 });
 
 /**
- * CLAUDE.md「開工前」那一節的編號步驟裡，要有一步叫套件的待裁清單工具、不帶參數、不指舊路徑。
+ * AGENTS.md「開工前」那一節的編號步驟裡，要有一步叫套件的待裁清單工具、不帶參數、不指舊路徑。
  * 讀的是**有效文字**（visible() 剝掉 HTML 註解與圍欄）、只看那一節的編號步驟——Codex #613 r4 Low②：讀原文的話，整步藏進註解仍全綠。
  * @param {string} text
  * @returns {string | null} 問題（null＝合格）
  */
-function claudeStartupStepProblem(text) {
+function agentsStartupStepProblem(text) {
   const lines = visible(text).split('\n');
   const from = lines.findIndex((l) => /^## 開工前\s*$/.test(l));
-  if (from < 0) return 'CLAUDE.md（剝掉註解與圍欄後）找不到標題行「## 開工前」';
+  if (from < 0) return 'AGENTS.md（剝掉註解與圍欄後）找不到標題行「## 開工前」';
   const next = lines.findIndex((l, i) => i > from && /^## /.test(l));
   const steps = lines.slice(from + 1, next < 0 ? lines.length : next).filter((l) => /^\d+\.\s/.test(l));
   if (steps.length < 3) return `「開工前」那一節（剝掉註解與圍欄後）只剩 ${steps.length} 個編號步驟——步驟被藏起來或搬走了`;
@@ -219,29 +219,29 @@ function claudeStartupStepProblem(text) {
   if (!hit.length) return '「開工前」的編號步驟裡沒有一步提到待裁清單工具（藏進註解、圍欄或搬出那一節都算沒有）';
   if (!hit.some((l) => l.includes('`node tools/pending-rulings.js`'))) return `要寫出跑法 \`node tools/pending-rulings.js\`（不帶參數），實際：${hit.join(' / ')}`;
   for (const l of lines) {
-    if (/scripts\/pending-rulings/.test(l)) return `CLAUDE.md 還指到已刪的舊工具：${l}`;
-    if (/pending-rulings\.js\s+-{1,2}\w/.test(l)) return `CLAUDE.md 叫待裁清單工具時帶了參數（套件不收、會退 2）：${l}`;
+    if (/scripts\/pending-rulings/.test(l)) return `AGENTS.md 還指到已刪的舊工具：${l}`;
+    if (/pending-rulings\.js\s+-{1,2}\w/.test(l)) return `AGENTS.md 叫待裁清單工具時帶了參數（套件不收、會退 2）：${l}`;
   }
   return null;
 }
 
-test('⭐ 文件｜CLAUDE.md「開工前」的編號步驟裡叫的是套件的待裁清單工具、不帶參數、不指舊路徑；讀有效文字（藏進註解不算）', () => {
-  const claude = read('CLAUDE.md');
-  assert.equal(claudeStartupStepProblem(claude), null, claudeStartupStepProblem(claude) ?? '');
+test('⭐ 文件｜AGENTS.md「開工前」的編號步驟裡叫的是套件的待裁清單工具、不帶參數、不指舊路徑；讀有效文字（藏進註解不算）', () => {
+  const claude = read('AGENTS.md');
+  assert.equal(agentsStartupStepProblem(claude), null, agentsStartupStepProblem(claude) ?? '');
   // 保存：同一個判準要抓得到這幾種改法（不是另抄一份）
   const stepLine = visible(claude).split('\n').find((l) => /^\d+\.\s/.test(l) && /pending-rulings/.test(l)) ?? '';
   assert.ok(stepLine && claude.includes(stepLine), '對照斷言：那一步在真檔裡逐字找得到（下面的夾具靠它定位）');
-  assert.ok(claudeStartupStepProblem(claude.replace(stepLine, `<!--\n${stepLine}\n-->`)), '整步藏進 HTML 註解沒被抓到（r4 Low②）');
-  assert.ok(claudeStartupStepProblem(claude.replace(stepLine, `\`\`\`\n${stepLine}\n\`\`\``)), '整步放進圍欄沒被抓到');
-  assert.ok(claudeStartupStepProblem(claude.replace(stepLine, '')), '整步刪掉沒被抓到');
-  assert.ok(claudeStartupStepProblem(claude.replace('`node tools/pending-rulings.js`', '`node tools/pending-rulings.js --all`')), '帶回 --all 沒被抓到');
-  assert.ok(claudeStartupStepProblem(claude.replace('`node tools/pending-rulings.js`', '`node scripts/pending-rulings.js`')), '改指舊路徑沒被抓到');
+  assert.ok(agentsStartupStepProblem(claude.replace(stepLine, `<!--\n${stepLine}\n-->`)), '整步藏進 HTML 註解沒被抓到（r4 Low②）');
+  assert.ok(agentsStartupStepProblem(claude.replace(stepLine, `\`\`\`\n${stepLine}\n\`\`\``)), '整步放進圍欄沒被抓到');
+  assert.ok(agentsStartupStepProblem(claude.replace(stepLine, '')), '整步刪掉沒被抓到');
+  assert.ok(agentsStartupStepProblem(claude.replace('`node tools/pending-rulings.js`', '`node tools/pending-rulings.js --all`')), '帶回 --all 沒被抓到');
+  assert.ok(agentsStartupStepProblem(claude.replace('`node tools/pending-rulings.js`', '`node scripts/pending-rulings.js`')), '改指舊路徑沒被抓到');
 });
 
-test('⭐ 文件｜AGENTS 附則寫出分級的跑法、只指路不抄分級表；PR 範本「怎麼驗收」只指路、固定小標只認真正的標題行', () => {
-  const agents = read('AGENTS.md');
+test('⭐ 文件｜協作附則寫出分級的跑法、只指路不抄分級表；PR 範本「怎麼驗收」只指路、固定小標只認真正的標題行', () => {
+  const agents = read('docs/project-collaboration.md');
   const at = agents.indexOf('\n## 本專案協作附則');
-  assert.ok(at >= 0, '找不到 AGENTS.md「本專案協作附則」那一節——這題變空包彈');
+  assert.ok(at >= 0, '找不到 docs/project-collaboration.md「本專案協作附則」那一節——這題變空包彈');
   const mentions = agents.slice(at + 1).split('\n').filter((l) => /tools\/acceptance-tier\.js/.test(l));
   assert.ok(mentions.some((l) => l.includes('`node tools/acceptance-tier.js <編號>`')), '附則要寫出跑法 `node tools/acceptance-tier.js <編號>`（RULES H6），不是只提檔名');
   assert.ok(mentions.some((l) => /照它印的做/.test(l)), '附則要叫執行者照工具印的做');

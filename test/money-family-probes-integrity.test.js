@@ -40,8 +40,8 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const HELPER = path.join(ROOT, 'test', 'helpers', 'money-family-probes.js');
 
 // helper 檔案位元組的 sha256（William 2026-09-01 裁示的那顆釘）。
-// 2026-09-29 重算（探針矩陣 89→115；沿革在變更 647 的 PR 說明）。
-const HELPER_BYTES_SHA256 = '671cb70f2433c2f435dd83bcf4e9b07482e6830e9c9f12bec36990b0c9323d70';
+// 2026-10-03 重算（只搬移兩處註解路標；探針矩陣仍為 115、內容未變）。
+const HELPER_BYTES_SHA256 = 'e9df6166523161cfbb2dab13d421c20677188a6354eeb47dea7d9769dac09ca3';
 
 test('承重字表 helper 的位元組與釘相符（本行程不載入它＝它的程式碼在這裡沒有執行機會）', () => {
   const actual = createHash('sha256').update(readFileSync(HELPER)).digest('hex');

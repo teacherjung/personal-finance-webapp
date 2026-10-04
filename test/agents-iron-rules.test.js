@@ -89,7 +89,7 @@ test('⭐ 鐵則 12「必須懂的概念要在網頁上就地白話解釋」要�
   };
   const h1 = once('# AGENTS.md — 給所有 AI 協作者（Codex / Claude / 其他）的專案規則書');
   const rules = once('## 鐵則（違反會壞事）');
-  const ui = once('## UI 現行慣例（預設值；UI 主線迭代中——2026-08-04 William 拍板兩級制）');
+  const ui = once('## William 的常設指示');
   assert.equal(h1, lines.findIndex((_, i) => headingAt(lines, i) > 0),
     '檔頭那個 H1 不是全檔第一個標題＝它前面被插了東西，「鐵則」節的歸屬就不是原來那一條鏈了');
 
@@ -109,7 +109,7 @@ test('⭐ 鐵則 12「必須懂的概念要在網頁上就地白話解釋」要�
     `AGENTS.md 第 ${item12 + 1} 行的第 12 條標題句被改了（現在是「${lines[item12].slice(0, 40)}」）——`
     + '這一條的號碼被別的規則佔走，或標題句被改寫了。');
   assert.ok(h1 < rules && rules < item12 && item12 < ui,
-    '鐵則 12 不在「鐵則」節與「UI 現行慣例」節之間＝它被搬走了（逐字搬到沿革節也算，那是規則降成沿革）');
+    '鐵則 12 不在「鐵則」節與「William 的常設指示」節之間＝它被搬走了（逐字搬到沿革節也算，那是規則降成沿革）');
 
   // ① 檔頭 H1 到「鐵則」那一行之間，不可以再有 H1——有的話「鐵則」整節就換了爸爸（可以是一個作廢小節）
   for (let i = h1 + 1; i < rules; i += 1) {
@@ -205,8 +205,12 @@ test('⭐ 鐵則 12「必須懂的概念要在網頁上就地白話解釋」要�
   // ④ 指路要在**真正的**「UI 現行慣例」節裡（那一節是可以偏離的預設值，這一條不隨它放寬）
   //    ⚠️ 同樣是逐行等式：r4 實測把整行塞進 `[補充](/unused "原行")` 的 title、
   //    或換成 `[ui]: /unused "原行"`／未引用的 `[^ui]: 原行`，指路在畫面上消失而子字串比對全綠。
-  const uiEnd = lines.findIndex((_, i) => i > ui && headingAt(lines, i) > 0 && headingAt(lines, i) <= 2);
-  const uiLines = lines.slice(ui, uiEnd === -1 ? lines.length : uiEnd);
+  const uiDocument = read('docs/ui-conventions.md').split('\n');
+  const uiTitle = '## UI 現行慣例（預設值；UI 主線迭代中——2026-08-04 William 拍板兩級制）';
+  assert.equal(uiDocument.filter((l) => l === uiTitle).length, 1);
+  const uiStart = uiDocument.indexOf(uiTitle);
+  const uiEnd = uiDocument.findIndex((_, i) => i > uiStart && headingAt(uiDocument, i) > 0 && headingAt(uiDocument, i) <= 2);
+  const uiLines = uiDocument.slice(uiStart, uiEnd === -1 ? uiDocument.length : uiEnd);
   assert.equal(uiLines.filter((l) => l === UI_SIGNPOST).length, 1,
     '「UI 現行慣例」那一節裡找不到**逐字**的那一行指路（或它出現不只一次）：\n'
     + `  ${UI_SIGNPOST}\n`

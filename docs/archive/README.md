@@ -1,12 +1,12 @@
 # 歸檔區：已完工的施工計畫
 
 > 這裡的文件是**歷史紀錄**：計畫已全部完工、內容不再更新。
-> 想知道「現在是怎麼運作的」，看 `AGENTS.md`（技術單一真相）與實際程式；
+> 想知道「現在是怎麼運作的」，依共同入口 `AGENTS.md` 的路由查技術正本，並看實際程式；
 > 這些檔案回答的是「當初為什麼這樣設計、過程怎麼走的」。
 > 搬進來時只搬家、不刪改內文——完整歷史仍在 Git 紀錄裡。
 > 2026-09-28 裁示者裁「做完的計畫文件：刪掉」（留痕在 #646 的留言）：四份做完的計畫（階段 B 骨架改建、個股研究頁 P1 交接、目標追蹤、月度回顧）2026-09-29 已刪，要看原文到 Git 紀錄找；留在這裡的是還有程式或文件在引用的。
 
 | 檔案 | 完成證據（合併 PR） | 現行真相在哪 |
 |---|---|---|
-| [securities-trading-blueprint.md](securities-trading-blueprint.md) | #236（S0）／#242（藍圖修訂）／#244・#246・#247・#248・#250（S1–S3＋r1–r5） | 證券交易頁實際程式＋AGENTS.md 同步點 |
+| [securities-trading-blueprint.md](securities-trading-blueprint.md) | #236（S0）／#242（藍圖修訂）／#244・#246・#247・#248・#250（S1–S3＋r1–r5） | 證券交易頁實際程式＋[同步點索引](../sync-index.md)路由的契約 |
 | [project-completion-log.md](project-completion-log.md) | PROJECT.md D3 瘦身搬出的完工表與戰史（凍結於 2026-07-31；之後的完工紀錄＝GitHub merged PR 清單） | [../../PROJECT.md](../../PROJECT.md)（現在進行式） |

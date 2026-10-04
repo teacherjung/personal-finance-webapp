@@ -1,5 +1,5 @@
 // 證券交易 S2：台新匯入服務（預覽/確認/批次/fail-closed）＋schema 守門＋derive 不變式。
-// 全合成資料、隔離 STORE_FILE；帳號一律明顯假值（AGENTS：絕不用真實末碼）。
+// 全合成資料、隔離 STORE_FILE；帳號一律明顯假值（docs/contracts/income-expense.md「銀行對帳單解析與分箱」：絕不用真實末碼）。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';

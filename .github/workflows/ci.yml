@@ -1,5 +1,5 @@
 # 自動守門（雲端門）：每次 push / 開 PR，GitHub 自動跑「依賴通報（npm audit，只擋 high 以上）＋三關（校對 typecheck→糾察 lint→考試 test，由協作套件的 tools/run-checks.js 照 settings.json 登記的順序跑）」。
-# PR 頁面會顯示 ✅/❌——合併前先看到綠勾再合併（AGENTS.md 驗證要求的自動化版）。
+# PR 頁面會顯示 ✅/❌——合併前先看到綠勾再合併（docs/development-workflow.md 驗證要求的自動化版）。
 #
 # ⚠️ 兩個 job 是刻意的：
 #   deploy-runtime＝**跟 Render 上線那一顆一模一樣的 Node**（讀 `.node-version`，與 render.yaml 同一份真相）。

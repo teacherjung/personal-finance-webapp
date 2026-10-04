@@ -54,7 +54,7 @@ fi
 #   ②每次還原後用 git status 斷言「真的乾淨」，任何一步失敗＝大聲失敗、立即中止
 #     （還原失敗還繼續跑，後面每一條都疊在髒樹上＝結果全是垃圾）；
 #   ③備份目錄只在還原驗證通過後才刪——還原失敗時它就是人工救援的精確原始檔。
-GUARD_FILES=(AGENTS.md test/contract-split.test.js)   # 平面檔（備份取檔名，不可同名）
+GUARD_FILES=(AGENTS.md docs/sync-index.md test/contract-split.test.js)   # 平面檔（備份取檔名，不可同名）
 GUARD_DIR=docs/contracts                              # 整個目錄
 
 if ! backup_dir=$(mktemp -d); then
@@ -159,7 +159,7 @@ check 'B. 契約檔出現 HTML 註解（連閉合的也不准）' 紅
 mutate 'C. AGENTS 出現 fence（另一種記號也一樣）' <<'PY'
 import pathlib
 p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
-i=s.index("| 月度回顧總覽卡 |")
+i=s.index("## 鐵則")
 p.write_text(s[:i]+"~~~\n\n"+s[i:], encoding="utf-8")
 PY
 check 'C. AGENTS 出現 fence（另一種記號也一樣）' 紅
@@ -189,7 +189,7 @@ check 'F. 契約標題含連結（GitHub 的 anchor 會不一樣）' 紅
 
 # ── 標題形式：會產生 anchor、卻不在原本掃描範圍裡的四種（Codex #384 r14）──
 # 共同的傷害：**搶走正式標題的裸 anchor**，正式那節被 GitHub 改成 `…-1`，
-# AGENTS 的索引連結就默默指到別的地方——而畫面上完全看不出來。
+# 同步點索引連結就默默指到別的地方——而畫面上完全看不出來。
 
 mutate 'R. 同名 #### 搶走 anchor（Codex r14 實證）' <<'PY'
 import pathlib
@@ -361,7 +361,7 @@ p.write_text(s[:i]+"看不見的padding"+"​"*2000+"\n\n"+s[i:], encoding="utf-
 PY
 check 'AK. 零寬字元灌大內文' 紅
 
-# ── r23：容器裡的隱形 padding、不等長反引號、AGENTS 行中 <details> ──
+# ── r23：容器裡的隱形 padding、不等長反引號、同步點索引行中 <details> ──
 
 mutate 'AL. 引用裡的 reference definition（原本行首判斷看不到）' <<'PY'
 import pathlib
@@ -379,14 +379,14 @@ p.write_text(s[:i]+'可見文字 `<a id="月度回顧總覽卡"></a>`` 後面\n\
 PY
 check 'AM. 開一個反引號關兩個（GFM 不算 code span）' 紅
 
-mutate 'AN. AGENTS 行「中」的 details 把同步點表摺起來' <<'PY'
+mutate 'AN. 同步點索引行「中」的 details 把同步點表摺起來' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |")
 j=s.rindex("\n", 0, i)
 p.write_text(s[:j]+" <details><summary>展開</summary>"+s[j:], encoding="utf-8")
 PY
-check 'AN. AGENTS 行「中」的 details 把同步點表摺起來' 紅
+check 'AN. 同步點索引行「中」的 details 把同步點表摺起來' 紅
 
 # ── r25：Codex 給的兩個 GFM 反例＋漏掉的責任檔 ──
 
@@ -398,14 +398,14 @@ p.write_text(s[:i]+'可見文字 ```<a id="月度回顧總覽卡"></a>`` 後面\
 PY
 check 'AP. 開三個反引號關兩個（正規式會回溯）' 紅
 
-mutate 'AQ. 跳脫的反引號包住 details（AGENTS 同步點表被摺起來）' <<'PY'
+mutate 'AQ. 跳脫的反引號包住 details（同步點索引表被摺起來）' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |")
 j=s.rindex("\n", 0, i)
 p.write_text(s[:j]+"\n\n\\`<details><summary>隱藏同步點</summary>\\`\n"+s[j:], encoding="utf-8")
 PY
-check 'AQ. 跳脫的反引號包住 details（AGENTS 同步點表被摺起來）' 紅
+check 'AQ. 跳脫的反引號包住 details（同步點索引表被摺起來）' 紅
 
 mutate 'AR. 弱化凍結標的判準（責任檔原本不在 manifest）' <<'PY'
 import pathlib
@@ -418,7 +418,7 @@ check 'AR. 弱化凍結標的判準（責任檔原本不在 manifest）' 紅
 
 mutate 'AS. 索引列用 video 把兩格清空（Codex r27 實測）' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |")
 j=s.index("\n", i)
 row=s[i:j]
@@ -432,7 +432,7 @@ check 'AS. 索引列用 video 把兩格清空（Codex r27 實測）' 紅
 
 mutate 'AT. 索引列前面插空行（GitHub 會把它移出表格）' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |")
 p.write_text(s[:i]+"\n"+s[i:], encoding="utf-8")
 PY
@@ -440,7 +440,7 @@ check 'AT. 索引列前面插空行（GitHub 會把它移出表格）' 紅
 
 mutate 'AU. 索引列縮排（GitHub 會渲染成程式碼區塊）' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |")
 p.write_text(s[:i]+"    "+s[i:], encoding="utf-8")
 PY
@@ -448,7 +448,7 @@ check 'AU. 索引列縮排（GitHub 會渲染成程式碼區塊）' 紅
 
 mutate 'AV. 契約連結被反斜線跳脫（畫面上點不了）' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |"); j=s.index("\n", i)
 row=s[i:j].replace("[契約：", "\\[契約：", 1)
 p.write_text(s[:i]+row+s[j:], encoding="utf-8")
@@ -457,7 +457,7 @@ check 'AV. 契約連結被反斜線跳脫（畫面上點不了）' 紅
 
 mutate 'AW. 索引列第一格清空（畫面上那格是空的）' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |")
 p.write_text(s[:i]+"|  |"+s[i+len("| 月度回顧總覽卡 |"):], encoding="utf-8")
 PY
@@ -467,7 +467,7 @@ check 'AW. 索引列第一格清空（畫面上那格是空的）' 紅
 
 mutate 'AX. 連結包進雙反引號（渲染成 code、不是連結）' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |"); j=s.index("\n", i)
 row=s[i:j]
 k=row.index("[契約：")
@@ -478,7 +478,7 @@ check 'AX. 連結包進雙反引號（渲染成 code、不是連結）' 紅
 
 mutate 'AY. 連結藏到第三格（兩欄表格會直接丟掉）' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |"); j=s.index("\n", i)
 row=s[i:j]
 k=row.index("[契約：")
@@ -488,7 +488,7 @@ check 'AY. 連結藏到第三格（兩欄表格會直接丟掉）' 紅
 
 mutate 'AZ. 第一格用空連結（渲染成空的 a）' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 a="| 月度回顧總覽卡 |"
 p.write_text(s.replace(a,"| [](https://example.com) |",1), encoding="utf-8")
 PY
@@ -496,7 +496,7 @@ check 'AZ. 第一格用空連結（渲染成空的 a）' 紅
 
 mutate 'BA. 第一格用 HTML entity 的零寬字元' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 a="| 月度回顧總覽卡 |"
 p.write_text(s.replace(a,"| &#x200B; |",1), encoding="utf-8")
 PY
@@ -504,7 +504,7 @@ check 'BA. 第一格用 HTML entity 的零寬字元' 紅
 
 mutate 'BB. 第一格用 reference-style 空連結（沒有 ]( 所以躲過前一版）' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 a="| 月度回顧總覽卡 |"
 p.write_text(s.replace(a,"| [][blank] |",1)+"\n[blank]: https://example.com\n", encoding="utf-8")
 PY
@@ -514,7 +514,7 @@ check 'BB. 第一格用 reference-style 空連結（沒有 ]( 所以躲過前一
 
 mutate 'BC. 表格中間插一個 ###（後續索引列被移出表格）' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |")
 p.write_text(s[:i]+"### 中途插一個標題\n"+s[i:], encoding="utf-8")
 PY
@@ -522,7 +522,7 @@ check 'BC. 表格中間插一個 ###（後續索引列被移出表格）' 紅
 
 mutate 'BD. 表格中間插一個清單項' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |")
 p.write_text(s[:i]+"- 中途插一個清單\n"+s[i:], encoding="utf-8")
 PY
@@ -543,7 +543,7 @@ sec=s[i:j]
 body=sec.split("**記得同步這裡**：")[1]
 pad="（[來源](https://example.com/"+"x"*900+")）"
 s=s[:i]+sec+pad+s[j:]
-q=pathlib.Path("AGENTS.md"); t=q.read_text(encoding="utf-8")
+q=pathlib.Path("docs/sync-index.md"); t=q.read_text(encoding="utf-8")
 k=t.index("| 月度回顧總覽卡 |"); e=t.index("\n", k)
 row=t[k:e]; m=re.search(r"——完整契約\s*→\s*\[[^\]]*\]\([^)]*\)", row)
 q.write_text(t[:k]+"| 月度回顧總覽卡 | "+body.replace("\n"," ").strip()+" "+m.group(0)+" |"+t[e:], encoding="utf-8")
@@ -553,7 +553,7 @@ check 'BF. 契約加長網址、摘要貼回全部可見內文' 紅
 
 mutate 'BG. 整段原文塞進契約連結的 label' <<'PY'
 import pathlib,re
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |"); j=s.index("\n", i)
 row=s[i:j]
 p.write_text(s[:i]+re.sub(r"\[契約：[^\]]*\]", "[契約：這裡塞一整段原文，畫面上會完整顯示，而摘要計算會把整個連結剝掉]", row)+s[j:], encoding="utf-8")
@@ -573,7 +573,7 @@ check 'BH. 契約頁首指到別人的 README 節' 紅
 
 mutate 'BI. 先插清單、再接普通續文（前一行看起來無害）' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |")
 p.write_text(s[:i]+"- 維護說明\n普通續文\n"+s[i:], encoding="utf-8")
 PY
@@ -581,7 +581,7 @@ check 'BI. 先插清單、再接普通續文（前一行看起來無害）' 紅
 
 mutate 'BJ. 用帶空白的分隔線 _ _ _ 中斷表格' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |")
 p.write_text(s[:i]+"_ _ _\n"+s[i:], encoding="utf-8")
 PY
@@ -594,7 +594,7 @@ i=s.index("## 月度回顧總覽卡"); j=s.index("\n## ", i)
 sec=s[i:j]; body=sec.split("**記得同步這裡**：")[1]
 pad="（[來源](https://example.com/report(section)?utm_source="+"x"*900+")）"
 p.write_text(s[:i]+sec+pad+s[j:], encoding="utf-8")
-q=pathlib.Path("AGENTS.md"); t=q.read_text(encoding="utf-8")
+q=pathlib.Path("docs/sync-index.md"); t=q.read_text(encoding="utf-8")
 k=t.index("| 月度回顧總覽卡 |"); e=t.index("\n", k)
 m=re.search(r"——完整契約\s*→\s*\[[^\]]*\]\([^)]*\)", t[k:e])
 q.write_text(t[:k]+"| 月度回顧總覽卡 | "+body.replace("\n"," ").strip()+" "+m.group(0)+" |"+t[e:], encoding="utf-8")
@@ -612,7 +612,7 @@ check 'BL. 契約頁首把領域名寫短（startsWith 會放過）' 紅
 
 mutate 'BM. 契約連結改成圖片形式' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
 i=s.index("| 月度回顧總覽卡 |"); j=s.index("\n", i)
 p.write_text(s[:i]+s[i:j].replace("[契約：","![契約：",1)+s[j:], encoding="utf-8")
 PY
@@ -642,7 +642,7 @@ import pathlib
 ct=pathlib.Path("docs/contracts/frontend-features.md").read_text(encoding="utf-8")
 i=ct.index("## 月度回顧總覽卡"); j=ct.index("\n## ", i)
 b=ct[i:j].split("**記得同步這裡**：")[1].replace("\n"," ").strip()
-p=pathlib.Path("AGENTS.md"); ls=p.read_text(encoding="utf-8").split("\n")
+p=pathlib.Path("docs/sync-index.md"); ls=p.read_text(encoding="utf-8").split("\n")
 for k,l in enumerate(ls):
     if l.startswith("| 月度回顧總覽卡 |"):
         ls[k]="| 月度回顧總覽卡|"+b+"——完整契約"+l.split("——完整契約")[1]; break
@@ -655,7 +655,7 @@ import pathlib
 ct=pathlib.Path("docs/contracts/frontend-features.md").read_text(encoding="utf-8")
 i=ct.index("## 月度回顧總覽卡"); j=ct.index("\n## ", i)
 b=ct[i:j].split("**記得同步這裡**：")[1].replace("\n"," ").strip()
-p=pathlib.Path("AGENTS.md"); ls=p.read_text(encoding="utf-8").split("\n")
+p=pathlib.Path("docs/sync-index.md"); ls=p.read_text(encoding="utf-8").split("\n")
 for k,l in enumerate(ls):
     if l.startswith("| 月度回顧總覽卡 |"):
         ls[k]="| 月度回顧總覽卡 | 前半\\|後半"+b+"——完整契約"+l.split("——完整契約")[1]; break
@@ -668,7 +668,7 @@ import pathlib
 ct=pathlib.Path("docs/contracts/frontend-features.md").read_text(encoding="utf-8")
 i=ct.index("## 月度回顧總覽卡"); j=ct.index("\n## ", i)
 b=ct[i:j].split("**記得同步這裡**：")[1].replace("\n"," ").strip()
-p=pathlib.Path("AGENTS.md"); ls=p.read_text(encoding="utf-8").split("\n")
+p=pathlib.Path("docs/sync-index.md"); ls=p.read_text(encoding="utf-8").split("\n")
 for k,l in enumerate(ls):
     if l.startswith("| 月度回顧總覽卡 |"):
         ls[k]="| 月度回顧總覽卡 | 短摘要——完整契約（假的）"+b+"——完整契約"+l.split("——完整契約")[1]; break
@@ -678,8 +678,10 @@ check 'I. 先放假 marker 再貼回全文（切第一個會漏）' 紅
 
 mutate 'J. 刪掉「最新單季」那條索引（原豁免項）' <<'PY'
 import pathlib,re
-p=pathlib.Path("AGENTS.md")
-p.write_text(re.sub(r'^\| \*\*SEC 最新單季逐列期間\*\*.*\n','',p.read_text(encoding="utf-8"),flags=re.M), encoding="utf-8")
+p=pathlib.Path("docs/sync-index.md")
+s,n=re.subn(r'^\| SEC 最新單季逐列期間[^\n]*\n','',p.read_text(encoding="utf-8"),flags=re.M)
+assert n==1, "最新單季索引必須恰好命中一次，不能把未突變算成測試結果"
+p.write_text(s, encoding="utf-8")
 PY
 check 'J. 刪掉「最新單季」那條索引（原豁免項）' 紅
 
@@ -688,7 +690,7 @@ import pathlib,re
 p=pathlib.Path("docs/contracts/income-expense.md"); s=p.read_text(encoding="utf-8")
 i=s.index("## 店家消費檔案")
 p.write_text(s[:i]+s[i:].replace("**記得同步這裡**：","**同步**："), encoding="utf-8")
-q=pathlib.Path("AGENTS.md")
+q=pathlib.Path("docs/sync-index.md")
 q.write_text(re.sub(r'^\| \*\*店家消費檔案\*\*.*\n','',q.read_text(encoding="utf-8"),flags=re.M), encoding="utf-8")
 PY
 check 'K. marker 與索引一起刪（雙向斷言的核心）' 紅
@@ -703,15 +705,15 @@ p.write_text(p.read_text(encoding="utf-8").replace("      '月度回顧總覽卡
 PY
 check 'M. 從 manifest 偷偷拿掉一條規則' 紅
 
-mutate 'N. AGENTS 多一條等價的重複索引列' <<'PY'
+mutate 'N. 同步點索引多一條等價的重複索引列' <<'PY'
 import pathlib
-p=pathlib.Path("AGENTS.md"); ls=p.read_text(encoding="utf-8").split("\n")
+p=pathlib.Path("docs/sync-index.md"); ls=p.read_text(encoding="utf-8").split("\n")
 for k,l in enumerate(ls):
     if l.startswith("| 月度回顧總覽卡 |"):
-        ls.insert(k+1, l.replace(" | ","|").replace("(docs/contracts/","(./docs/contracts/")); break
+        ls.insert(k+1, l.replace(" | ","|").replace("(contracts/","(./contracts/")); break
 p.write_text("\n".join(ls), encoding="utf-8")
 PY
-check 'N. AGENTS 多一條等價的重複索引列' 紅
+check 'N. 同步點索引多一條等價的重複索引列' 紅
 
 # ── 路由表 ──
 

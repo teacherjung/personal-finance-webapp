@@ -109,7 +109,7 @@ export function monthKey(d) { if (typeof d === 'string') { const m = /^(\d{4})-(
 export const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 // stmtRef（卡id|消費日|金額|原始說明）取回帳單原文：與後端 origFromStmtRef 同口徑——**剝掉去重序號 |#N**
 // （同帳單同店同額的第 2+ 筆才有；Codex r10#5：漏剝會把「星巴克|#2」當原文，改名/分組/tooltip 全對不上）。
-// 前端 import 不到 lib/，故此處複製一份（改 stmtRef 格式要連動這裡＋後端 origFromStmtRef，AGENTS 同步點）。
+// 前端 import 不到 lib/，故此處複製一份（改 stmtRef 格式要連動這裡＋後端 origFromStmtRef，docs/sync-index.md 同步點）。
 export function stmtOrig(stmtRef) {
   const parts = String(stmtRef || '').split('|');
   if (parts.length >= 5 && /^#\d+$/.test(parts[parts.length - 1])) parts.pop();   // 末段 #N＝序號，剝掉

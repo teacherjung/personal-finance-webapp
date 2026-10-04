@@ -871,8 +871,9 @@ test('備份｜連資料庫都開不起來時，前一次留下的 .tmp 殘骸�
 test('備份｜ledger 搬家動手前那顆 pre-ledger-migration.bak 要真的產出來，而且是「搬家之前」的狀態', () => {
   // ⚠️ 這一題補的是本節劃界裡③自己的缺口（#410 r7）：`migrateLedgerIfNeeded`（lib/store.js:164-172）
   //    是**第三份**獨立的 VACUUM→rename，而在這一題之前它連 happy path 都沒有任何斷言——
-  //    全 repo grep `pre-ledger-migration` 的命中，除了 lib/store.js 自己、AGENTS.md、本節上方那塊
-  //    劃界，以及各測試檔 after() 的 rmSync 清理迴圈（與那幾份後綴清單的說明註解），
+  //    當時全 repo grep `pre-ledger-migration` 的命中，除了 lib/store.js 自己、AGENTS.md（規格現見
+  //    docs/project-overview.md「收支三層架構」）、本節上方那塊劃界，以及各測試檔 after() 的 rmSync
+  //    清理迴圈（與那幾份後綴清單的說明註解），
   //    **本題之外沒有任何一條是斷言**。複驗者實測（在 r6 之前那棵樹上，把
   //    lib/store.js:161-172 那整段備份程式碼**整個刪掉**）：`npm test` **1495 pass / 0 fail**，無一題轉紅。
   // ⚠️ 為什麼這顆值得一題：搬家是**一次性且不可逆**的整批改寫（補 ledger＋舊平面收入分類改歸新樹），

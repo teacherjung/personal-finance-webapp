@@ -2,7 +2,7 @@
 // settings.json 的 checks.prepareWorktree（跨變更試合併閘備臨時樹的那一句）的行為題——2026-09-18 搬家第 7 步，
 // 接替舊 test/cross-pr-merge.test.js 裡 lock↔node_modules 那一族的意圖：
 //   臨時樹裡已經有 node_modules（目錄、連結、甚至斷掉的連結）＝退 3、**npm 一次都不叫**（不然 npm ci 會順著連結清掉別棵樹的套件
-//   ＝CLAUDE.md 那條 2026-08-02 事故）；沒有＝跑 `npm ci --prefer-offline --no-audit --no-fund`。
+//   ＝docs/project-collaboration.md 那條 2026-08-02 事故）；沒有＝跑 `npm ci --prefer-offline --no-audit --no-fund`。
 // 套件考題只驗閘怎麼用這句（套件 tests/check-cross-merge.test.js），不驗本專案填的這句對不對——這裡用拋棄式目錄＋假 npm
 // 真的把那句 `sh -c` 跑一遍。子行程用 gitEnv()（這句最後會 exec npm，npm 可能再去 spawn git），所以照 test/git-env.test.js 檔頭的規矩
 // 有兩種 GIT_* 題（髒環境下答案不變、子行程看不到任何 GIT_*）。

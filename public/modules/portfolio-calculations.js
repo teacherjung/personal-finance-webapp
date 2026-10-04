@@ -19,7 +19,7 @@ export function marginCallDistance(ibValTwd, loanTwd, maintPct) {
   return Math.max(0, 1 - loanTwd / ((1 - maintPct / 100) * ibValTwd)) * 100;
 }
 
-// 交易已實現損益 → 基準幣別（USD）。優先序（AGENTS.md）：
+// 交易已實現損益 → 基準幣別（USD）。優先序（docs/contracts/investment-sec.md「多幣別損益」）：
 // pnlBase → fxRateToBase → USD 直通 → 設定匯率估算（source 'estimated'）→ 預設匯率估算（source 'default'；丙-2，William 2026-09-04 裁）
 // → 不支援的幣別才是 missing(0)。匯率表＝fx-rates.js 唯一實作（與資產換算同一份）。
 export function tradePnlBase(t, settings = {}) {

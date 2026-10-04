@@ -9,7 +9,7 @@
 四欄是機器讀的（雲端「協作欄位」檢查與合併指令都跑 tools/gates/check-collab-fields.js）：
 它只讀說明**開頭那一段**——第一個 HTML 註解／引用／表格之前——所以四欄要留在最上面、前面不要放任何東西。
 角色填識別值（settings.json 的 participants：William／Claude／Codex）；實作者與複審者不可同一位（RULES A2、E1）；沒有逐支指定就照 settings.json 的預設分工（RULES A1）。
-「預計修改的檔案」全部列出、太多可以寫資料夾，讓後開工的 Session 查得到誰在改哪些檔（RULES D3）。「最糟失去什麼」一句話，決定這支的流程重量（PR 分級見 AGENTS.md「PR 分級與契約」節）。
+「預計修改的檔案」全部列出、太多可以寫資料夾，讓後開工的 Session 查得到誰在改哪些檔（RULES D3）。「最糟失去什麼」一句話，決定這支的流程重量（PR 分級見 docs/development-workflow.md「PR 分級與契約」節）。
 -->
 
 ## 改了什麼
