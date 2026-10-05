@@ -6,7 +6,7 @@
 // 釘的是結果層（兩頁畫面上的分堆結果）：等價的頁面實作也會過；判準呼叫的形狀由兩頁的字面釘題守、判準本身另有考題（categories）。
 // 誠實劃界：期望值是畫面字串（wan／money 的格式），格式改版這裡要跟著改；jsdom 全域定在 globalThis、沒有清理，
 // 靠 node --test 每檔一個行程隔離，本檔不可與別的考題合檔。
-/* global document */   // boot() 把 jsdom 的 document 定到 globalThis（node --test 每檔一個行程）
+/* global document, window */   // boot() 提供 jsdom 全域（node --test 每檔一個行程）
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -86,6 +86,376 @@ const rowIds = () => [...document.querySelectorAll('tbody [data-edit]')].map(el 
 const rowIdsInOrder = () => [...document.querySelectorAll('tbody [data-edit]')].map(el => el.dataset.edit);
 const settleRender = async () => { await new Promise(r => setTimeout(r, 0)); await new Promise(r => setTimeout(r, 0)); };
 
+test('銀行收支副標：三個詞各開說明窗，關窗歸還焦點且不切換金流', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  await renderCashflow();
+  const expectedRows = rowIds();
+  const expectedAmounts = [...document.querySelectorAll('.cashflow-stat .stat')].map(el => el.textContent);
+  assert.equal(text('.cashflow-head .cashflow-desktop-only'), '掌握每月的真實現金流（收入、支出、內轉）');
+  assert.equal(text('.cashflow-head .cashflow-mobile-only'), '以銀行對帳單為準的真實現金流：收入、支出、內轉');
+  const cases = [
+    ['income', '收入', /所選月份.*收入.*薪資/, /內轉.*不算收入/],
+    ['expense', '支出', /所選月份.*支出.*房租/, /信用卡刷卡消費另列在信用卡帳本.*銀行實際扣繳卡費/],
+    ['transfer', '內轉', /內轉不列入收入與支出.*不影響淨現金流/, /摘要卡只計轉出金額.*列表則同時顯示轉入與轉出/],
+  ];
+  try {
+    for (const [flow, label, first, second] of cases) {
+      const opener = document.getElementById(`cashflowInfo-${flow}`);
+      assert.equal(opener?.tagName, 'BUTTON');
+      assert.equal(opener.getAttribute('type'), 'button');
+      assert.equal(opener.getAttribute('aria-haspopup'), 'dialog');
+      assert.equal(opener.textContent, label);
+      opener.focus();
+      opener.click();
+      await settleRender();
+      assert.equal(text('#modal-root [role="dialog"] h2'), label);
+      assert.ok(document.querySelector('#modal-root [role="dialog"]').classList.contains('cashflow-flow-info-modal'));
+      const explanation = text('#modal-root .info-body');
+      assert.match(explanation, first);
+      assert.match(explanation, second);
+      if (flow === 'transfer') assert.match(explanation, /無法確認是轉出.*不計入內轉摘要金額/);
+      document.querySelector('#modal-root [data-close]').click();
+      await settleRender();
+      assert.equal(document.querySelector('#modal-root .modal'), null);
+      assert.equal(document.activeElement, opener);
+      assert.deepEqual(rowIds(), expectedRows);
+      assert.deepEqual([...document.querySelectorAll('.cashflow-stat .stat')].map(el => el.textContent), expectedAmounts);
+      assert.equal(document.querySelector('.cashflow-stat-action[aria-pressed="true"]').getAttribute('data-flow'), 'all');
+    }
+  } finally {
+    document.querySelector('#modal-root [data-close]')?.click();
+    await settleRender();
+  }
+});
+
+test('銀行收支頁內 renderCashflow 重繪：等待期間入口焦點保留；開窗後同一路重繪不搶焦點，關窗回原入口', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  const originalFetch = globalThis.fetch;
+  for (const flow of ['income', 'expense', 'transfer']) {
+    for (const opened of [false, true]) {
+      await renderCashflow();
+      const opener = document.getElementById(`cashflowInfo-${flow}`);
+      let release;
+      const delayed = new Promise(resolve => { release = resolve; });
+      let reads = 0;
+      globalThis.fetch = async (url, init) => {
+        if (String(url).split('?')[0] === '/api/transactions') { reads++; await delayed; }
+        return originalFetch(url, init);
+      };
+      document.getElementById('monthSelDesktop').focus();
+      const pending = renderCashflow();
+      try {
+        assert.equal(reads, 1, '先開始讀取，再於等待期間移動焦點');
+        opener.focus();
+        if (opened) { opener.click(); await settleRender(); }
+        const focused = document.activeElement;
+        if (opened) assert.ok(document.getElementById('modal-root').contains(focused));
+        const previousMonth = document.getElementById('monthSelDesktop');
+        release();
+        await pending;
+        assert.notEqual(document.getElementById('monthSelDesktop'), previousMonth, '背景確實完成重繪');
+        if (opened) assert.equal(document.activeElement, focused, '背景重繪不搶走窗內焦點');
+        else assert.equal(document.activeElement, document.getElementById(`cashflowInfo-${flow}`));
+        if (opened) {
+          document.querySelector('#modal-root [data-close]').click();
+          await settleRender();
+        }
+        assert.equal(document.activeElement, document.getElementById(`cashflowInfo-${flow}`));
+        assert.equal(document.activeElement.isConnected, true);
+      } finally {
+        release();
+        await pending;
+        globalThis.fetch = originalFetch;
+        document.querySelector('#modal-root [data-close]')?.click();
+        await settleRender();
+      }
+    }
+  }
+});
+
+test('銀行收支控制項重繪：卡片順序、選取與焦點保留；焦點移出頁面時不搶回', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  const original = API['/api/transactions'];
+  API['/api/transactions'] = structuredClone(FIXTURE.filter(t => t.date.startsWith(MONTH)));
+  try {
+    await renderCashflow();
+    assert.deepEqual([...document.querySelectorAll('.cashflow-stat-action')].map(el => el.dataset.flow),
+      ['all', 'income', 'expense', 'transfer'], '卡片的 DOM 與桌機視覺順序相同');
+    for (const selector of ['.cashflow-stat-action', '.cashflow-flow-control .chip']) {
+      for (const flow of ['income', 'expense', 'transfer', 'all']) {
+        const button = document.querySelector(`${selector}[data-flow="${flow}"]`);
+        button.focus();
+        button.click();
+        await settleRender();
+        const replacement = document.querySelector(`${selector}[data-flow="${flow}"]`);
+        assert.notEqual(replacement, button, '確實走過會替換控制項的重繪');
+        assert.equal(document.activeElement, replacement);
+        assert.equal(replacement.getAttribute('aria-pressed'), 'true');
+        assert.equal(document.querySelectorAll('.cashflow-stat-action[aria-pressed="true"]').length, 1);
+        for (const [kind, expected] of Object.entries({ net: '+3.3 萬', income: '6.0 萬', expense: '2.7 萬', transfer: '2.0 萬' })) {
+          assert.equal(text(`[data-kind="${kind}"] .stat`), expected, `${selector} ${flow} 篩選不改整月摘要金額`);
+        }
+      }
+    }
+    for (const id of ['yearSelDesktop', 'monthSelDesktop', 'yearSel', 'monthSel']) {
+      const select = document.getElementById(id);
+      select.focus();
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await settleRender();
+      assert.notEqual(document.getElementById(id), select);
+      assert.equal(document.activeElement, document.getElementById(id));
+    }
+    document.querySelector('.cashflow-stat-action').focus();
+    const pending = renderCashflow();
+    document.getElementById('snapshotBtn').focus();
+    await pending;
+    assert.equal(document.activeElement, document.getElementById('snapshotBtn'));
+  } finally {
+    API['/api/transactions'] = original;
+    document.querySelector('.cashflow-flow-control .chip[data-flow="all"]')?.click();
+    await settleRender();
+  }
+});
+
+test('銀行收支同頁重繪：晚回的舊資料不可覆蓋新資料或搶回焦點', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  const originalFetch = globalThis.fetch;
+  let release;
+  const delayed = new Promise(resolve => { release = resolve; });
+  let readCount = 0;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).split('?')[0] !== '/api/transactions') return originalFetch(url, init);
+    const first = ++readCount === 1;
+    if (first) await delayed;
+    return new Response(JSON.stringify([{ id: first ? 'old-response' : 'new-response',
+      date: '2026-08-01', ledger: 'cashflow', type: 'income', amount: first ? 10000 : 20000,
+      summary: '合成摘要', remark: '' }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  const older = renderCashflow();
+  try {
+    await renderCashflow();
+    assert.equal(readCount, 2, '兩代請求都確實開始');
+    assert.deepEqual(rowIds(), ['new-response']);
+    document.querySelector('.cashflow-stat-action[data-flow="all"]').focus();
+    const focused = document.activeElement;
+    release();
+    await older;
+    assert.deepEqual(rowIds(), ['new-response']);
+    assert.equal(text('[data-kind="income"] .stat'), '2.0 萬');
+    assert.equal(document.activeElement, focused);
+  } finally {
+    release();
+    await older;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('銀行收支重疊讀取失敗：最新失敗離開載入中，較舊的失敗不蓋掉成功畫面', async () => {
+  const { router } = await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  const originalFetch = globalThis.fetch;
+  for (const latestFails of [true, false]) {
+    document.getElementById('toast-root').replaceChildren();
+    let release;
+    const delayed = new Promise(resolve => { release = resolve; });
+    let reads = 0;
+    globalThis.fetch = async (url, init) => {
+      if (String(url).split('?')[0] !== '/api/transactions') return originalFetch(url, init);
+      const first = ++reads === 1;
+      if (first) await delayed;
+      const fails = first ? !latestFails : latestFails;
+      return new Response(JSON.stringify(fails ? { error: '合成失敗 <img src=x onerror=alert(1)>' }
+        : [{ id: 'success-response', date: '2026-08-01', ledger: 'cashflow', type: 'income', amount: 20000, summary: '合成摘要' }]),
+      { status: fails ? 500 : 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    const older = router();
+    try {
+      assert.match(text('#view'), /載入中/);
+      await renderCashflow();
+      assert.equal(reads, 2, '重疊的兩次讀取確實開始');
+      if (latestFails) {
+        assert.match(text('#view [role="alert"]'), /載入失敗：合成失敗 <img/);
+        assert.equal(document.querySelector('#view img'), null, '錯誤文字不可當 HTML 執行');
+      } else {
+        assert.deepEqual(rowIds(), ['success-response']);
+      }
+      const current = document.querySelector('#view').innerHTML;
+      release();
+      await older;
+      assert.equal(document.querySelector('#view').innerHTML, current, '較舊的成功或失敗都不覆蓋最新畫面');
+      assert.equal(text('#toast-root'), '', '過期失敗不可在成功畫面旁新增提示');
+    } finally {
+      release();
+      await older;
+      globalThis.fetch = originalFetch;
+      document.getElementById('toast-root').replaceChildren();
+      await renderCashflow();
+    }
+  }
+});
+
+test('銀行收支篩選失敗：保留已載入的控制項與明細，重試成功後才更新畫面', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  await renderCashflow();
+  const originalFetch = globalThis.fetch;
+  const before = document.querySelector('.cashflow-workspace');
+  const beforeRows = rowIds();
+  let fails = true;
+  let reads = 0;
+  document.getElementById('toast-root').replaceChildren();
+  globalThis.fetch = async (url, init) => {
+    if (String(url).split('?')[0] === '/api/transactions') {
+      reads++;
+      if (fails) return new Response(JSON.stringify({ error: '合成失敗 <img src=x onerror=alert(1)>' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
+    return originalFetch(url, init);
+  };
+  try {
+    document.querySelector('.cashflow-stat-action[data-flow="income"]').click();
+    await settleRender();
+    assert.equal(reads, 1);
+    assert.equal(document.querySelector('.cashflow-workspace'), before);
+    assert.deepEqual(rowIds(), beforeRows);
+    assert.match(text('#toast-root .err'), /載入失敗：合成失敗 <img/);
+    assert.equal(document.querySelector('#toast-root img'), null);
+    fails = false;
+    document.querySelector('.cashflow-stat-action[data-flow="income"]').click();
+    await settleRender();
+    assert.equal(reads, 2);
+    assert.notEqual(document.querySelector('.cashflow-workspace'), before);
+    assert.deepEqual(rowIds(), ['b1']);
+    assert.equal(document.querySelector('.cashflow-stat-action[aria-pressed="true"]').dataset.flow, 'income');
+  } finally {
+    globalThis.fetch = originalFetch;
+    await renderCashflow();
+    document.querySelector('.cashflow-stat-action[data-flow="all"]')?.click();
+    document.getElementById('toast-root').replaceChildren();
+    await settleRender();
+  }
+});
+
+test('銀行收支頁內讀取失敗：年月、金流與排序一起回復成功狀態，重選相同條件可成功', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  const originalFetch = globalThis.fetch;
+  const originalRows = API['/api/transactions'];
+  API['/api/transactions'] = [...structuredClone(FIXTURE), {
+    id: 'july', date: '2026-07-02', ledger: 'cashflow', type: 'income', amount: 1234, summary: '合成七月收入',
+  }];
+  const select = async (id, value) => {
+    const el = document.getElementById(id);
+    el.value = value;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    await settleRender();
+  };
+  const reset = async () => {
+    globalThis.fetch = originalFetch;
+    await renderCashflow();
+    await select('yearSelDesktop', '2026');
+    await select('monthSelDesktop', '08');
+    document.querySelector('.cashflow-stat-action[data-flow="all"]').click();
+    await settleRender();
+    if (text('[data-sort="date"] .sort-tri.active') !== '▼') {
+      document.querySelector('[data-sort="date"]').click();
+      await settleRender();
+    }
+    document.getElementById('toast-root').replaceChildren();
+  };
+  const snapshot = () => ({
+    period: ['yearSelDesktop', 'monthSelDesktop', 'yearSel', 'monthSel'].map(id => document.getElementById(id).value),
+    months: [...document.getElementById('monthSelDesktop').options].map(option => option.value),
+    amount: [...document.querySelectorAll('.cashflow-stat .stat')].map(el => el.textContent),
+    rows: rowIdsInOrder(),
+    pressed: [...document.querySelectorAll('[data-flow][aria-pressed="true"]')].map(el => el.dataset.flow),
+    sort: document.querySelector('.sort-tri.active').parentElement.dataset.sort,
+    direction: text('.sort-tri.active'),
+  });
+  const cases = [
+    ...['yearSelDesktop', 'yearSel'].map(id => ({ id, value: '2025', rows: ['y1'], period: ['2025', '12', '2025', '12'] })),
+    ...['monthSelDesktop', 'monthSel'].map(id => ({ id, value: '07', rows: ['july'], period: ['2026', '07', '2026', '07'] })),
+    ...['.cashflow-stat-action', '.cashflow-flow-control .chip'].flatMap(selector => [
+      ['income', ['b1']], ['expense', ['b2', 'b3', 'b5', 'm1']], ['transfer', ['b4']], ['all', [...CASH_MONTH_IDS].sort()],
+    ].map(([flow, rows]) => ({ selector: `${selector}[data-flow="${flow}"]`, rows }))),
+    { selector: '[data-sort="amount"]', rows: [...CASH_MONTH_IDS].sort(), order: ['b1', 'b4', 'b2', 'b3', 'b5', 'm1'] },
+  ];
+  try {
+    for (const entry of cases) {
+      await reset();
+      const before = snapshot();
+      assert.deepEqual(before.period, ['2026', '08', '2026', '08']);
+      let reads = 0;
+      globalThis.fetch = async (url, init) => {
+        if (String(url).split('?')[0] !== '/api/transactions') return originalFetch(url, init);
+        reads++;
+        return new Response(JSON.stringify({ error: '合成讀取失敗' }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } });
+      };
+      const act = async () => {
+        if (entry.id) await select(entry.id, entry.value);
+        else { document.querySelector(entry.selector).click(); await settleRender(); }
+      };
+      await act();
+      assert.equal(reads, 1, '此控制項確實發起失敗的讀取');
+      assert.deepEqual(snapshot(), before, '失敗後控制項與資料一起回復，不標錯月份');
+      assert.match(text('#toast-root .err'), /合成讀取失敗/);
+      globalThis.fetch = originalFetch;
+      await renderCashflow();
+      assert.deepEqual(snapshot(), before, '再次成功重繪仍是回復後的狀態，沒有藏著失敗的選擇');
+      await act();
+      assert.deepEqual(rowIds(), entry.rows, '重選相同條件確實成功');
+      if (entry.period) assert.deepEqual(snapshot().period, entry.period);
+      if (entry.order) assert.deepEqual(rowIdsInOrder(), entry.order);
+    }
+  } finally {
+    API['/api/transactions'] = originalRows;
+    await reset();
+  }
+});
+
+test('銀行收支切頁後讀取失敗：不得覆蓋新頁面或顯示過期錯誤', async () => {
+  const { router } = await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  const originalFetch = globalThis.fetch;
+  const originalHash = window.location.hash;
+  let release;
+  const delayed = new Promise(resolve => { release = resolve; });
+  let reads = 0;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).split('?')[0] !== '/api/transactions') return originalFetch(url, init);
+    reads++;
+    await delayed;
+    return new Response(JSON.stringify({ error: '過期的合成錯誤' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } });
+  };
+  document.getElementById('toast-root').replaceChildren();
+  const pending = renderCashflow();
+  try {
+    assert.equal(reads, 1, '切頁前已開始等待銀行收支讀取');
+    globalThis.fetch = originalFetch;
+    window.history.replaceState(null, '', '#cards');
+    await router();
+    const otherPage = document.getElementById('view').innerHTML;
+    assert.match(text('#view'), /信用卡/);
+    assert.equal(document.querySelector('.cashflow-workspace'), null);
+    release();
+    await pending;
+    assert.equal(document.getElementById('view').innerHTML, otherPage);
+    assert.equal(text('#toast-root'), '');
+  } finally {
+    release();
+    await pending;
+    globalThis.fetch = originalFetch;
+    window.history.replaceState(null, '', originalHash);
+    await router();
+  }
+});
+
 test('夾具對照（只餵判準、不碰頁面）：固定資料兩本帳都有、兩半判準都踩到、而「用來源／帳戶名分」這種等價分法會分錯', () => {
   assert.deepEqual(FIXTURE.filter(isCardTx).map(t => t.id).sort(), CARD_IDS);
   assert.deepEqual(FIXTURE.filter(t => !isCardTx(t)).map(t => t.id).sort(), CASH_IDS);
@@ -118,14 +488,47 @@ test('銀行收支頁：支出只算現金流帳本（房租＋繳卡費＋手�
   await renderCashflow();
   assert.equal(document.querySelector('#yearSel').value, MONTH.slice(0, 4));
   assert.equal(document.querySelector('#monthSel').value, MONTH.slice(5, 7));
+  assert.equal(document.querySelector('#yearSelDesktop').value, MONTH.slice(0, 4));
+  assert.equal(document.querySelector('#monthSelDesktop').value, MONTH.slice(5, 7));
+  assert.equal(document.querySelector('.cashflow-period-desktop .chip-row'), null, '桌機不再有獨立的金流按鈕列');
+  assert.equal(document.querySelector('.cashflow-controls .chip-row')?.getAttribute('aria-label'), '金流篩選', '手機保留原本的金流按鈕列');
+  for (const [kind, flow] of [['income', 'income'], ['expense', 'expense'], ['transfer', 'transfer'], ['net', 'all']]) {
+    assert.equal(document.querySelector(`.cashflow-stat[data-kind="${kind}"] .cashflow-stat-action`)?.getAttribute('data-flow'), flow,
+      `${kind} 摘要卡應對應 ${flow} 明細`);
+  }
+  assert.equal(document.querySelector('.cashflow-stat[data-kind="net"] .cashflow-stat-action')?.getAttribute('aria-pressed'), 'true');
   assert.equal(text('[data-kind="expense"] .stat'), '2.7 萬', `支出＝wan(${BANK_EXPENSE})：房租＋繳卡費＋b5＋手動聚餐；任何一筆刷卡混進來就不是 2.7`);
   assert.equal(text('[data-kind="income"] .stat'), '6.0 萬', `收入＝wan(${BANK_INCOME})`);
   assert.equal(text('[data-kind="transfer"] .stat'), '2.0 萬', '月摘要的內轉卡要顯示轉出金額');
   assert.equal(text('[data-kind="net"] .stat'), '+3.3 萬', `結餘＝+wan(${BANK_INCOME - BANK_EXPENSE})`);
   assert.match(text('.cashflow-stat[data-kind="transfer"] h3'), /內轉 只計轉出/);
+  assert.equal(text('.cashflow-stat[data-kind="net"] .cashflow-desktop-only'), '淨現金流');
+  assert.equal(text('.cashflow-stat[data-kind="net"] .cashflow-mobile-only'), '結餘');
+  assert.equal(document.querySelector('.cashflow-stat-action[data-flow="all"]').getAttribute('aria-label'), '淨現金流，顯示全部明細');
+  assert.equal(text('.cashflow-summary-head p.cashflow-mobile-only'), '內轉不列入收入與支出');
+  assert.equal(document.querySelector('.cashflow-stat-action[data-flow="transfer"]').getAttribute('title'),
+    '內轉只計轉出；內轉不列入收入與支出。顯示全部內轉明細');
   assert.deepEqual(rowIds(), CASH_MONTH_IDS, '明細＝所選月份六筆現金流；繳卡費 b3 留在這頁、去年 y1 不混進來');
-  assert.match(text('.cashflow-ledger-title [aria-live]'), /^6 筆$/);
-  assert.ok(document.querySelector('.cashflow-summary').nextElementSibling?.classList.contains('cashflow-controls'), '摘要 DOM 要直接排在篩選前面');
+  const ledgerSection = document.querySelector('.cashflow-ledger-section');
+  assert.equal(document.querySelector('.cashflow-summary').nextElementSibling, ledgerSection, '摘要 DOM 要排在明細區塊前面');
+  assert.ok(ledgerSection?.firstElementChild?.classList.contains('cashflow-controls'), '篩選要在明細區塊最上方');
+  assert.ok(ledgerSection?.querySelector('.cashflow-controls')?.nextElementSibling?.classList.contains('cashflow-mobile-only'));
+  assert.equal(text('.cashflow-ledger-head h2'), '收支明細');
+  assert.equal(text('.cashflow-ledger-head [aria-live="polite"]'), `${CASH_MONTH_IDS.length} 筆`);
+
+  document.querySelector('.cashflow-stat[data-kind="income"] .cashflow-stat-action')?.click();
+  await settleRender();
+  assert.deepEqual(rowIds(), ['b1'], '點收入卡應只顯示收入明細');
+  assert.equal(document.querySelector('.cashflow-stat[data-kind="income"] .cashflow-stat-action')?.getAttribute('aria-pressed'), 'true');
+  document.querySelector('.cashflow-stat[data-kind="expense"] .cashflow-stat-action')?.click();
+  await settleRender();
+  assert.deepEqual(rowIds(), ['b2', 'b3', 'b5', 'm1'], '點支出卡應只顯示支出明細');
+  document.querySelector('.cashflow-stat[data-kind="transfer"] .cashflow-stat-action')?.click();
+  await settleRender();
+  assert.deepEqual(rowIds(), ['b4'], '點內轉卡應只顯示內轉明細');
+  document.querySelector('.cashflow-stat[data-kind="net"] .cashflow-stat-action')?.click();
+  await settleRender();
+  assert.deepEqual(rowIds(), CASH_MONTH_IDS, '點淨現金流卡應恢復全部明細');
 
   API['/api/transactions'].push({ id: 'b6', date: '2026-08-19', ledger: 'cashflow', source: 'bank',
     type: 'transfer', dir: 'in', category: '內轉', subcategory: '內轉入', amount: 30000,
@@ -146,21 +549,24 @@ test('銀行收支頁：支出只算現金流帳本（房租＋繳卡費＋手�
   await settleRender();
   assert.deepEqual(rowIdsInOrder(), ['b3', 'b1', 'b2', 'b4', 'b5', 'm1'], '收支說明升冪要依畫面第一行，不依第二行備註或隱藏的 note');
 
-  const year = document.querySelector('#yearSel');
+  const year = document.querySelector('#yearSelDesktop');
   year.value = '2025';
   year.dispatchEvent(new globalThis.Event('change', { bubbles: true }));
   await settleRender();
   assert.equal(document.querySelector('#yearSel').value, '2025');
+  assert.equal(document.querySelector('#yearSelDesktop').value, '2025');
   assert.equal(document.querySelector('#monthSel').value, '12', '所選年份沒有原月份時，退到該年最新月份');
+  assert.equal(document.querySelector('#monthSelDesktop').value, '12');
   assert.equal(text('.cashflow-summary-head strong'), '2025 年 12 月');
   assert.deepEqual(rowIds(), ['y1']);
 
-  const month = document.querySelector('#monthSel');
+  const month = document.querySelector('#monthSelDesktop');
   month.value = '03';
   month.dispatchEvent(new globalThis.Event('change', { bubbles: true }));
   await settleRender();
   assert.equal(document.querySelector('#yearSel').value, '2025', '換月份不可跳回最新年份');
   assert.equal(document.querySelector('#monthSel').value, '03');
+  assert.equal(document.querySelector('#monthSelDesktop').value, '03');
   assert.equal(text('.cashflow-summary-head strong'), '2025 年 3 月');
   assert.deepEqual(rowIds(), ['y2']);
 });

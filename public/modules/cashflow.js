@@ -2,7 +2,7 @@
 // 銀行收支頁（三層重構 stage 1，使用者定 2026-07-20）：**現金流真相**——只顯示現金流帳本
 //（!isCardTx：手動記帳 + 未來的銀行對帳單匯入）。信用卡刷卡消費不在這裡（在「信用卡消費明細」頁）；
 // 銀行帳單裡的「繳卡費」那筆才是刷卡消費的現金流出，計入這裡。
-// 三層分類：金流（收入/支出/內轉）→ 分類 → 子分類。金流用顏色/正負＋頂部篩選呈現；收入走 incomeTree、
+// 三層分類：金流（收入/支出/內轉）→ 分類 → 子分類。收入走 incomeTree、
 // 支出沿用信用卡的 expenseTree（統計合得起來）、內轉固定 內轉出/內轉入（無分類樹）。
 import { api, apiStream, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq, currentNavSeq, watchModalRoot } from '../app.js';
 import { progressText } from './progress-text.js';   // 上傳進度：後端推代碼、句子住這支純模組（可行為測）
@@ -25,7 +25,19 @@ import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 
 let monthFilter = monthKey();
 let flowFilter = 'all';   // 金流篩選：all / income / expense / transfer
+let renderGeneration = 0;
 const listSort = { key: 'date', dir: 'desc' };
+/** @type {{month: string, flow: string, sort: {key: string, dir: string}} | null} */
+let renderedState = null;
+const FLOW_INFO = [
+  ['income', '收入', `<p>這裡的收入，是所選月份在銀行收支中列為「收入」的紀錄，例如薪資、股息或利息。</p>
+    <p>自己的帳戶互相轉入的錢屬於「內轉」，不算收入。</p>`],
+  ['expense', '支出', `<p>這裡的支出，是所選月份在銀行收支中列為「支出」的紀錄，例如房租、生活費或繳信用卡帳單。</p>
+    <p>信用卡刷卡消費另列在信用卡帳本；銀行實際扣繳卡費時，才計入這裡的支出，避免把同一筆錢算兩次。</p>`],
+  ['transfer', '內轉', `<p>內轉是自己的帳戶之間移動資金，例如銀行帳戶互轉，或銀行與證券帳戶間的劃撥。內轉不列入收入與支出，也不影響淨現金流。</p>
+    <p>內轉摘要卡只計轉出金額；內轉列表則同時顯示轉入與轉出。例如轉出 1 萬元、另一個帳戶轉入 1 萬元，摘要卡只算 1 萬元。</p>
+    <p>如果舊紀錄或手動記帳無法確認是轉出，就不計入內轉摘要金額。</p>`],
+];
 
 /** 金流別（顯示/篩選用）：income/expense/transfer → 中文＋顏色 class。 @param {any} t */
 function flowOf(t) {
@@ -36,9 +48,27 @@ function flowOf(t) {
 
 export async function renderCashflow() {
   const seq = currentRouteSeq();
-  const [allRaw, accounts, expTreeRes, incTreeRes, transferRes] = await Promise.all([
-    api('/transactions'), api('/accounts'), api('/categories'), api('/income-categories'), api('/transfer-subcategories')]);
-  if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別覆蓋新頁面（Codex r10#6）
+  const generation = ++renderGeneration;
+  let responses;
+  try {
+    responses = await Promise.all([
+      api('/transactions'), api('/accounts'), api('/categories'), api('/income-categories'), api('/transfer-subcategories')]);
+  } catch (e) {
+    if (seq === currentRouteSeq() && generation === renderGeneration) {
+      if (view().querySelector('.cashflow-workspace') && renderedState) {
+        // 原生選單先改值才發出請求；失敗時，控制項與狀態須回到仍在畫面上的那份資料。
+        monthFilter = renderedState.month;
+        flowFilter = renderedState.flow;
+        Object.assign(listSort, renderedState.sort);
+        for (const id of ['yearSel', 'yearSelDesktop']) byId(id).value = monthFilter.slice(0, 4);
+        for (const id of ['monthSel', 'monthSelDesktop']) byId(id).value = monthFilter.slice(5, 7);
+        toast(`載入失敗：${e.message}`, true);
+      } else view().innerHTML = `<div class="hint" role="alert">載入失敗：${esc(e.message)}</div>`;
+    }
+    return;
+  }
+  if (seq !== currentRouteSeq() || generation !== renderGeneration) return;
+  const [allRaw, accounts, expTreeRes, incTreeRes, transferRes] = responses;
   expTree = expTreeRes && typeof expTreeRes === 'object' ? expTreeRes : {};
   incTree = incTreeRes && typeof incTreeRes === 'object' ? incTreeRes : {};
   if (Array.isArray(transferRes) && transferRes.length) transferSubs = transferRes.map(s => s.label).filter(Boolean);
@@ -58,18 +88,26 @@ export async function renderCashflow() {
   // 篩選金流後再排序
   const filteredRows = monthRows.filter(t => flowFilter === 'all'
     || (flowFilter === 'transfer' ? t.type === 'transfer' : t.type === flowFilter));
-  // 這頁的「摘要＋備註」第一行是帳單原始摘要；排序鍵也必須跟畫面看見的文字一致。
+  // 排序鍵跟著顯示文字，避免另存摘要後仍按帳單原文排序。
   const sortableRows = listSort.key === 'note'
     ? filteredRows.map(t => ({ ...t, note: cashflowDescriptionLines(t).summary }))
     : filteredRows;
   const rows = sortRows(sortableRows, listSort);
 
   const flowTab = (val, label) => `<button class="chip${flowFilter === val ? ' active' : ''}" data-flow="${val}" aria-pressed="${flowFilter === val}">${label}</button>`;
+  const statAction = (flow, label) => `<button type="button" class="cashflow-stat-action" data-flow="${flow}" aria-label="${flow === 'all' ? '淨現金流，顯示全部明細' : `顯示${label}明細`}" title="${flow === 'transfer' ? '內轉只計轉出；內轉不列入收入與支出。顯示全部內轉明細' : `顯示${label}明細`}" aria-pressed="${flowFilter === flow}">${icon('search', 22)}</button>`;
+
+  // 在換掉 DOM 前才取焦點，避免等待資料期間使用者已移到別處卻被拉回。
+  const active = document.activeElement;
+  const focusedControl = active instanceof HTMLElement && view().contains(active)
+    && active.matches('#yearSel, #monthSel, #yearSelDesktop, #monthSelDesktop, .cashflow-stat-action, .cashflow-flow-control .chip, .cashflow-flow-info')
+    ? active : null;
+  const infoButtons = [...view().querySelectorAll('.cashflow-flow-info')];
 
   view().innerHTML = `
     <div class="cashflow-workspace">
       <div class="page-head cashflow-head">
-        <div><h1>銀行收支</h1><p>以銀行對帳單為準的真實現金流：收入、支出、內轉</p></div>
+        <div><h1>銀行收支</h1><p class="cashflow-desktop-only">掌握每月的真實現金流（${FLOW_INFO.map(([flow, label]) => `<button type="button" class="info-link cashflow-flow-info" id="cashflowInfo-${flow}" aria-haspopup="dialog">${label}</button>`).join('、')}）</p><p class="cashflow-mobile-only">以銀行對帳單為準的真實現金流：收入、支出、內轉</p></div>
         <div class="page-actions">
           ${all.some(t => t.source === 'bank') ? `<button class="btn-ghost btn-eq" id="bankBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
           <button class="btn btn-eq" id="addCf">${icon('plus', 16)}記一筆</button>
@@ -79,34 +117,39 @@ export async function renderCashflow() {
 
       <section class="cashflow-summary" aria-label="${esc(periodLabel)}銀行收支摘要">
         <div class="cashflow-summary-head">
-          <div><strong>${esc(periodLabel)}</strong></div>
-          <p>內轉不列入收入與支出</p>
+          <div class="cashflow-period-mobile"><strong>${esc(periodLabel)}</strong></div>
+          <p class="cashflow-mobile-only">內轉不列入收入與支出</p>
+          <div class="cashflow-period-desktop">
+            <div class="cashflow-period-selects" role="group" aria-label="收支月份">
+              <div class="cashflow-select cashflow-period-year"><select id="yearSelDesktop" aria-label="年份">${yearOptionsHtml(years, selectedYear, esc)}</select><span class="cashflow-select-arrow" aria-hidden="true">${icon('chevron-down', 14)}</span></div>
+              <div class="cashflow-select cashflow-period-month"><select id="monthSelDesktop" aria-label="月份">${monthNumberOptionsHtml(monthsInYear, selectedMonth, esc)}</select><span class="cashflow-select-arrow" aria-hidden="true">${icon('chevron-down', 14)}</span></div>
+            </div>
+          </div>
         </div>
         <div class="cashflow-summary-grid">
-          <div class="cashflow-stat" data-kind="income"><h3>收入</h3><div class="stat sm pos">${wan(income)}</div></div>
-          <div class="cashflow-stat" data-kind="expense"><h3>支出</h3><div class="stat sm neg">${wan(expense)}</div></div>
-          <div class="cashflow-stat" data-kind="transfer"><h3>內轉 <small>只計轉出</small></h3><div class="stat sm">${wan(transfer)}</div></div>
-          <div class="cashflow-stat" data-kind="net" data-tone="${netTone}"><h3>結餘</h3><div class="stat sm ${netTone}">${net >= 0 ? '+' : ''}${wan(net)}</div></div>
+          <div class="cashflow-stat" data-kind="net" data-tone="${netTone}"><h3 class="cashflow-desktop-only">淨現金流</h3><h3 class="cashflow-mobile-only">結餘</h3><div class="stat sm ${netTone}">${net >= 0 ? '+' : ''}${wan(net)}</div>${statAction('all', '全部')}</div>
+          <div class="cashflow-stat" data-kind="income"><h3>收入</h3><div class="stat sm pos">${wan(income)}</div>${statAction('income', '收入')}</div>
+          <div class="cashflow-stat" data-kind="expense"><h3>支出</h3><div class="stat sm neg">${wan(expense)}</div>${statAction('expense', '支出')}</div>
+          <div class="cashflow-stat" data-kind="transfer"><h3>內轉 <small class="cashflow-mobile-only">只計轉出</small></h3><div class="stat sm">${wan(transfer)}</div>${statAction('transfer', '內轉')}</div>
         </div>
       </section>
 
-      <section class="cashflow-controls" aria-label="銀行收支篩選">
-        <div class="cashflow-control">
-          <label for="yearSel">年份</label>
-          <div class="cashflow-select"><select id="yearSel">${yearOptionsHtml(years, selectedYear, esc)}</select><span class="cashflow-select-arrow" aria-hidden="true">${icon('chevron-down', 14)}</span></div>
-        </div>
-        <div class="cashflow-control">
-          <label for="monthSel">月份</label>
-          <div class="cashflow-select"><select id="monthSel">${monthNumberOptionsHtml(monthsInYear, selectedMonth, esc)}</select><span class="cashflow-select-arrow" aria-hidden="true">${icon('chevron-down', 14)}</span></div>
-        </div>
-        <div class="cashflow-control cashflow-flow-control">
-          <span class="cashflow-control-label">金流</span>
-          <div class="chip-row" role="group" aria-label="金流篩選">${flowTab('all', '全部')}${flowTab('income', '收入')}${flowTab('expense', '支出')}${flowTab('transfer', '內轉')}</div>
-        </div>
-      </section>
-
-      <section class="cashflow-ledger-section" aria-labelledby="cashflow-ledger-title">
-        <div class="cashflow-ledger-head">
+      <section class="cashflow-ledger-section" aria-label="銀行收支列表">
+        <section class="cashflow-controls" aria-label="銀行收支篩選">
+          <div class="cashflow-control">
+            <label for="yearSel">年份</label>
+            <div class="cashflow-select"><select id="yearSel">${yearOptionsHtml(years, selectedYear, esc)}</select><span class="cashflow-select-arrow" aria-hidden="true">${icon('chevron-down', 14)}</span></div>
+          </div>
+          <div class="cashflow-control">
+            <label for="monthSel">月份</label>
+            <div class="cashflow-select"><select id="monthSel">${monthNumberOptionsHtml(monthsInYear, selectedMonth, esc)}</select><span class="cashflow-select-arrow" aria-hidden="true">${icon('chevron-down', 14)}</span></div>
+          </div>
+          <div class="cashflow-control cashflow-flow-control">
+            <span class="cashflow-control-label">金流</span>
+            <div class="chip-row" role="group" aria-label="金流篩選">${flowTab('all', '全部')}${flowTab('income', '收入')}${flowTab('expense', '支出')}${flowTab('transfer', '內轉')}</div>
+          </div>
+        </section>
+        <div class="cashflow-ledger-head cashflow-mobile-only">
           <div class="cashflow-ledger-title"><h2 id="cashflow-ledger-title">收支明細</h2><span aria-live="polite">${rows.length} 筆</span></div>
         </div>
         <div class="tbl-wrap cashflow-ledger">
@@ -117,20 +160,32 @@ export async function renderCashflow() {
     </div>
   `;
 
+  // 頁內 renderCashflow 會替換 DOM；保留節點，讓已開啟的說明窗仍持有入口。router 先清空頁面的路徑不在此保護內。
+  for (const button of infoButtons) byId(button.id)?.replaceWith(button);
   byId('addCf').onclick = () => openCashflowForm(null, accounts);
+  for (const [flow, label, body] of FLOW_INFO) {
+    byId(`cashflowInfo-${flow}`).onclick = () => {
+      openInfo(label, body);
+      byId('modal-root').querySelector('.modal')?.classList.add('cashflow-flow-info-modal');
+    };
+  }
   byId('uploadBank').onclick = () => openBankUpload();
   { const bb = byId('bankBatches'); if (bb) bb.onclick = () => openBankBatchManager(); }
-  byId('yearSel').onchange = (e) => {
-    const year = /** @type {HTMLSelectElement} */ (e.target).value;
-    const availableMonths = monthNumbersForYear(months, year);
-    const month = availableMonths.includes(selectedMonth) ? selectedMonth : (availableMonths[0] || selectedMonth);
-    monthFilter = `${year}-${month}`;
-    renderCashflow();
-  };
-  byId('monthSel').onchange = (e) => {
-    monthFilter = `${selectedYear}-${/** @type {HTMLSelectElement} */ (e.target).value}`;
-    renderCashflow();
-  };
+  for (const id of ['yearSel', 'yearSelDesktop']) {
+    byId(id).onchange = (e) => {
+      const year = /** @type {HTMLSelectElement} */ (e.target).value;
+      const availableMonths = monthNumbersForYear(months, year);
+      const month = availableMonths.includes(selectedMonth) ? selectedMonth : (availableMonths[0] || selectedMonth);
+      monthFilter = `${year}-${month}`;
+      renderCashflow();
+    };
+  }
+  for (const id of ['monthSel', 'monthSelDesktop']) {
+    byId(id).onchange = (e) => {
+      monthFilter = `${selectedYear}-${/** @type {HTMLSelectElement} */ (e.target).value}`;
+      renderCashflow();
+    };
+  }
   view().querySelectorAll('[data-flow]').forEach(b => /** @type {HTMLElement} */ (b).onclick = () => {
     flowFilter = /** @type {HTMLElement} */ (b).dataset.flow || 'all'; renderCashflow();
   });
@@ -140,6 +195,13 @@ export async function renderCashflow() {
     const t = all.find(x => x.id === /** @type {HTMLElement} */ (b).dataset.del);
     confirmDelete(`${flowOf(t).label} ${money(t.amount)}`, () => api('/transactions/' + t.id, { method: 'DELETE' }));
   });
+  if (focusedControl) {
+    const selector = focusedControl.classList.contains('cashflow-stat-action') ? '.cashflow-stat-action' : '.cashflow-flow-control .chip';
+    const replacement = focusedControl.id ? byId(focusedControl.id)
+      : [...view().querySelectorAll(selector)].find(el => /** @type {HTMLElement} */ (el).dataset.flow === focusedControl.dataset.flow);
+    replacement?.focus({ preventScroll: true });
+  }
+  renderedState = { month: monthFilter, flow: flowFilter, sort: { ...listSort } };
 }
 
 function rowHtml(t) {

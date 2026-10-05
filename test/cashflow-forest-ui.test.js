@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { applyLearnedBankToDb } from '../lib/services/bank-import.js';
 import { emptyDb } from '../lib/store.js';
+import { icon } from '../public/modules/icons.js';
 import {
   cashflowDateLabel,
   cashflowDescriptionLines,
@@ -100,13 +101,16 @@ test('銀行收支明細：銀行匯入顯示原始摘要與備註，舊資料�
   });
 });
 
-test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的行為題在 test/ledger-split-behavior.test.js）：四個金流 chip、清單裡指定的元素 id、編輯／刪除屬性、摘要與空狀態文案各有一處', () => {
+test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的行為題在 test/ledger-split-behavior.test.js）：摘要卡金流按鈕、手機 chip、清單元素與文案各有一處', () => {
   const source = readFileSync(join(ROOT, 'public/modules/cashflow.js'), 'utf8');
   assert.match(source, /allRaw\.filter\(t => !isCardTx\(t\)\)/);
   for (const flow of ['all', 'income', 'expense', 'transfer']) {
     assert.match(source, new RegExp(`flowTab\\('${flow}'`));
   }
   for (const id of ['yearSel', 'monthSel', 'uploadBank', 'bankBatches', 'addCf']) {
+    assert.match(source, new RegExp(`id="${id}"`));
+  }
+  for (const id of ['yearSelDesktop', 'monthSelDesktop']) {
     assert.match(source, new RegExp(`id="${id}"`));
   }
   const actions = source.match(/<div class="page-actions">([\s\S]*?)<\/div>/)?.[1] || '';
@@ -122,12 +126,27 @@ test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的�
   assert.match(source, /class="stat sm \$\{netTone\}"/);
   assert.ok(source.indexOf('class="cashflow-summary"') < source.indexOf('class="cashflow-controls"'),
     '摘要區塊要排在年／月／金流篩選上方');
+  assert.match(source, /<section class="cashflow-ledger-section" aria-label="銀行收支列表">\s*<section class="cashflow-controls"/,
+    '篩選與收支明細應共用同一區塊');
+  assert.match(source, /class="cashflow-ledger-head cashflow-mobile-only"/);
+  assert.match(source, /<h2 id="cashflow-ledger-title">收支明細<\/h2>/);
+  assert.match(source, /\$\{rows.length\} 筆/);
   assert.match(source, /const periodLabel = cashflowPeriodLabel\(monthFilter\);/);
-  assert.match(source, /以銀行對帳單為準的真實現金流：收入、支出、內轉/);
+  assert.match(source, /掌握每月的真實現金流（\$\{FLOW_INFO.map/);
+  assert.match(source, /class="cashflow-mobile-only">以銀行對帳單為準的真實現金流：收入、支出、內轉<\/p>/);
   assert.doesNotMatch(source, /以銀行對帳單為準的真實現金流：收入、支出、帳戶互轉/);
   assert.match(source, /<strong>\$\{esc\(periodLabel\)\}<\/strong>/);
-  assert.match(source, />內轉不列入收入與支出<\/p>/);
-  assert.match(source, /<h3>內轉 <small>只計轉出<\/small><\/h3>/);
+  assert.match(source, /class="cashflow-period-desktop"/);
+  assert.match(source, /class="cashflow-period-mobile"/);
+  assert.match(source, /class="cashflow-mobile-only">內轉不列入收入與支出<\/p>/);
+  assert.match(source, /data-kind="transfer"><h3>內轉 <small class="cashflow-mobile-only">只計轉出<\/small><\/h3>/);
+  assert.match(source, /data-kind="net"[^>]*><h3 class="cashflow-desktop-only">淨現金流<\/h3>/);
+  assert.match(source, /class="cashflow-stat-action" data-flow="\$\{flow\}"/);
+  assert.match(source, /aria-pressed="\$\{flowFilter === flow\}">\$\{icon\('search', 22\)\}<\/button>/);
+  const searchIcon = icon('search', 22);
+  assert.match(searchIcon, /<circle cx="11" cy="11" r="8"\/>/);
+  assert.match(searchIcon, /<path d="m21 21-4.3-4.3"\/>/);
+  assert.doesNotMatch(source, /class="cashflow-period-desktop"[\s\S]*?class="cashflow-flow-control"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>\s*<div class="cashflow-summary-grid">/);
   for (const removedCopy of ['收支期間', '以銀行對帳單為準；內轉不列入收入與支出',
     '匯入與手動記錄', '不含帳戶內轉', '收入減支出']) {
     assert.doesNotMatch(source, new RegExp(removedCopy));
@@ -151,10 +170,31 @@ test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的�
   assert.match(source, /src="assets\/guide-return-neutral\.webp"/);
 });
 
-test('銀行收支樣式：摘要共用粗框、三組篩選、帳戶單行與說明雙行都固定', () => {
-  const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8');
+test('銀行收支樣式：桌機四張可互動摘要卡、手機篩選、帳戶單行與說明雙行都固定', () => {
+  const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   assert.match(css, /\.cashflow-workspace/);
+  assert.match(css, /^\.info-link \{[^}]*font: inherit; color: inherit;[^}]*text-decoration: none;/m);
+  assert.match(css, /^\.info-link:hover \{ color: var\(--accent-ink\); \}/m);
+  assert.match(css, /\.cashflow-flow-info:focus-visible \{ outline: 2px dashed var\(--frame\); outline-offset: 2px; \}/);
+  assert.match(css, /\.cashflow-flow-info-modal:focus \{ outline: none; \}/);
+  assert.match(css, /\.cashflow-flow-info-modal button:focus-visible \{ outline: 2px dashed var\(--frame\); outline-offset: 2px; \}/);
   assert.match(css, /\.cashflow-summary-grid \{[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);[^}]*border: 2px solid var\(--frame\)/);
+  assert.match(css, /@media \(min-width: 821px\) \{[\s\S]*?\.cashflow-summary-grid \{[^}]*gap: 12px;[^}]*border: 0;/);
+  assert.match(css, /\.cashflow-summary-grid > \.cashflow-stat \{[^}]*border: 2px solid var\(--frame\)/);
+  assert.match(css, /\.cashflow-stat-action \{[^}]*display: none/);
+  assert.match(css, /\.cashflow-summary-grid > \.cashflow-stat:hover \{[^}]*translateY\(-2px\)/);
+  assert.match(css, /\.cashflow-summary-grid > \.cashflow-stat:active \{[^}]*translate\(3px, 3px\);[^}]*box-shadow: 1px 1px/);
+  assert.doesNotMatch(css, /\.cashflow-summary-grid > \.cashflow-stat(?:::before|\.is-active::before) \{[^}]*opacity:/);
+  assert.doesNotMatch(css, /\.cashflow-summary-grid > \.cashflow-stat(?:::after|\.is-active::after) \{/);
+  assert.match(css, /\.cashflow-stat-action > \.ic \{[^}]*color: var\(--accent\);[^}]*width: 22px; height: 22px; opacity: 0;/);
+  assert.match(css, /\.cashflow-stat-action > \.ic \{[^}]*stroke-width: 2\.75;/);
+  assert.match(css, /\.cashflow-stat-action\[aria-pressed="true"\] > \.ic \{ opacity: 1;/);
+  assert.doesNotMatch(css, /\.cashflow-summary-grid > \.cashflow-stat(?:\.is-active|:focus-within) \{[^}]*background:/);
+  const reducedMotion = css.match(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.match(reducedMotion, /\.cashflow-summary-grid > \.cashflow-stat,\s*\.cashflow-stat-action > \.ic\s*\{\s*transition:\s*none;/);
+  assert.match(reducedMotion, /\.cashflow-summary-grid > \.cashflow-stat:hover,\s*\.cashflow-summary-grid > \.cashflow-stat:active\s*\{\s*transform:\s*none;/);
+  assert.match(css, /\.cashflow-desktop-only \{ display: none; \}/);
+  assert.match(css, /@media \(min-width: 821px\) \{\s*\.cashflow-workspace \.cashflow-mobile-only \{ display: none; \}\s*\.cashflow-workspace \.cashflow-desktop-only \{ display: revert; \}/);
   assert.match(css, /\.cashflow-stat\[data-kind="income"\]::before \{ background: var\(--pos\); \}/);
   assert.match(css, /\.cashflow-stat\[data-kind="expense"\]::before \{ background: var\(--neg\); \}/);
   assert.match(css, /--cashflow-neutral: #858585;/);
@@ -162,11 +202,40 @@ test('銀行收支樣式：摘要共用粗框、三組篩選、帳戶單行與�
   assert.match(css, /\.cashflow-stat\[data-kind="transfer"\] \.stat \{ color: var\(--cashflow-neutral\); \}/);
   assert.match(css, /\.cashflow-stat\[data-kind="net"\]\[data-tone="pos"\]::before \{ background: var\(--pos\); \}/);
   assert.match(css, /\.cashflow-stat\[data-kind="net"\]\[data-tone="neg"\]::before \{ background: var\(--neg\); \}/);
-  assert.match(css, /\.cashflow-stat \+ \.cashflow-stat \{ border-left: 2px solid var\(--frame\); \}/);
+  assert.match(css, /\.cashflow-stat:not\(\[data-kind="income"\]\) \{ border-left: 2px solid var\(--frame\); \}/);
+  assert.match(css, /\.cashflow-stat\[data-kind="net"\] \{ order: 1; \}/);
+  assert.match(css, /\.cashflow-stat-action:focus-visible \{ outline: 2px dashed var\(--frame\); outline-offset: -7px; \}/);
   assert.match(css, /\.cashflow-controls \{[\s\S]*border: 2px solid var\(--frame\)/);
   assert.match(css, /\.cashflow-controls \{[\s\S]*grid-template-columns: minmax\(130px, 180px\) minmax\(130px, 180px\) minmax\(0, 1fr\)/);
   assert.match(css, /\.cashflow-controls \{[^}]*align-items: start/,
     '年份、月份、金流三組從頂端對齊，標題才會落在同一水平線');
+  assert.match(css, /@media \(min-width: 821px\) \{\s*\.cashflow-ledger-section \{[^}]*border: 2px solid var\(--frame\)/);
+  assert.match(css, /\.cashflow-ledger-section \.cashflow-ledger \{[^}]*border: 0/);
+  assert.match(css, /\.cashflow-period-desktop \{ display: none; \}/);
+  assert.match(css, /@media \(min-width: 821px\) \{[\s\S]*\.cashflow-period-desktop \{[^}]*display: flex/);
+  const desktopSummaryStyle = css.split('@media (min-width: 821px) {')[1]?.split('@media (min-width: 821px) and (max-width: 960px)')[0] || '';
+  assert.match(desktopSummaryStyle, /\.cashflow-summary-head \{ margin-bottom: 14px; \}/);
+  assert.match(desktopSummaryStyle, /\.cashflow-summary \{ margin-bottom: 20px; \}/);
+  assert.match(desktopSummaryStyle, /\.cashflow-period-selects \{[^}]*width: max\(202px, calc\(25% - 14px\)\)/);
+  assert.match(desktopSummaryStyle, /grid-template-columns: minmax\(0, 1fr\) 8px repeat\(3, minmax\(0, 1fr\)\)/);
+  for (const [kind, column] of [['net', 1], ['income', 3], ['expense', 4], ['transfer', 5]]) {
+    assert.match(desktopSummaryStyle, new RegExp(`\\.cashflow-stat\\[data-kind="${kind}"\\] \\{[^}]*grid-column: ${column};`));
+  }
+  assert.match(desktopSummaryStyle, /\.cashflow-stat\[data-kind="net"\]::before \{ display: none; \}/);
+  assert.match(desktopSummaryStyle, /\.cashflow-period-year \{[^}]*flex: 3 1 0/);
+  assert.match(desktopSummaryStyle, /\.cashflow-period-month \{[^}]*flex: 2 1 0/);
+  assert.match(desktopSummaryStyle, /\.cashflow-period-selects \.cashflow-select select \{[^}]*height: 43px/);
+  assert.match(desktopSummaryStyle, /\.cashflow-summary-grid > \.cashflow-stat \{[^}]*box-shadow: var\(--shadow\)/);
+  for (const [column, width] of [[3, '32%'], [4, '9%'], [5, '16%'], [7, '90px']]) {
+    assert.match(desktopSummaryStyle, new RegExp(`\\.cashflow-ledger th:nth-child\\(${column}\\) \\{ width: ${width.replace('%', '\\%')}; \\}`));
+  }
+  assert.match(desktopSummaryStyle, /\.cashflow-stat-action \{[^}]*display: block/);
+  assert.doesNotMatch(desktopSummaryStyle, /\.cashflow-period-desktop \.cashflow-flow-control/);
+  assert.match(css, /@media \(min-width: 821px\) \{[\s\S]*\.cashflow-ledger-section \.cashflow-controls \{[^}]*display: none/);
+  assert.match(css, /\.cashflow-ledger-head \{ display: flex;[^}]*margin-bottom: 10px;/);
+  assert.match(css, /\.cashflow-ledger-title \{ display: flex; align-items: center; gap: 9px; \}/);
+  assert.match(css, /\.cashflow-ledger-head h2 \{[^}]*font-size: 19px;/);
+  assert.match(css, /\.cashflow-ledger-section \.cashflow-ledger th \{ border-bottom: 2px solid var\(--frame\); \}/);
   assert.match(css, /@media \(min-width: 641px\) and \(max-width: 960px\) \{[\s\S]*\.cashflow-flow-control \{ grid-column: 1 \/ -1; \}/);
   assert.match(css, /\.cashflow-flow-control \.chip-row \{[\s\S]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
   assert.match(css, /\.cashflow-flow-control \.chip:hover \{ background: var\(--card\); \}/);
