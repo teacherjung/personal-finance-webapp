@@ -118,14 +118,42 @@ test('銀行收支頁：支出只算現金流帳本（房租＋繳卡費＋手�
   await renderCashflow();
   assert.equal(document.querySelector('#yearSel').value, MONTH.slice(0, 4));
   assert.equal(document.querySelector('#monthSel').value, MONTH.slice(5, 7));
+  assert.equal(document.querySelector('#yearSelDesktop').value, MONTH.slice(0, 4));
+  assert.equal(document.querySelector('#monthSelDesktop').value, MONTH.slice(5, 7));
+  assert.equal(document.querySelector('.cashflow-period-desktop .chip-row'), null, '桌機不再有獨立的金流按鈕列');
+  assert.equal(document.querySelector('.cashflow-controls .chip-row')?.getAttribute('aria-label'), '金流篩選', '手機保留原本的金流按鈕列');
+  for (const [kind, flow] of [['income', 'income'], ['expense', 'expense'], ['transfer', 'transfer'], ['net', 'all']]) {
+    assert.equal(document.querySelector(`.cashflow-stat[data-kind="${kind}"] .cashflow-stat-action`)?.getAttribute('data-flow'), flow,
+      `${kind} 摘要卡應對應 ${flow} 明細`);
+  }
+  assert.equal(document.querySelector('.cashflow-stat[data-kind="net"] .cashflow-stat-action')?.getAttribute('aria-pressed'), 'true');
   assert.equal(text('[data-kind="expense"] .stat'), '2.7 萬', `支出＝wan(${BANK_EXPENSE})：房租＋繳卡費＋b5＋手動聚餐；任何一筆刷卡混進來就不是 2.7`);
   assert.equal(text('[data-kind="income"] .stat'), '6.0 萬', `收入＝wan(${BANK_INCOME})`);
   assert.equal(text('[data-kind="transfer"] .stat'), '2.0 萬', '月摘要的內轉卡要顯示轉出金額');
   assert.equal(text('[data-kind="net"] .stat'), '+3.3 萬', `結餘＝+wan(${BANK_INCOME - BANK_EXPENSE})`);
-  assert.match(text('.cashflow-stat[data-kind="transfer"] h3'), /內轉 只計轉出/);
+  assert.equal(text('.cashflow-stat[data-kind="transfer"] h3'), '內轉');
+  assert.equal(text('.cashflow-stat[data-kind="net"] h3'), '淨現金流');
+  assert.equal(document.querySelector('.cashflow-summary-head p'), null);
   assert.deepEqual(rowIds(), CASH_MONTH_IDS, '明細＝所選月份六筆現金流；繳卡費 b3 留在這頁、去年 y1 不混進來');
-  assert.match(text('.cashflow-ledger-title [aria-live]'), /^6 筆$/);
-  assert.ok(document.querySelector('.cashflow-summary').nextElementSibling?.classList.contains('cashflow-controls'), '摘要 DOM 要直接排在篩選前面');
+  const ledgerSection = document.querySelector('.cashflow-ledger-section');
+  assert.equal(document.querySelector('.cashflow-summary').nextElementSibling, ledgerSection, '摘要 DOM 要排在明細區塊前面');
+  assert.ok(ledgerSection?.firstElementChild?.classList.contains('cashflow-controls'), '篩選要在明細區塊最上方');
+  assert.ok(ledgerSection?.querySelector('.cashflow-controls')?.nextElementSibling?.classList.contains('cashflow-ledger'), '篩選後直接接明細列表');
+  assert.equal(ledgerSection?.querySelector('.cashflow-ledger-head'), null, '明細列表不再顯示標題與筆數列');
+
+  document.querySelector('.cashflow-stat[data-kind="income"] .cashflow-stat-action')?.click();
+  await settleRender();
+  assert.deepEqual(rowIds(), ['b1'], '點收入卡應只顯示收入明細');
+  assert.equal(document.querySelector('.cashflow-stat[data-kind="income"] .cashflow-stat-action')?.getAttribute('aria-pressed'), 'true');
+  document.querySelector('.cashflow-stat[data-kind="expense"] .cashflow-stat-action')?.click();
+  await settleRender();
+  assert.deepEqual(rowIds(), ['b2', 'b3', 'b5', 'm1'], '點支出卡應只顯示支出明細');
+  document.querySelector('.cashflow-stat[data-kind="transfer"] .cashflow-stat-action')?.click();
+  await settleRender();
+  assert.deepEqual(rowIds(), ['b4'], '點內轉卡應只顯示內轉明細');
+  document.querySelector('.cashflow-stat[data-kind="net"] .cashflow-stat-action')?.click();
+  await settleRender();
+  assert.deepEqual(rowIds(), CASH_MONTH_IDS, '點淨現金流卡應恢復全部明細');
 
   API['/api/transactions'].push({ id: 'b6', date: '2026-08-19', ledger: 'cashflow', source: 'bank',
     type: 'transfer', dir: 'in', category: '內轉', subcategory: '內轉入', amount: 30000,
@@ -146,21 +174,24 @@ test('銀行收支頁：支出只算現金流帳本（房租＋繳卡費＋手�
   await settleRender();
   assert.deepEqual(rowIdsInOrder(), ['b3', 'b1', 'b2', 'b4', 'b5', 'm1'], '收支說明升冪要依畫面第一行，不依第二行備註或隱藏的 note');
 
-  const year = document.querySelector('#yearSel');
+  const year = document.querySelector('#yearSelDesktop');
   year.value = '2025';
   year.dispatchEvent(new globalThis.Event('change', { bubbles: true }));
   await settleRender();
   assert.equal(document.querySelector('#yearSel').value, '2025');
+  assert.equal(document.querySelector('#yearSelDesktop').value, '2025');
   assert.equal(document.querySelector('#monthSel').value, '12', '所選年份沒有原月份時，退到該年最新月份');
+  assert.equal(document.querySelector('#monthSelDesktop').value, '12');
   assert.equal(text('.cashflow-summary-head strong'), '2025 年 12 月');
   assert.deepEqual(rowIds(), ['y1']);
 
-  const month = document.querySelector('#monthSel');
+  const month = document.querySelector('#monthSelDesktop');
   month.value = '03';
   month.dispatchEvent(new globalThis.Event('change', { bubbles: true }));
   await settleRender();
   assert.equal(document.querySelector('#yearSel').value, '2025', '換月份不可跳回最新年份');
   assert.equal(document.querySelector('#monthSel').value, '03');
+  assert.equal(document.querySelector('#monthSelDesktop').value, '03');
   assert.equal(text('.cashflow-summary-head strong'), '2025 年 3 月');
   assert.deepEqual(rowIds(), ['y2']);
 });
