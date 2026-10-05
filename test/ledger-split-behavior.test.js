@@ -6,7 +6,7 @@
 // 釘的是結果層（兩頁畫面上的分堆結果）：等價的頁面實作也會過；判準呼叫的形狀由兩頁的字面釘題守、判準本身另有考題（categories）。
 // 誠實劃界：期望值是畫面字串（wan／money 的格式），格式改版這裡要跟著改；jsdom 全域定在 globalThis、沒有清理，
 // 靠 node --test 每檔一個行程隔離，本檔不可與別的考題合檔。
-/* global document */   // boot() 把 jsdom 的 document 定到 globalThis（node --test 每檔一個行程）
+/* global document, window */   // boot() 提供 jsdom 全域（node --test 每檔一個行程）
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -93,6 +93,7 @@ test('銀行收支副標：三個詞各開說明窗，關窗歸還焦點且不�
   const expectedRows = rowIds();
   const expectedAmounts = [...document.querySelectorAll('.cashflow-stat .stat')].map(el => el.textContent);
   assert.equal(text('.cashflow-head .cashflow-desktop-only'), '掌握每月的真實現金流（收入、支出、內轉）');
+  assert.equal(text('.cashflow-head .cashflow-mobile-only'), '以銀行對帳單為準的真實現金流：收入、支出、內轉');
   const cases = [
     ['income', '收入', /所選月份.*收入.*薪資/, /內轉.*不算收入/],
     ['expense', '支出', /所選月份.*支出.*房租/, /信用卡刷卡消費另列在信用卡帳本.*銀行實際扣繳卡費/],
@@ -245,6 +246,85 @@ test('銀行收支重疊讀取失敗：最新失敗離開載入中，較舊的�
       globalThis.fetch = originalFetch;
       await renderCashflow();
     }
+  }
+});
+
+test('銀行收支篩選失敗：保留已載入的控制項與明細，重試成功後才更新畫面', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  await renderCashflow();
+  const originalFetch = globalThis.fetch;
+  const before = document.querySelector('.cashflow-workspace');
+  const beforeRows = rowIds();
+  let fails = true;
+  let reads = 0;
+  document.getElementById('toast-root').replaceChildren();
+  globalThis.fetch = async (url, init) => {
+    if (String(url).split('?')[0] === '/api/transactions') {
+      reads++;
+      if (fails) return new Response(JSON.stringify({ error: '合成失敗 <img src=x onerror=alert(1)>' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
+    return originalFetch(url, init);
+  };
+  try {
+    document.querySelector('.cashflow-stat-action[data-flow="income"]').click();
+    await settleRender();
+    assert.equal(reads, 1);
+    assert.equal(document.querySelector('.cashflow-workspace'), before);
+    assert.deepEqual(rowIds(), beforeRows);
+    assert.match(text('#toast-root .err'), /載入失敗：合成失敗 <img/);
+    assert.equal(document.querySelector('#toast-root img'), null);
+    fails = false;
+    document.querySelector('.cashflow-stat-action[data-flow="income"]').click();
+    await settleRender();
+    assert.equal(reads, 2);
+    assert.notEqual(document.querySelector('.cashflow-workspace'), before);
+    assert.deepEqual(rowIds(), ['b1']);
+    assert.equal(document.querySelector('.cashflow-stat-action[aria-pressed="true"]').dataset.flow, 'income');
+  } finally {
+    globalThis.fetch = originalFetch;
+    document.querySelector('.cashflow-stat-action[data-flow="all"]')?.click();
+    document.getElementById('toast-root').replaceChildren();
+    await settleRender();
+  }
+});
+
+test('銀行收支切頁後讀取失敗：不得覆蓋新頁面或顯示過期錯誤', async () => {
+  const { router } = await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  const originalFetch = globalThis.fetch;
+  const originalHash = window.location.hash;
+  let release;
+  const delayed = new Promise(resolve => { release = resolve; });
+  let reads = 0;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).split('?')[0] !== '/api/transactions') return originalFetch(url, init);
+    reads++;
+    await delayed;
+    return new Response(JSON.stringify({ error: '過期的合成錯誤' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } });
+  };
+  document.getElementById('toast-root').replaceChildren();
+  const pending = renderCashflow();
+  try {
+    assert.equal(reads, 1, '切頁前已開始等待銀行收支讀取');
+    globalThis.fetch = originalFetch;
+    window.history.replaceState(null, '', '#cards');
+    await router();
+    const otherPage = document.getElementById('view').innerHTML;
+    assert.match(text('#view'), /信用卡/);
+    assert.equal(document.querySelector('.cashflow-workspace'), null);
+    release();
+    await pending;
+    assert.equal(document.getElementById('view').innerHTML, otherPage);
+    assert.equal(text('#toast-root'), '');
+  } finally {
+    release();
+    await pending;
+    globalThis.fetch = originalFetch;
+    window.history.replaceState(null, '', originalHash);
+    await router();
   }
 });
 

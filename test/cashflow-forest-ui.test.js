@@ -133,7 +133,8 @@ test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的�
   assert.match(source, /\$\{rows.length\} 筆/);
   assert.match(source, /const periodLabel = cashflowPeriodLabel\(monthFilter\);/);
   assert.match(source, /掌握每月的真實現金流（\$\{FLOW_INFO.map/);
-  assert.match(source, /class="cashflow-mobile-only">以銀行對帳單為準的真實現金流/);
+  assert.match(source, /class="cashflow-mobile-only">以銀行對帳單為準的真實現金流：收入、支出、內轉<\/p>/);
+  assert.doesNotMatch(source, /以銀行對帳單為準的真實現金流：收入、支出、帳戶互轉/);
   assert.match(source, /<strong>\$\{esc\(periodLabel\)\}<\/strong>/);
   assert.match(source, /class="cashflow-period-desktop"/);
   assert.match(source, /class="cashflow-period-mobile"/);

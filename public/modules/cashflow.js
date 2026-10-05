@@ -53,7 +53,8 @@ export async function renderCashflow() {
       api('/transactions'), api('/accounts'), api('/categories'), api('/income-categories'), api('/transfer-subcategories')]);
   } catch (e) {
     if (seq === currentRouteSeq() && generation === renderGeneration) {
-      view().innerHTML = `<div class="hint" role="alert">載入失敗：${esc(e.message)}</div>`;
+      if (view().querySelector('.cashflow-workspace')) toast(`載入失敗：${e.message}`, true);
+      else view().innerHTML = `<div class="hint" role="alert">載入失敗：${esc(e.message)}</div>`;
     }
     return;
   }
