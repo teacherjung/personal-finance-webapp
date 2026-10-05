@@ -103,6 +103,17 @@ test('夾具對照（只餵判準、不碰頁面）：固定資料兩本帳都�
 
 test('銀行收支頁：支出只算現金流帳本（房租＋繳卡費＋手動），刷卡明細一筆都不進來', async () => {
   await boot();
+  const { cashflowDescriptionLines } = await import('../public/modules/cashflow-model.js');
+  const { sortRows } = await import('../public/modules/tx-sort.js');
+  // 先守住夾具的辨識力，避免改資料後錯用排序欄位也得到相同列序；頁面接線仍由點擊後的固定期望值驗證。
+  const sortFixture = FIXTURE.filter(t => !isCardTx(t) && t.date.startsWith(MONTH));
+  const orderBy = pick => sortRows(sortFixture.map(t => ({ ...t, note: pick(t) })), { key: 'note', dir: 'asc' }).map(t => t.id);
+  const summaryOrder = orderBy(t => cashflowDescriptionLines(t).summary);
+  const remarkOrder = orderBy(t => cashflowDescriptionLines(t).note);
+  const legacyOrder = orderBy(t => t.note);
+  assert.notDeepEqual(summaryOrder, remarkOrder, '排序夾具：第一行與第二行必須不同序');
+  assert.notDeepEqual(summaryOrder, legacyOrder, '排序夾具：第一行與舊 note 必須不同序');
+  assert.notDeepEqual(remarkOrder, legacyOrder, '排序夾具：第二行與舊 note 必須不同序');
   const { renderCashflow } = await import('../public/modules/cashflow.js');
   await renderCashflow();
   assert.equal(document.querySelector('#yearSel').value, MONTH.slice(0, 4));
