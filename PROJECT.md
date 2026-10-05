@@ -38,12 +38,12 @@
    1. 摘要與備註採不同排序的夾具，辨認排序實際讀哪一行；位置＝`test/ledger-split-behavior.test.js` 排序段；時機＝下次調整兩行顯示或排序。
    2. 整頁考題加入僅有半份帳單文字的列，確認退路與第二行缺值；位置＝同檔頁面夾具及 DOM 斷言；時機＝下次改列渲染或退路。函式單位題已有半份案例，不能代替頁面接線驗證。
    3. 補第二行缺值顯示「—」的 DOM 斷言；位置＝同檔列內容驗證；時機＝與第 2 項一併補。契約空白／破折號落差已由 #657 修正。
-   4. 修準契約及型別註解的「純粹留底／純留底」與「一字未改」說法；位置＝`docs/contracts/income-expense.md`「帳單原文摘要與備註分兩欄留底」節及 `lib/types.js` 的 bankSummary／bankNote；時機＝下次整理銀行文字欄位或第 7 項用詞。#657 已修契約失效節名，但契約「純粹留底」原句仍在，與型別註解一併待處理。
+   4. 修準契約及型別註解的「純粹留底／純留底」與「一字未改」說法；位置＝`docs/contracts/income-expense.md`「帳單原文摘要與備註分兩欄留底」節及 `lib/types.js` 的 bankSummary／bankNote；時機＝下次整理銀行文字欄位或其技術文件。#657 已修契約失效節名，但契約「純粹留底」原句仍在，與型別註解一併待處理。
    5. 補換年仍有相同月份時保留月份的整頁案例；位置＝`test/ledger-split-behavior.test.js` 年月篩選段；時機＝下次改年月篩選。
-   6. 原說明跳窗已由 #657 移除；是否結清原文案審改項仍待 William 裁示（[待裁留痕](https://github.com/teacherjung/personal-finance-webapp/pull/655#issuecomment-5981936488)），不請他點不存在的按鈕。
-   7. 現行同步提示仍稱「帳單原文」，內建解析會移除空白；面向使用者用詞仍待 William 決定，依原交接逐題詢問；位置＝`public/modules/cashflow.js` 同步完成提示；時機＝第 6 題答覆後提出第 7 題，不自行改詞。
 
 ## 重要決定（已拍板，勿重議）
+
+- **銀行收支文案裁示（2026-10-05）**：#655 r3 第 6 項所指的「收支說明是什麼？」跳窗已由 #657 移除；William 回「A」，同意結清該文案審改項（[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/655#issuecomment-5987417002)）。第 7 項選擇保留面向使用者的「帳單原文」用詞（[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/655#issuecomment-5987477663)）。這不代表逐字保留空白：部分解析路徑會整理空白；技術文件與型別註解的精確性仍歸上方「銀行收支兩行文字與年月篩選的 r3 待辦」第 4 項。銀行收支另依 William 回報記錄[使用者驗收完成](https://github.com/teacherjung/personal-finance-webapp/pull/657#issuecomment-5987477941)，不等於前五項技術待辦已修。
 
 - **共同規則入口整併（2026-10-03）**：依 William 指派的交接，AGENTS.md 保留錢的絕對邊界、鐵則、路由與常設指示；細節依入口路由表讀正本。Claude 專用入口刪除，專案入口上限 28,000 UTF-8 bytes。本專案協作附則移到 `docs/project-collaboration.md`，套件後續同步以該檔為目標；下文歷史記錄提到的舊位置，以入口路由查新位置。施工計畫與搬移對照＝`docs/agents-entry-plan.md`。
 
