@@ -129,6 +129,52 @@ test('銀行收支副標：三個詞各開說明窗，關窗歸還焦點且不�
   }
 });
 
+test('銀行收支說明入口重繪：等待期間移入的焦點保留；開窗後重繪不搶焦點，關窗仍回原入口', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  const originalFetch = globalThis.fetch;
+  for (const flow of ['income', 'expense', 'transfer']) {
+    for (const opened of [false, true]) {
+      await renderCashflow();
+      const opener = document.getElementById(`cashflowInfo-${flow}`);
+      let release;
+      const delayed = new Promise(resolve => { release = resolve; });
+      let reads = 0;
+      globalThis.fetch = async (url, init) => {
+        if (String(url).split('?')[0] === '/api/transactions') { reads++; await delayed; }
+        return originalFetch(url, init);
+      };
+      document.getElementById('monthSelDesktop').focus();
+      const pending = renderCashflow();
+      try {
+        assert.equal(reads, 1, '先開始讀取，再於等待期間移動焦點');
+        opener.focus();
+        if (opened) { opener.click(); await settleRender(); }
+        const focused = document.activeElement;
+        if (opened) assert.ok(document.getElementById('modal-root').contains(focused));
+        const previousMonth = document.getElementById('monthSelDesktop');
+        release();
+        await pending;
+        assert.notEqual(document.getElementById('monthSelDesktop'), previousMonth, '背景確實完成重繪');
+        if (opened) assert.equal(document.activeElement, focused, '背景重繪不搶走窗內焦點');
+        else assert.equal(document.activeElement, document.getElementById(`cashflowInfo-${flow}`));
+        if (opened) {
+          document.querySelector('#modal-root [data-close]').click();
+          await settleRender();
+        }
+        assert.equal(document.activeElement, document.getElementById(`cashflowInfo-${flow}`));
+        assert.equal(document.activeElement.isConnected, true);
+      } finally {
+        release();
+        await pending;
+        globalThis.fetch = originalFetch;
+        document.querySelector('#modal-root [data-close]')?.click();
+        await settleRender();
+      }
+    }
+  }
+});
+
 test('銀行收支控制項重繪：卡片順序、選取與焦點保留；焦點移出頁面時不搶回', async () => {
   await boot();
   const { renderCashflow } = await import('../public/modules/cashflow.js');

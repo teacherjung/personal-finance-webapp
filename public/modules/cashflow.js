@@ -91,8 +91,9 @@ export async function renderCashflow() {
   // 在換掉 DOM 前才取焦點，避免等待資料期間使用者已移到別處卻被拉回。
   const active = document.activeElement;
   const focusedControl = active instanceof HTMLElement && view().contains(active)
-    && active.matches('#yearSel, #monthSel, #yearSelDesktop, #monthSelDesktop, .cashflow-stat-action, .cashflow-flow-control .chip')
+    && active.matches('#yearSel, #monthSel, #yearSelDesktop, #monthSelDesktop, .cashflow-stat-action, .cashflow-flow-control .chip, .cashflow-flow-info')
     ? active : null;
+  const infoButtons = [...view().querySelectorAll('.cashflow-flow-info')];
 
   view().innerHTML = `
     <div class="cashflow-workspace">
@@ -150,6 +151,8 @@ export async function renderCashflow() {
     </div>
   `;
 
+  // 說明窗保存開窗元素的參照；保留節點，背景重繪後關窗才找得到歸還焦點的目標。
+  for (const button of infoButtons) byId(button.id)?.replaceWith(button);
   byId('addCf').onclick = () => openCashflowForm(null, accounts);
   for (const [flow, label, body] of FLOW_INFO) {
     byId(`cashflowInfo-${flow}`).onclick = () => {
