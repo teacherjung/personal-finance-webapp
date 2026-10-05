@@ -1630,8 +1630,8 @@ test('相容字｜第二趟（新尺）認得整份印相容字的版面，逐�
 });
 
 test('相容字｜引擎輸出的文字**不**正規化：原文留底／去重鍵／帳號身分三條界線（保存型）', () => {
-  // 這題守的是「**不要**做什麼」。正規化一旦流進**存下來的字**，會同時打破三件事：
-  //  ①`bankSummary`／`bankNote` 的「帳單原文、一字未改」契約（`lib/types.js`）
+  // 這題守的是「NFKC 比對尺不改寫輸出文字」；各欄既有的空白處理仍保留。NFKC 改寫會打破三件事：
+  //  ①`bankSummary`／`bankNote` 保存解析結果、不套 NFKC 比對尺的契約（`lib/types.js`）
   //  ②`bankRef` 精準去重（`skipSimilar` 是選配、疑似重複擋不住重複匯入）
   //  ③`noteAccountSuffixes` 的帳號身分——NFKC 把 `①` 折成 `1`（`lib/bank-statement.js` 的
   //    `foldWidth` 早就為了同一個理由拒絕對帳號整串做 NFKC，#504 r8#4）

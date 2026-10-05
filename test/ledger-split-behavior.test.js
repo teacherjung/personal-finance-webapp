@@ -13,16 +13,16 @@ import { JSDOM } from 'jsdom';
 import { isCardTx } from '../public/modules/categories.js';
 
 const MONTH = '2026-08';
-/** 固定資料：note 與帳單摘要刻意排成不同順序；哪些筆算哪本帳由下面的夾具對照題斷言。 */
+/** 固定資料：舊 note、帳單摘要與帳單備註三者刻意排成不同順序；哪些筆算哪本帳由下面的夾具對照題斷言。 */
 const FIXTURE = [
   { id: 'c1', date: '2026-08-03', ledger: 'card', source: 'stmt', type: 'expense', category: '飲食', subcategory: '超市', amount: 1200, account: '台新卡', note: '全聯', stmtRef: 'card1|2026-08-03|1200|全聯' },
   { id: 'c2', date: '2026-08-10', ledger: 'card', source: 'stmt', type: 'expense', category: '交通', subcategory: '加油', amount: 2000, account: '台新卡', note: '加油站', stmtRef: 'card1|2026-08-10|2000|加油站' },
   { id: 'c3', date: '2026-08-15', ledger: 'card', source: 'stmt', type: 'expense', category: '購物', subcategory: '', amount: 3000, account: '台新卡', note: 'PChome', stmtRef: 'card1|2026-08-15|3000|PChome' },
   { id: 'c5', date: '2026-08-21', ledger: 'card', type: 'expense', category: '飲食', subcategory: '餐廳', amount: 500, account: '現金', note: '手動記的刷卡（明確 card、無來源、帳戶不是卡）' },
   { id: 'c4', date: '2026-08-20', source: 'stmt', type: 'expense', category: '飲食', subcategory: '餐廳', amount: 800, account: '台新卡', note: '舊卡消費', stmtRef: 'card1|2026-08-20|800|舊卡消費' },
-  { id: 'b1', date: '2026-08-05', ledger: 'cashflow', source: 'bank', type: 'income', category: '工作', subcategory: '薪資', amount: 60000, account: '台新活存', note: 'Z-old-name', bankSummary: 'B-summary', bankNote: 'B-note' },
-  { id: 'b2', date: '2026-08-06', ledger: 'cashflow', source: 'bank', type: 'expense', category: '居住', subcategory: '房租', amount: 15000, account: '台新活存', note: 'A-old-name', bankSummary: 'C-summary', bankNote: 'C-note' },
-  { id: 'b3', date: '2026-08-12', ledger: 'cashflow', source: 'bank', type: 'expense', category: '', subcategory: '', amount: 6900, account: '台新活存', note: 'C-old-name', bankSummary: 'A-summary', bankNote: 'A-note' },   // 刻意不等於本月消費 7,500
+  { id: 'b1', date: '2026-08-05', ledger: 'cashflow', source: 'bank', type: 'income', category: '工作', subcategory: '薪資', amount: 60000, account: '台新活存', note: 'Z-old-name', bankSummary: 'B-summary', bankNote: 'C-note' },
+  { id: 'b2', date: '2026-08-06', ledger: 'cashflow', source: 'bank', type: 'expense', category: '居住', subcategory: '房租', amount: 15000, account: '台新活存', note: 'A-old-name', bankSummary: 'C-summary', bankNote: 'A-note' },
+  { id: 'b3', date: '2026-08-12', ledger: 'cashflow', source: 'bank', type: 'expense', category: '', subcategory: '', amount: 6900, account: '台新活存', note: 'C-old-name', bankSummary: 'A-summary', bankNote: 'B-note' },   // 刻意不等於本月消費 7,500
   { id: 'b4', date: '2026-08-18', ledger: 'cashflow', source: 'bank', type: 'transfer', category: '內轉', subcategory: '內轉出', amount: 20000, account: '台新活存', note: 'D-existing-note' },
   { id: 'b5', date: '2026-08-22', ledger: 'cashflow', source: 'stmt', type: 'expense', category: '飲食', subcategory: '超市', amount: 4300, account: '台新卡', note: 'E-existing-note', bankSummary: 'E-summary', bankNote: 'E-note' },
   { id: 'm1', date: '2026-08-25', type: 'expense', category: '飲食', subcategory: '餐廳', amount: 1000, account: '現金', note: 'F-existing-note' },
@@ -127,13 +127,13 @@ test('銀行收支頁：支出只算現金流帳本（房租＋繳卡費＋手�
   const b3 = document.querySelector('[data-edit="b3"]')?.closest('tr');
   assert.equal(b3?.querySelector('td')?.textContent, '8/12', '日期格真的接上月／日格式器');
   assert.equal(b3?.querySelector('.cf-note-summary')?.textContent, 'A-summary');
-  assert.equal(b3?.querySelector('.cf-note-remark')?.textContent, 'A-note');
+  assert.equal(b3?.querySelector('.cf-note-remark')?.textContent, 'B-note');
   assert.ok(b3?.querySelector('.cf-note')?.firstElementChild?.classList.contains('cf-note-summary'), '摘要必須是第一行');
   assert.ok(b3?.querySelector('.cf-note')?.lastElementChild?.classList.contains('cf-note-remark'), '備註必須是第二行');
 
   document.querySelector('th[data-sort="note"]')?.click();
   await settleRender();
-  assert.deepEqual(rowIdsInOrder(), ['b3', 'b1', 'b2', 'b4', 'b5', 'm1'], '收支說明升冪要依畫面第一行，不依隱藏的 note');
+  assert.deepEqual(rowIdsInOrder(), ['b3', 'b1', 'b2', 'b4', 'b5', 'm1'], '收支說明升冪要依畫面第一行，不依第二行備註或隱藏的 note');
 
   const year = document.querySelector('#yearSel');
   year.value = '2025';
@@ -152,6 +152,87 @@ test('銀行收支頁：支出只算現金流帳本（房租＋繳卡費＋手�
   assert.equal(document.querySelector('#monthSel').value, '03');
   assert.equal(text('.cashflow-summary-head strong'), '2025 年 3 月');
   assert.deepEqual(rowIds(), ['y2']);
+});
+
+test('銀行收支整頁：只剩一欄帳單文字時，第一行退讀舊說明、第二行顯示破折號', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  const original = API['/api/transactions'];
+  const base = { date: `${MONTH}-04`, ledger: 'cashflow', source: 'bank', type: 'expense', amount: 100, account: '合成帳戶' };
+  try {
+    API['/api/transactions'] = [
+      { ...base, id: 'half-summary', note: '只有摘要時的舊說明', bankSummary: '不完整的帳單摘要' },
+      { ...base, id: 'half-note', note: '只有備註時的舊說明', bankNote: '不完整的帳單備註' },
+    ];
+    await renderCashflow();
+    assert.deepEqual(rowIds(), ['half-note', 'half-summary'], '兩種半份資料都必須真的出現在整頁');
+    for (const [id, firstLine] of [['half-summary', '只有摘要時的舊說明'], ['half-note', '只有備註時的舊說明']]) {
+      const row = document.querySelector(`[data-edit="${id}"]`)?.closest('tr');
+      assert.equal(row?.querySelector('.cf-note-summary')?.textContent, firstLine, `${id} 不可拿半份帳單文字充當完整原文`);
+      assert.equal(row?.querySelector('.cf-note-remark')?.textContent, '—', `${id} 沒有可用第二行時須顯示破折號`);
+    }
+  } finally {
+    API['/api/transactions'] = original;
+    await renderCashflow();
+  }
+});
+
+test('銀行收支整頁：第二行缺值或明確清空都顯示破折號', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  const original = API['/api/transactions'];
+  const base = { date: `${MONTH}-04`, ledger: 'cashflow', type: 'expense', amount: 100, account: '合成帳戶' };
+  try {
+    API['/api/transactions'] = [
+      { ...base, id: 'manual-empty', note: '舊手動第一行' },
+      { ...base, id: 'bank-empty', source: 'bank', note: '銀行舊說明', bankSummary: '銀行摘要', bankNote: '' },
+      { ...base, id: 'cleared-remark', source: 'bank', summary: '自訂摘要', remark: '', bankSummary: '原始摘要', bankNote: '不可蓋回的原始備註' },
+    ];
+    await renderCashflow();
+    assert.deepEqual(rowIds(), ['bank-empty', 'cleared-remark', 'manual-empty']);
+    for (const [id, firstLine] of [['manual-empty', '舊手動第一行'], ['bank-empty', '銀行摘要'], ['cleared-remark', '自訂摘要']]) {
+      const row = document.querySelector(`[data-edit="${id}"]`)?.closest('tr');
+      assert.equal(row?.querySelector('.cf-note-summary')?.textContent, firstLine);
+      assert.equal(row?.querySelector('.cf-note-remark')?.textContent, '—', `${id} 的第二行不能空白，也不能蓋回原始備註`);
+    }
+  } finally {
+    API['/api/transactions'] = original;
+    await renderCashflow();
+  }
+});
+
+test('銀行收支整頁：換年仍有相同月份時保留月份，不跳到該年最新月份', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  const original = API['/api/transactions'];
+  const base = { ledger: 'cashflow', type: 'expense', amount: 100, account: '合成帳戶', note: '年月篩選合成資料' };
+  try {
+    API['/api/transactions'] = [
+      { ...base, id: 'new-aug', date: '2026-08-04' },
+      { ...base, id: 'old-aug', date: '2025-08-04' },
+      { ...base, id: 'old-dec', date: '2025-12-04' },
+    ];
+    await renderCashflow();
+    const year = document.querySelector('#yearSel');
+    year.value = '2026';
+    year.dispatchEvent(new globalThis.Event('change', { bubbles: true }));
+    await settleRender();
+    assert.equal(document.querySelector('#monthSel').value, '08');
+    assert.deepEqual(rowIds(), ['new-aug'], '先確定起點是 2026 年 8 月');
+
+    const otherYear = document.querySelector('#yearSel');
+    otherYear.value = '2025';
+    otherYear.dispatchEvent(new globalThis.Event('change', { bubbles: true }));
+    await settleRender();
+    assert.equal(document.querySelector('#yearSel').value, '2025');
+    assert.deepEqual([...document.querySelector('#monthSel').options].map(option => option.value), ['12', '08'], '目標年份另有更新月份，才能辨認是否保留原月份');
+    assert.equal(document.querySelector('#monthSel').value, '08', '換年保留同樣存在的 8 月，不可無條件跳到 12 月');
+    assert.equal(text('.cashflow-summary-head strong'), '2025 年 8 月');
+    assert.deepEqual(rowIds(), ['old-aug'], '明細也必須真的切到去年 8 月');
+  } finally {
+    API['/api/transactions'] = original;
+    await renderCashflow();
+  }
 });
 
 test('信用卡費頁：本月消費只算信用卡帳本（含缺 ledger 的舊卡匯入），薪資／房租／繳卡費／內轉都不進來', async () => {
@@ -187,7 +268,7 @@ test('編輯收支：桌機欄位成對排列，摘要與備註分開寫，舊�
   assert.equal(document.querySelector('#f_applySameRemark')?.closest('.full')?.querySelector('label')?.textContent,
     '相同備註是否一起修改（目前 0 筆）');
   assert.equal(document.querySelector('#f_summary')?.value, 'C-summary');
-  assert.equal(document.querySelector('#f_remark')?.value, 'C-note', '銀行備註預設帶入帳單原文');
+  assert.equal(document.querySelector('#f_remark')?.value, 'A-note', '銀行備註預設帶入帳單原文');
   document.querySelector('#f_summary').value = '自己寫的摘要';
   document.querySelector('#f_remark').value = '自己補充的備註';
   document.querySelector('#modalForm').dispatchEvent(new globalThis.Event('submit', { bubbles: true, cancelable: true }));
@@ -239,7 +320,7 @@ test('舊版服務忽略新欄位時不可誤報儲存成功，編輯窗須保�
   assert.match(text('#toast-root .toast:last-child'), /摘要.*備註.*未儲存/);
   const row = document.querySelector('[data-edit="b3"]')?.closest('tr');
   assert.equal(row?.querySelector('.cf-note-summary')?.textContent, 'A-summary');
-  assert.equal(row?.querySelector('.cf-note-remark')?.textContent, 'A-note');
+  assert.equal(row?.querySelector('.cf-note-remark')?.textContent, 'B-note');
   legacyDropCashflowText = false;
 });
 
