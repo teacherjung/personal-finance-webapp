@@ -1152,3 +1152,18 @@ tr.sec-detail.open { display: table-row; }
 tr.sec-detail > td { background: var(--card-2); font-size: 12.5px; }
 .sec-detail-grid { display: flex; gap: 8px 22px; flex-wrap: wrap; }
 .sec-detail-grid .lbl { color: var(--text-dim); margin-right: 5px; }
+
+/* 桌機沿用銀行收支的箭頭尺寸；已有圖示的包裝保留，避免疊出第二個箭頭。 */
+@media (min-width: 901px) {
+  select:not([multiple]):is(:not([size]), [size="0"], [size="1"]):not(.cashflow-select select) {
+    appearance: none;
+    padding-right: 42px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2334291e' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 16px center;
+    background-size: 14px 14px;
+    background-origin: border-box;
+  }
+  /* 帳務體檢的行內寬度上限須留出箭頭空間，避免裁掉預設選項。 */
+  .health-acts select { max-width: calc(9em + 24px) !important; }
+}
