@@ -128,17 +128,18 @@ test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的�
     '摘要區塊要排在年／月／金流篩選上方');
   assert.match(source, /<section class="cashflow-ledger-section" aria-label="銀行收支列表">\s*<section class="cashflow-controls"/,
     '篩選與收支明細應共用同一區塊');
-  assert.doesNotMatch(source, /<h2 id="cashflow-ledger-title">收支明細<\/h2>/);
-  assert.doesNotMatch(source, /\$\{rows.length\} 筆/);
+  assert.match(source, /class="cashflow-ledger-head cashflow-mobile-only"/);
+  assert.match(source, /<h2 id="cashflow-ledger-title">收支明細<\/h2>/);
+  assert.match(source, /\$\{rows.length\} 筆/);
   assert.match(source, /const periodLabel = cashflowPeriodLabel\(monthFilter\);/);
-  assert.match(source, /掌握每月的真實現金流（收入、支出、內轉）/);
-  assert.doesNotMatch(source, /以銀行對帳單為準的真實現金流/);
+  assert.match(source, /掌握每月的真實現金流（\$\{FLOW_INFO.map/);
+  assert.match(source, /class="cashflow-mobile-only">以銀行對帳單為準的真實現金流/);
   assert.match(source, /<strong>\$\{esc\(periodLabel\)\}<\/strong>/);
   assert.match(source, /class="cashflow-period-desktop"/);
   assert.match(source, /class="cashflow-period-mobile"/);
-  assert.doesNotMatch(source, />內轉不列入收入與支出<\/p>/);
-  assert.match(source, /data-kind="transfer"><h3>內轉<\/h3>/);
-  assert.match(source, /data-kind="net"[^>]*><h3>淨現金流<\/h3>/);
+  assert.match(source, /class="cashflow-mobile-only">內轉不列入收入與支出<\/p>/);
+  assert.match(source, /data-kind="transfer"><h3>內轉 <small class="cashflow-mobile-only">只計轉出<\/small><\/h3>/);
+  assert.match(source, /data-kind="net"[^>]*><h3 class="cashflow-desktop-only">淨現金流<\/h3>/);
   assert.match(source, /class="cashflow-stat-action" data-flow="\$\{flow\}"/);
   assert.match(source, /aria-pressed="\$\{flowFilter === flow\}">\$\{icon\('search', 22\)\}<\/button>/);
   const searchIcon = icon('search', 22);
@@ -171,6 +172,11 @@ test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的�
 test('銀行收支樣式：桌機四張可互動摘要卡、手機篩選、帳戶單行與說明雙行都固定', () => {
   const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   assert.match(css, /\.cashflow-workspace/);
+  assert.match(css, /^\.info-link \{[^}]*font: inherit; color: inherit;[^}]*text-decoration: none;/m);
+  assert.match(css, /^\.info-link:hover \{ color: var\(--accent-ink\); \}/m);
+  assert.match(css, /\.cashflow-flow-info:focus-visible \{ outline: 2px dashed var\(--frame\); outline-offset: 2px; \}/);
+  assert.match(css, /\.cashflow-flow-info-modal:focus \{ outline: none; \}/);
+  assert.match(css, /\.cashflow-flow-info-modal button:focus-visible \{ outline: 2px dashed var\(--frame\); outline-offset: 2px; \}/);
   assert.match(css, /\.cashflow-summary-grid \{[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);[^}]*border: 2px solid var\(--frame\)/);
   assert.match(css, /@media \(min-width: 821px\) \{[\s\S]*?\.cashflow-summary-grid \{[^}]*gap: 12px;[^}]*border: 0;/);
   assert.match(css, /\.cashflow-summary-grid > \.cashflow-stat \{[^}]*border: 2px solid var\(--frame\)/);
@@ -183,7 +189,11 @@ test('銀行收支樣式：桌機四張可互動摘要卡、手機篩選、帳�
   assert.match(css, /\.cashflow-stat-action > \.ic \{[^}]*stroke-width: 2\.75;/);
   assert.match(css, /\.cashflow-stat-action\[aria-pressed="true"\] > \.ic \{ opacity: 1;/);
   assert.doesNotMatch(css, /\.cashflow-summary-grid > \.cashflow-stat(?:\.is-active|:focus-within) \{[^}]*background:/);
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{/);
+  const reducedMotion = css.match(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.match(reducedMotion, /\.cashflow-summary-grid > \.cashflow-stat,\s*\.cashflow-stat-action > \.ic\s*\{\s*transition:\s*none;/);
+  assert.match(reducedMotion, /\.cashflow-summary-grid > \.cashflow-stat:hover,\s*\.cashflow-summary-grid > \.cashflow-stat:active\s*\{\s*transform:\s*none;/);
+  assert.match(css, /\.cashflow-desktop-only \{ display: none; \}/);
+  assert.match(css, /@media \(min-width: 821px\) \{\s*\.cashflow-workspace \.cashflow-mobile-only \{ display: none; \}\s*\.cashflow-workspace \.cashflow-desktop-only \{ display: revert; \}/);
   assert.match(css, /\.cashflow-stat\[data-kind="income"\]::before \{ background: var\(--pos\); \}/);
   assert.match(css, /\.cashflow-stat\[data-kind="expense"\]::before \{ background: var\(--neg\); \}/);
   assert.match(css, /--cashflow-neutral: #858585;/);
@@ -221,7 +231,9 @@ test('銀行收支樣式：桌機四張可互動摘要卡、手機篩選、帳�
   assert.match(desktopSummaryStyle, /\.cashflow-stat-action \{[^}]*display: block/);
   assert.doesNotMatch(desktopSummaryStyle, /\.cashflow-period-desktop \.cashflow-flow-control/);
   assert.match(css, /@media \(min-width: 821px\) \{[\s\S]*\.cashflow-ledger-section \.cashflow-controls \{[^}]*display: none/);
-  assert.doesNotMatch(css, /\.cashflow-ledger-head/);
+  assert.match(css, /\.cashflow-ledger-head \{ display: flex;[^}]*margin-bottom: 10px;/);
+  assert.match(css, /\.cashflow-ledger-title \{ display: flex; align-items: center; gap: 9px; \}/);
+  assert.match(css, /\.cashflow-ledger-head h2 \{[^}]*font-size: 19px;/);
   assert.match(css, /\.cashflow-ledger-section \.cashflow-ledger th \{ border-bottom: 2px solid var\(--frame\); \}/);
   assert.match(css, /@media \(min-width: 641px\) and \(max-width: 960px\) \{[\s\S]*\.cashflow-flow-control \{ grid-column: 1 \/ -1; \}/);
   assert.match(css, /\.cashflow-flow-control \.chip-row \{[\s\S]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);

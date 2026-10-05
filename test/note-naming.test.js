@@ -89,7 +89,7 @@ test('行為｜已學列保留「已學」標籤，文字規則後的摘要與�
   assert.match(html, /合成無整理摘要/u, '★note 缺席的列退回 summary——留白比顯示原文更糟');
 });
 
-test('收支明細標題不再開「摘要＋備註」說明窗', () => {
+test('銀行收支頁不設「摘要＋備註」說明窗', () => {
   const s = src();
   assert.doesNotMatch(s, /id="noteNamingInfo"|function openNoteNamingInfo\(/u);
   assert.doesNotMatch(s, /「摘要＋備註」是什麼？/u);

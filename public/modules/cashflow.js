@@ -27,6 +27,15 @@ let monthFilter = monthKey();
 let flowFilter = 'all';   // 金流篩選：all / income / expense / transfer
 let renderGeneration = 0;
 const listSort = { key: 'date', dir: 'desc' };
+const FLOW_INFO = [
+  ['income', '收入', `<p>這裡的收入，是所選月份在銀行收支中列為「收入」的紀錄，例如薪資、股息或利息。</p>
+    <p>自己的帳戶互相轉入的錢屬於「內轉」，不算收入。</p>`],
+  ['expense', '支出', `<p>這裡的支出，是所選月份在銀行收支中列為「支出」的紀錄，例如房租、生活費或繳信用卡帳單。</p>
+    <p>信用卡刷卡消費另列在信用卡帳本；銀行實際扣繳卡費時，才計入這裡的支出，避免把同一筆錢算兩次。</p>`],
+  ['transfer', '內轉', `<p>內轉是自己的帳戶之間移動資金，例如銀行帳戶互轉，或銀行與證券帳戶間的劃撥。內轉不列入收入與支出，也不影響淨現金流。</p>
+    <p>內轉摘要卡只計轉出金額；內轉列表則同時顯示轉入與轉出。例如轉出 1 萬元、另一個帳戶轉入 1 萬元，摘要卡只算 1 萬元。</p>
+    <p>如果舊紀錄或手動記帳無法確認是轉出，就不計入內轉摘要金額。</p>`],
+];
 
 /** 金流別（顯示/篩選用）：income/expense/transfer → 中文＋顏色 class。 @param {any} t */
 function flowOf(t) {
@@ -38,9 +47,18 @@ function flowOf(t) {
 export async function renderCashflow() {
   const seq = currentRouteSeq();
   const generation = ++renderGeneration;
-  const [allRaw, accounts, expTreeRes, incTreeRes, transferRes] = await Promise.all([
-    api('/transactions'), api('/accounts'), api('/categories'), api('/income-categories'), api('/transfer-subcategories')]);
+  let responses;
+  try {
+    responses = await Promise.all([
+      api('/transactions'), api('/accounts'), api('/categories'), api('/income-categories'), api('/transfer-subcategories')]);
+  } catch (e) {
+    if (seq === currentRouteSeq() && generation === renderGeneration) {
+      view().innerHTML = `<div class="hint" role="alert">載入失敗：${esc(e.message)}</div>`;
+    }
+    return;
+  }
   if (seq !== currentRouteSeq() || generation !== renderGeneration) return;
+  const [allRaw, accounts, expTreeRes, incTreeRes, transferRes] = responses;
   expTree = expTreeRes && typeof expTreeRes === 'object' ? expTreeRes : {};
   incTree = incTreeRes && typeof incTreeRes === 'object' ? incTreeRes : {};
   if (Array.isArray(transferRes) && transferRes.length) transferSubs = transferRes.map(s => s.label).filter(Boolean);
@@ -67,7 +85,7 @@ export async function renderCashflow() {
   const rows = sortRows(sortableRows, listSort);
 
   const flowTab = (val, label) => `<button class="chip${flowFilter === val ? ' active' : ''}" data-flow="${val}" aria-pressed="${flowFilter === val}">${label}</button>`;
-  const statAction = (flow, label) => `<button type="button" class="cashflow-stat-action" data-flow="${flow}" aria-label="顯示${label}明細" title="${flow === 'transfer' ? '內轉只計轉出；內轉不列入收入與支出。顯示全部內轉明細' : `顯示${label}明細`}" aria-pressed="${flowFilter === flow}">${icon('search', 22)}</button>`;
+  const statAction = (flow, label) => `<button type="button" class="cashflow-stat-action" data-flow="${flow}" aria-label="${flow === 'all' ? '淨現金流，顯示全部明細' : `顯示${label}明細`}" title="${flow === 'transfer' ? '內轉只計轉出；內轉不列入收入與支出。顯示全部內轉明細' : `顯示${label}明細`}" aria-pressed="${flowFilter === flow}">${icon('search', 22)}</button>`;
 
   // 在換掉 DOM 前才取焦點，避免等待資料期間使用者已移到別處卻被拉回。
   const active = document.activeElement;
@@ -78,7 +96,7 @@ export async function renderCashflow() {
   view().innerHTML = `
     <div class="cashflow-workspace">
       <div class="page-head cashflow-head">
-        <div><h1>銀行收支</h1><p>掌握每月的真實現金流（收入、支出、內轉）</p></div>
+        <div><h1>銀行收支</h1><p class="cashflow-desktop-only">掌握每月的真實現金流（${FLOW_INFO.map(([flow, label]) => `<button type="button" class="info-link cashflow-flow-info" id="cashflowInfo-${flow}" aria-haspopup="dialog">${label}</button>`).join('、')}）</p><p class="cashflow-mobile-only">以銀行對帳單為準的真實現金流：收入、支出、內轉</p></div>
         <div class="page-actions">
           ${all.some(t => t.source === 'bank') ? `<button class="btn-ghost btn-eq" id="bankBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
           <button class="btn btn-eq" id="addCf">${icon('plus', 16)}記一筆</button>
@@ -89,6 +107,7 @@ export async function renderCashflow() {
       <section class="cashflow-summary" aria-label="${esc(periodLabel)}銀行收支摘要">
         <div class="cashflow-summary-head">
           <div class="cashflow-period-mobile"><strong>${esc(periodLabel)}</strong></div>
+          <p class="cashflow-mobile-only">內轉不列入收入與支出</p>
           <div class="cashflow-period-desktop">
             <div class="cashflow-period-selects" role="group" aria-label="收支月份">
               <div class="cashflow-select cashflow-period-year"><select id="yearSelDesktop" aria-label="年份">${yearOptionsHtml(years, selectedYear, esc)}</select><span class="cashflow-select-arrow" aria-hidden="true">${icon('chevron-down', 14)}</span></div>
@@ -97,10 +116,10 @@ export async function renderCashflow() {
           </div>
         </div>
         <div class="cashflow-summary-grid">
-          <div class="cashflow-stat" data-kind="net" data-tone="${netTone}"><h3>淨現金流</h3><div class="stat sm ${netTone}">${net >= 0 ? '+' : ''}${wan(net)}</div>${statAction('all', '全部')}</div>
+          <div class="cashflow-stat" data-kind="net" data-tone="${netTone}"><h3 class="cashflow-desktop-only">淨現金流</h3><h3 class="cashflow-mobile-only">結餘</h3><div class="stat sm ${netTone}">${net >= 0 ? '+' : ''}${wan(net)}</div>${statAction('all', '全部')}</div>
           <div class="cashflow-stat" data-kind="income"><h3>收入</h3><div class="stat sm pos">${wan(income)}</div>${statAction('income', '收入')}</div>
           <div class="cashflow-stat" data-kind="expense"><h3>支出</h3><div class="stat sm neg">${wan(expense)}</div>${statAction('expense', '支出')}</div>
-          <div class="cashflow-stat" data-kind="transfer"><h3>內轉</h3><div class="stat sm">${wan(transfer)}</div>${statAction('transfer', '內轉')}</div>
+          <div class="cashflow-stat" data-kind="transfer"><h3>內轉 <small class="cashflow-mobile-only">只計轉出</small></h3><div class="stat sm">${wan(transfer)}</div>${statAction('transfer', '內轉')}</div>
         </div>
       </section>
 
@@ -119,6 +138,9 @@ export async function renderCashflow() {
             <div class="chip-row" role="group" aria-label="金流篩選">${flowTab('all', '全部')}${flowTab('income', '收入')}${flowTab('expense', '支出')}${flowTab('transfer', '內轉')}</div>
           </div>
         </section>
+        <div class="cashflow-ledger-head cashflow-mobile-only">
+          <div class="cashflow-ledger-title"><h2 id="cashflow-ledger-title">收支明細</h2><span aria-live="polite">${rows.length} 筆</span></div>
+        </div>
         <div class="tbl-wrap cashflow-ledger">
           <table><thead><tr>${th('date', '日期')}${th('account', '銀行帳戶')}${th('note', '摘要＋備註')}${th('category', '分類')}${th('subcategory', '子分類')}${th('amount', '金額', 'num')}<th></th></tr></thead>
           <tbody>${rows.map(rowHtml).join('') || `<tr><td colspan="7" class="empty"><div class="cashflow-empty-state"><img src="assets/guide-return-neutral.webp" alt=""><div><strong>${esc(periodLabel)}尚無銀行收支</strong><span>可用右上角「記一筆」手動新增，或上傳銀行對帳單。</span></div></div></td></tr>`}</tbody></table>
@@ -128,6 +150,12 @@ export async function renderCashflow() {
   `;
 
   byId('addCf').onclick = () => openCashflowForm(null, accounts);
+  for (const [flow, label, body] of FLOW_INFO) {
+    byId(`cashflowInfo-${flow}`).onclick = () => {
+      openInfo(label, body);
+      byId('modal-root').querySelector('.modal')?.classList.add('cashflow-flow-info-modal');
+    };
+  }
   byId('uploadBank').onclick = () => openBankUpload();
   { const bb = byId('bankBatches'); if (bb) bb.onclick = () => openBankBatchManager(); }
   for (const id of ['yearSel', 'yearSelDesktop']) {
