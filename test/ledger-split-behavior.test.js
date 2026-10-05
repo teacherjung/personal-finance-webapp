@@ -129,7 +129,7 @@ test('銀行收支副標：三個詞各開說明窗，關窗歸還焦點且不�
   }
 });
 
-test('銀行收支說明入口重繪：等待期間移入的焦點保留；開窗後重繪不搶焦點，關窗仍回原入口', async () => {
+test('銀行收支頁內 renderCashflow 重繪：等待期間入口焦點保留；開窗後同一路重繪不搶焦點，關窗回原入口', async () => {
   await boot();
   const { renderCashflow } = await import('../public/modules/cashflow.js');
   const originalFetch = globalThis.fetch;
@@ -259,6 +259,7 @@ test('銀行收支重疊讀取失敗：最新失敗離開載入中，較舊的�
   const { renderCashflow } = await import('../public/modules/cashflow.js');
   const originalFetch = globalThis.fetch;
   for (const latestFails of [true, false]) {
+    document.getElementById('toast-root').replaceChildren();
     let release;
     const delayed = new Promise(resolve => { release = resolve; });
     let reads = 0;
@@ -286,10 +287,12 @@ test('銀行收支重疊讀取失敗：最新失敗離開載入中，較舊的�
       release();
       await older;
       assert.equal(document.querySelector('#view').innerHTML, current, '較舊的成功或失敗都不覆蓋最新畫面');
+      assert.equal(text('#toast-root'), '', '過期失敗不可在成功畫面旁新增提示');
     } finally {
       release();
       await older;
       globalThis.fetch = originalFetch;
+      document.getElementById('toast-root').replaceChildren();
       await renderCashflow();
     }
   }
@@ -330,9 +333,88 @@ test('銀行收支篩選失敗：保留已載入的控制項與明細，重試�
     assert.equal(document.querySelector('.cashflow-stat-action[aria-pressed="true"]').dataset.flow, 'income');
   } finally {
     globalThis.fetch = originalFetch;
+    await renderCashflow();
     document.querySelector('.cashflow-stat-action[data-flow="all"]')?.click();
     document.getElementById('toast-root').replaceChildren();
     await settleRender();
+  }
+});
+
+test('銀行收支頁內讀取失敗：年月、金流與排序一起回復成功狀態，重選相同條件可成功', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  const originalFetch = globalThis.fetch;
+  const originalRows = API['/api/transactions'];
+  API['/api/transactions'] = [...structuredClone(FIXTURE), {
+    id: 'july', date: '2026-07-02', ledger: 'cashflow', type: 'income', amount: 1234, summary: '合成七月收入',
+  }];
+  const select = async (id, value) => {
+    const el = document.getElementById(id);
+    el.value = value;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    await settleRender();
+  };
+  const reset = async () => {
+    globalThis.fetch = originalFetch;
+    await renderCashflow();
+    await select('yearSelDesktop', '2026');
+    await select('monthSelDesktop', '08');
+    document.querySelector('.cashflow-stat-action[data-flow="all"]').click();
+    await settleRender();
+    if (text('[data-sort="date"] .sort-tri.active') !== '▼') {
+      document.querySelector('[data-sort="date"]').click();
+      await settleRender();
+    }
+    document.getElementById('toast-root').replaceChildren();
+  };
+  const snapshot = () => ({
+    period: ['yearSelDesktop', 'monthSelDesktop', 'yearSel', 'monthSel'].map(id => document.getElementById(id).value),
+    months: [...document.getElementById('monthSelDesktop').options].map(option => option.value),
+    amount: [...document.querySelectorAll('.cashflow-stat .stat')].map(el => el.textContent),
+    rows: rowIdsInOrder(),
+    pressed: [...document.querySelectorAll('[data-flow][aria-pressed="true"]')].map(el => el.dataset.flow),
+    sort: document.querySelector('.sort-tri.active').parentElement.dataset.sort,
+    direction: text('.sort-tri.active'),
+  });
+  const cases = [
+    ...['yearSelDesktop', 'yearSel'].map(id => ({ id, value: '2025', rows: ['y1'], period: ['2025', '12', '2025', '12'] })),
+    ...['monthSelDesktop', 'monthSel'].map(id => ({ id, value: '07', rows: ['july'], period: ['2026', '07', '2026', '07'] })),
+    ...['.cashflow-stat-action', '.cashflow-flow-control .chip'].flatMap(selector => [
+      ['income', ['b1']], ['expense', ['b2', 'b3', 'b5', 'm1']], ['transfer', ['b4']], ['all', [...CASH_MONTH_IDS].sort()],
+    ].map(([flow, rows]) => ({ selector: `${selector}[data-flow="${flow}"]`, rows }))),
+    { selector: '[data-sort="amount"]', rows: [...CASH_MONTH_IDS].sort(), order: ['b1', 'b4', 'b2', 'b3', 'b5', 'm1'] },
+  ];
+  try {
+    for (const entry of cases) {
+      await reset();
+      const before = snapshot();
+      assert.deepEqual(before.period, ['2026', '08', '2026', '08']);
+      let reads = 0;
+      globalThis.fetch = async (url, init) => {
+        if (String(url).split('?')[0] !== '/api/transactions') return originalFetch(url, init);
+        reads++;
+        return new Response(JSON.stringify({ error: '合成讀取失敗' }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } });
+      };
+      const act = async () => {
+        if (entry.id) await select(entry.id, entry.value);
+        else { document.querySelector(entry.selector).click(); await settleRender(); }
+      };
+      await act();
+      assert.equal(reads, 1, '此控制項確實發起失敗的讀取');
+      assert.deepEqual(snapshot(), before, '失敗後控制項與資料一起回復，不標錯月份');
+      assert.match(text('#toast-root .err'), /合成讀取失敗/);
+      globalThis.fetch = originalFetch;
+      await renderCashflow();
+      assert.deepEqual(snapshot(), before, '再次成功重繪仍是回復後的狀態，沒有藏著失敗的選擇');
+      await act();
+      assert.deepEqual(rowIds(), entry.rows, '重選相同條件確實成功');
+      if (entry.period) assert.deepEqual(snapshot().period, entry.period);
+      if (entry.order) assert.deepEqual(rowIdsInOrder(), entry.order);
+    }
+  } finally {
+    API['/api/transactions'] = originalRows;
+    await reset();
   }
 });
 

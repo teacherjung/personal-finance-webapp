@@ -27,6 +27,8 @@ let monthFilter = monthKey();
 let flowFilter = 'all';   // 金流篩選：all / income / expense / transfer
 let renderGeneration = 0;
 const listSort = { key: 'date', dir: 'desc' };
+/** @type {{month: string, flow: string, sort: {key: string, dir: string}} | null} */
+let renderedState = null;
 const FLOW_INFO = [
   ['income', '收入', `<p>這裡的收入，是所選月份在銀行收支中列為「收入」的紀錄，例如薪資、股息或利息。</p>
     <p>自己的帳戶互相轉入的錢屬於「內轉」，不算收入。</p>`],
@@ -53,8 +55,15 @@ export async function renderCashflow() {
       api('/transactions'), api('/accounts'), api('/categories'), api('/income-categories'), api('/transfer-subcategories')]);
   } catch (e) {
     if (seq === currentRouteSeq() && generation === renderGeneration) {
-      if (view().querySelector('.cashflow-workspace')) toast(`載入失敗：${e.message}`, true);
-      else view().innerHTML = `<div class="hint" role="alert">載入失敗：${esc(e.message)}</div>`;
+      if (view().querySelector('.cashflow-workspace') && renderedState) {
+        // 原生選單先改值才發出請求；失敗時，控制項與狀態須回到仍在畫面上的那份資料。
+        monthFilter = renderedState.month;
+        flowFilter = renderedState.flow;
+        Object.assign(listSort, renderedState.sort);
+        for (const id of ['yearSel', 'yearSelDesktop']) byId(id).value = monthFilter.slice(0, 4);
+        for (const id of ['monthSel', 'monthSelDesktop']) byId(id).value = monthFilter.slice(5, 7);
+        toast(`載入失敗：${e.message}`, true);
+      } else view().innerHTML = `<div class="hint" role="alert">載入失敗：${esc(e.message)}</div>`;
     }
     return;
   }
@@ -151,7 +160,7 @@ export async function renderCashflow() {
     </div>
   `;
 
-  // 說明窗保存開窗元素的參照；保留節點，背景重繪後關窗才找得到歸還焦點的目標。
+  // 頁內 renderCashflow 會替換 DOM；保留節點，讓已開啟的說明窗仍持有入口。router 先清空頁面的路徑不在此保護內。
   for (const button of infoButtons) byId(button.id)?.replaceWith(button);
   byId('addCf').onclick = () => openCashflowForm(null, accounts);
   for (const [flow, label, body] of FLOW_INFO) {
@@ -192,6 +201,7 @@ export async function renderCashflow() {
       : [...view().querySelectorAll(selector)].find(el => /** @type {HTMLElement} */ (el).dataset.flow === focusedControl.dataset.flow);
     replacement?.focus({ preventScroll: true });
   }
+  renderedState = { month: monthFilter, flow: flowFilter, sort: { ...listSort } };
 }
 
 function rowHtml(t) {
