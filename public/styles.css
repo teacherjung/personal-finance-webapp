@@ -1154,7 +1154,7 @@ tr.sec-detail > td { background: var(--card-2); font-size: 12.5px; }
 .sec-detail-grid .lbl { color: var(--text-dim); margin-right: 5px; }
 
 /* 桌機沿用銀行收支的細線箭頭；已有圖示的包裝保留，避免疊出第二個箭頭。 */
-@media (min-width: 901px) {
+@media (min-width: 901px) and (forced-colors: none) {
   select:not([multiple]):is(:not([size]), [size="0"], [size="1"]):not(.cashflow-select select) {
     appearance: none;
     padding-right: 42px;
