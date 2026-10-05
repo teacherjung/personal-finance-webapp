@@ -904,7 +904,8 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
   overflow: hidden; background: var(--card); border: 2px solid var(--frame); border-radius: var(--radius); box-shadow: var(--shadow);
 }
 .cashflow-stat { position: relative; min-width: 0; min-height: 92px; overflow: hidden; padding: 14px 21px 12px; }
-.cashflow-stat + .cashflow-stat { border-left: 2px solid var(--frame); }
+.cashflow-stat:not([data-kind="income"]) { border-left: 2px solid var(--frame); }
+.cashflow-stat[data-kind="net"] { order: 1; }
 .cashflow-stat::before {
   content: ""; position: absolute; inset: 0 0 auto; height: 6px; background: var(--info);
 }
@@ -946,7 +947,7 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
   .cashflow-summary-grid > .cashflow-stat:active {
     transform: translate(3px, 3px); box-shadow: 1px 1px 0 rgba(184, 148, 62, .38);
   }
-  .cashflow-summary-grid > .cashflow-stat[data-kind="net"] { order: -1; grid-column: 1; }
+  .cashflow-summary-grid > .cashflow-stat[data-kind="net"] { order: 0; grid-column: 1; }
   .cashflow-summary-grid > .cashflow-stat[data-kind="income"] { grid-column: 3; }
   .cashflow-summary-grid > .cashflow-stat[data-kind="expense"] { grid-column: 4; }
   .cashflow-summary-grid > .cashflow-stat[data-kind="transfer"] { grid-column: 5; }
@@ -955,7 +956,7 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
     display: block; position: absolute; inset: 0; width: 100%; height: 100%;
     padding: 0; border: 0; background: transparent; cursor: pointer;
   }
-  .cashflow-stat-action:focus-visible { outline: none; }
+  .cashflow-stat-action:focus-visible { outline: 2px dashed var(--frame); outline-offset: -7px; }
   .cashflow-stat-action > .ic {
     position: absolute; top: 14px; right: 14px; color: var(--accent);
     stroke-width: 2.75;
@@ -1018,17 +1019,11 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
     overflow: hidden; background: var(--card); border: 2px solid var(--frame);
     border-radius: var(--radius); box-shadow: var(--shadow);
   }
-  .cashflow-ledger-section .cashflow-controls {
-    display: none; margin: 0; padding: 16px 18px 18px; background: transparent;
-    border: 0; border-radius: 0; box-shadow: none;
-  }
+  .cashflow-ledger-section .cashflow-controls { display: none; }
   .cashflow-ledger-section .cashflow-ledger {
     border: 0; border-radius: 0; box-shadow: none;
   }
   .cashflow-ledger-section .cashflow-ledger th { border-bottom: 2px solid var(--frame); }
-}
-@media (min-width: 821px) and (max-width: 960px) {
-  .cashflow-ledger-section .cashflow-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .cashflow-ledger table { min-width: 760px; }
 .cashflow-ledger th { border-bottom: 2px solid var(--frame); }

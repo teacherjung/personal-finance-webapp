@@ -2,7 +2,7 @@
 // 銀行收支頁（三層重構 stage 1，使用者定 2026-07-20）：**現金流真相**——只顯示現金流帳本
 //（!isCardTx：手動記帳 + 未來的銀行對帳單匯入）。信用卡刷卡消費不在這裡（在「信用卡消費明細」頁）；
 // 銀行帳單裡的「繳卡費」那筆才是刷卡消費的現金流出，計入這裡。
-// 三層分類：金流（收入/支出/內轉）→ 分類 → 子分類。金流用顏色/正負＋摘要卡篩選呈現；收入走 incomeTree、
+// 三層分類：金流（收入/支出/內轉）→ 分類 → 子分類。收入走 incomeTree、
 // 支出沿用信用卡的 expenseTree（統計合得起來）、內轉固定 內轉出/內轉入（無分類樹）。
 import { api, apiStream, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq, currentNavSeq, watchModalRoot } from '../app.js';
 import { progressText } from './progress-text.js';   // 上傳進度：後端推代碼、句子住這支純模組（可行為測）
@@ -25,6 +25,7 @@ import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 
 let monthFilter = monthKey();
 let flowFilter = 'all';   // 金流篩選：all / income / expense / transfer
+let renderGeneration = 0;
 const listSort = { key: 'date', dir: 'desc' };
 
 /** 金流別（顯示/篩選用）：income/expense/transfer → 中文＋顏色 class。 @param {any} t */
@@ -36,9 +37,10 @@ function flowOf(t) {
 
 export async function renderCashflow() {
   const seq = currentRouteSeq();
+  const generation = ++renderGeneration;
   const [allRaw, accounts, expTreeRes, incTreeRes, transferRes] = await Promise.all([
     api('/transactions'), api('/accounts'), api('/categories'), api('/income-categories'), api('/transfer-subcategories')]);
-  if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別覆蓋新頁面（Codex r10#6）
+  if (seq !== currentRouteSeq() || generation !== renderGeneration) return;
   expTree = expTreeRes && typeof expTreeRes === 'object' ? expTreeRes : {};
   incTree = incTreeRes && typeof incTreeRes === 'object' ? incTreeRes : {};
   if (Array.isArray(transferRes) && transferRes.length) transferSubs = transferRes.map(s => s.label).filter(Boolean);
@@ -58,14 +60,20 @@ export async function renderCashflow() {
   // 篩選金流後再排序
   const filteredRows = monthRows.filter(t => flowFilter === 'all'
     || (flowFilter === 'transfer' ? t.type === 'transfer' : t.type === flowFilter));
-  // 這頁的「摘要＋備註」第一行是帳單原始摘要；排序鍵也必須跟畫面看見的文字一致。
+  // 排序鍵跟著顯示文字，避免另存摘要後仍按帳單原文排序。
   const sortableRows = listSort.key === 'note'
     ? filteredRows.map(t => ({ ...t, note: cashflowDescriptionLines(t).summary }))
     : filteredRows;
   const rows = sortRows(sortableRows, listSort);
 
   const flowTab = (val, label) => `<button class="chip${flowFilter === val ? ' active' : ''}" data-flow="${val}" aria-pressed="${flowFilter === val}">${label}</button>`;
-  const statAction = (flow, label) => `<button type="button" class="cashflow-stat-action" data-flow="${flow}" aria-label="顯示${label}明細" title="顯示${label}明細" aria-pressed="${flowFilter === flow}">${icon('search', 22)}</button>`;
+  const statAction = (flow, label) => `<button type="button" class="cashflow-stat-action" data-flow="${flow}" aria-label="顯示${label}明細" title="${flow === 'transfer' ? '內轉只計轉出；內轉不列入收入與支出。顯示全部內轉明細' : `顯示${label}明細`}" aria-pressed="${flowFilter === flow}">${icon('search', 22)}</button>`;
+
+  // 在換掉 DOM 前才取焦點，避免等待資料期間使用者已移到別處卻被拉回。
+  const active = document.activeElement;
+  const focusedControl = active instanceof HTMLElement && view().contains(active)
+    && active.matches('#yearSel, #monthSel, #yearSelDesktop, #monthSelDesktop, .cashflow-stat-action, .cashflow-flow-control .chip')
+    ? active : null;
 
   view().innerHTML = `
     <div class="cashflow-workspace">
@@ -89,10 +97,10 @@ export async function renderCashflow() {
           </div>
         </div>
         <div class="cashflow-summary-grid">
-          <div class="cashflow-stat${flowFilter === 'income' ? ' is-active' : ''}" data-kind="income"><h3>收入</h3><div class="stat sm pos">${wan(income)}</div>${statAction('income', '收入')}</div>
-          <div class="cashflow-stat${flowFilter === 'expense' ? ' is-active' : ''}" data-kind="expense"><h3>支出</h3><div class="stat sm neg">${wan(expense)}</div>${statAction('expense', '支出')}</div>
-          <div class="cashflow-stat${flowFilter === 'transfer' ? ' is-active' : ''}" data-kind="transfer"><h3>內轉</h3><div class="stat sm">${wan(transfer)}</div>${statAction('transfer', '內轉')}</div>
-          <div class="cashflow-stat${flowFilter === 'all' ? ' is-active' : ''}" data-kind="net" data-tone="${netTone}" data-net-zero="${net === 0}"><h3>淨現金流</h3><div class="stat sm ${netTone}">${net >= 0 ? '+' : ''}${wan(net)}</div>${statAction('all', '全部')}</div>
+          <div class="cashflow-stat" data-kind="net" data-tone="${netTone}"><h3>淨現金流</h3><div class="stat sm ${netTone}">${net >= 0 ? '+' : ''}${wan(net)}</div>${statAction('all', '全部')}</div>
+          <div class="cashflow-stat" data-kind="income"><h3>收入</h3><div class="stat sm pos">${wan(income)}</div>${statAction('income', '收入')}</div>
+          <div class="cashflow-stat" data-kind="expense"><h3>支出</h3><div class="stat sm neg">${wan(expense)}</div>${statAction('expense', '支出')}</div>
+          <div class="cashflow-stat" data-kind="transfer"><h3>內轉</h3><div class="stat sm">${wan(transfer)}</div>${statAction('transfer', '內轉')}</div>
         </div>
       </section>
 
@@ -146,6 +154,12 @@ export async function renderCashflow() {
     const t = all.find(x => x.id === /** @type {HTMLElement} */ (b).dataset.del);
     confirmDelete(`${flowOf(t).label} ${money(t.amount)}`, () => api('/transactions/' + t.id, { method: 'DELETE' }));
   });
+  if (focusedControl) {
+    const selector = focusedControl.classList.contains('cashflow-stat-action') ? '.cashflow-stat-action' : '.cashflow-flow-control .chip';
+    const replacement = focusedControl.id ? byId(focusedControl.id)
+      : [...view().querySelectorAll(selector)].find(el => /** @type {HTMLElement} */ (el).dataset.flow === focusedControl.dataset.flow);
+    replacement?.focus({ preventScroll: true });
+  }
 }
 
 function rowHtml(t) {

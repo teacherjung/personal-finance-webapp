@@ -123,7 +123,6 @@ test('銀行收支接線（字面釘：只掃原始碼字串；分堆結果的�
   assert.match(source, /cashflowMonthSummary\(all, monthFilter, Array\.isArray\(transferRes\) \? transferRes : \[\]\)/);
   assert.match(source, /const netTone = net >= 0 \? 'pos' : 'neg';/);
   assert.match(source, /data-kind="net" data-tone="\$\{netTone\}"/);
-  assert.match(source, /data-net-zero="\$\{net === 0\}"/);
   assert.match(source, /class="stat sm \$\{netTone\}"/);
   assert.ok(source.indexOf('class="cashflow-summary"') < source.indexOf('class="cashflow-controls"'),
     '摘要區塊要排在年／月／金流篩選上方');
@@ -192,13 +191,14 @@ test('銀行收支樣式：桌機四張可互動摘要卡、手機篩選、帳�
   assert.match(css, /\.cashflow-stat\[data-kind="transfer"\] \.stat \{ color: var\(--cashflow-neutral\); \}/);
   assert.match(css, /\.cashflow-stat\[data-kind="net"\]\[data-tone="pos"\]::before \{ background: var\(--pos\); \}/);
   assert.match(css, /\.cashflow-stat\[data-kind="net"\]\[data-tone="neg"\]::before \{ background: var\(--neg\); \}/);
-  assert.match(css, /\.cashflow-stat \+ \.cashflow-stat \{ border-left: 2px solid var\(--frame\); \}/);
+  assert.match(css, /\.cashflow-stat:not\(\[data-kind="income"\]\) \{ border-left: 2px solid var\(--frame\); \}/);
+  assert.match(css, /\.cashflow-stat\[data-kind="net"\] \{ order: 1; \}/);
+  assert.match(css, /\.cashflow-stat-action:focus-visible \{ outline: 2px dashed var\(--frame\); outline-offset: -7px; \}/);
   assert.match(css, /\.cashflow-controls \{[\s\S]*border: 2px solid var\(--frame\)/);
   assert.match(css, /\.cashflow-controls \{[\s\S]*grid-template-columns: minmax\(130px, 180px\) minmax\(130px, 180px\) minmax\(0, 1fr\)/);
   assert.match(css, /\.cashflow-controls \{[^}]*align-items: start/,
     '年份、月份、金流三組從頂端對齊，標題才會落在同一水平線');
   assert.match(css, /@media \(min-width: 821px\) \{\s*\.cashflow-ledger-section \{[^}]*border: 2px solid var\(--frame\)/);
-  assert.match(css, /\.cashflow-ledger-section \.cashflow-controls \{[^}]*border: 0/);
   assert.match(css, /\.cashflow-ledger-section \.cashflow-ledger \{[^}]*border: 0/);
   assert.match(css, /\.cashflow-period-desktop \{ display: none; \}/);
   assert.match(css, /@media \(min-width: 821px\) \{[\s\S]*\.cashflow-period-desktop \{[^}]*display: flex/);

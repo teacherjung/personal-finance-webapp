@@ -86,6 +86,80 @@ const rowIds = () => [...document.querySelectorAll('tbody [data-edit]')].map(el 
 const rowIdsInOrder = () => [...document.querySelectorAll('tbody [data-edit]')].map(el => el.dataset.edit);
 const settleRender = async () => { await new Promise(r => setTimeout(r, 0)); await new Promise(r => setTimeout(r, 0)); };
 
+test('銀行收支控制項重繪：卡片順序、選取與焦點保留；焦點移出頁面時不搶回', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  const original = API['/api/transactions'];
+  API['/api/transactions'] = structuredClone(FIXTURE.filter(t => t.date.startsWith(MONTH)));
+  try {
+    await renderCashflow();
+    assert.deepEqual([...document.querySelectorAll('.cashflow-stat-action')].map(el => el.dataset.flow),
+      ['all', 'income', 'expense', 'transfer'], '卡片的 DOM 與桌機視覺順序相同');
+    for (const selector of ['.cashflow-stat-action', '.cashflow-flow-control .chip']) {
+      for (const flow of ['income', 'expense', 'transfer', 'all']) {
+        const button = document.querySelector(`${selector}[data-flow="${flow}"]`);
+        button.focus();
+        button.click();
+        await settleRender();
+        const replacement = document.querySelector(`${selector}[data-flow="${flow}"]`);
+        assert.notEqual(replacement, button, '確實走過會替換控制項的重繪');
+        assert.equal(document.activeElement, replacement);
+        assert.equal(replacement.getAttribute('aria-pressed'), 'true');
+        assert.equal(document.querySelectorAll('.cashflow-stat-action[aria-pressed="true"]').length, 1);
+      }
+    }
+    for (const id of ['yearSelDesktop', 'monthSelDesktop', 'yearSel', 'monthSel']) {
+      const select = document.getElementById(id);
+      select.focus();
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await settleRender();
+      assert.notEqual(document.getElementById(id), select);
+      assert.equal(document.activeElement, document.getElementById(id));
+    }
+    document.querySelector('.cashflow-stat-action').focus();
+    const pending = renderCashflow();
+    document.getElementById('snapshotBtn').focus();
+    await pending;
+    assert.equal(document.activeElement, document.getElementById('snapshotBtn'));
+  } finally {
+    API['/api/transactions'] = original;
+  }
+});
+
+test('銀行收支同頁重繪：晚回的舊資料不可覆蓋新資料或搶回焦點', async () => {
+  await boot();
+  const { renderCashflow } = await import('../public/modules/cashflow.js');
+  const originalFetch = globalThis.fetch;
+  let release;
+  const delayed = new Promise(resolve => { release = resolve; });
+  let readCount = 0;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).split('?')[0] !== '/api/transactions') return originalFetch(url, init);
+    const first = ++readCount === 1;
+    if (first) await delayed;
+    return new Response(JSON.stringify([{ id: first ? 'old-response' : 'new-response',
+      date: '2026-08-01', ledger: 'cashflow', type: 'income', amount: first ? 10000 : 20000,
+      summary: '合成摘要', remark: '' }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  const older = renderCashflow();
+  try {
+    await renderCashflow();
+    assert.equal(readCount, 2, '兩代請求都確實開始');
+    assert.deepEqual(rowIds(), ['new-response']);
+    document.querySelector('.cashflow-stat-action[data-flow="all"]').focus();
+    const focused = document.activeElement;
+    release();
+    await older;
+    assert.deepEqual(rowIds(), ['new-response']);
+    assert.equal(text('[data-kind="income"] .stat'), '2.0 萬');
+    assert.equal(document.activeElement, focused);
+  } finally {
+    release();
+    await older;
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('夾具對照（只餵判準、不碰頁面）：固定資料兩本帳都有、兩半判準都踩到、而「用來源／帳戶名分」這種等價分法會分錯', () => {
   assert.deepEqual(FIXTURE.filter(isCardTx).map(t => t.id).sort(), CARD_IDS);
   assert.deepEqual(FIXTURE.filter(t => !isCardTx(t)).map(t => t.id).sort(), CASH_IDS);
