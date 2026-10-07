@@ -82,7 +82,8 @@ test('HTTP 並發的 getDb…saveDb：兩個同時進來的「改帳單年月」
   // 題名關鍵字「HTTP 並發寫入不互蓋」那一題打的新增端點走櫃檯自己的寫入（addItem→mutate），
   // LOCAL 下讀改寫整段在櫃檯裡同步跑完，碰不到 getDb…saveDb 這一對。這一題換成呼叫端自己
   // `await getDb()` → 改 → `await saveDb()` 的端點（setBatchMonth）：讀改寫之間若夾進真正的外部 IO await
-  // （櫃檯的 saveDb 裡或 handler 裡都算），後到的請求會拿舊快照寫回，把先到的那一批改回去。
+  // （櫃檯的 saveDb 裡或 handler 裡都算），兩個請求可能都先讀到舊快照、再各自寫回整包——
+  // 後寫回的那一個會把先寫回的那一批改回去（誰先寫回看各自等多久，不一定是先到的那個）。
   // 本題擋不住：夾進去的 await 短到兩個請求沒有真的交錯時，本題照樣綠。
   const tag = `c4a-batch-${process.pid}`;
   const A = `${tag}-a`, B = `${tag}-b`;
