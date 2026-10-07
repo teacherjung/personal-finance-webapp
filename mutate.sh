@@ -741,6 +741,144 @@ p.write_text(s.replace("[frontend-features.md](frontend-features.md)","[frontend
 PY
 check 'Q. README 連結誤用 repo-root 路徑（連到不存在）' 紅
 
+# ── 整份規則書只准有一張同步點表（裁示者 2026-10-07 裁 a）──
+# CA、CJ 是裁示點名的那個洞（CJ 照 #639 r4 第 2 條的原打法）；CB〜CF 分別對著其餘幾條判準；
+# CK〜CP 是包在引用或清單裡的變體（CN〜CP 是縮排四格以上或 Tab 的容器，#667 r1）；CG、CH 是不該紅的對照；CI 對著兩題共用的表頭常數。
+
+mutate 'CA. 另開「同步點清單（續）」小節，續表塞一列沒帶契約連結的手寫規則' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and s.count("| 改這裡 | 記得同步這裡 |")==1
+p.write_text(s+"\n## 同步點清單（續）\n\n| 改這裡 | 記得同步這裡 |\n|---|---|\n| 請求旗標 | 字串 false 也算打開 |\n", encoding="utf-8")
+PY
+check 'CA. 另開「同步點清單（續）」小節，續表塞一列沒帶契約連結的手寫規則' 紅
+
+mutate 'CJ. 照 #639 r4 第 2 條的原打法：第 50 列後拆成續節，續表再插一列手寫規則' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); ls=p.read_text(encoding="utf-8").split("\n")
+h=[n for n,l in enumerate(ls) if l=="| 改這裡 | 記得同步這裡 |"]
+assert len(h)==1 and ls[h[0]+1]=="|---|---|" and all(l.startswith("| ") for l in ls[h[0]+2:h[0]+52])
+k=h[0]+52
+ls[k:k]=["","## 同步點清單（續）","","| 改這裡 | 記得同步這裡 |","|---|---|","| 請求旗標 | 字串 false 也算打開 |"]
+p.write_text("\n".join(ls), encoding="utf-8")
+PY
+check 'CJ. 照 #639 r4 第 2 條的原打法：第 50 列後拆成續節，續表再插一列手寫規則' 紅
+
+mutate 'CB. 續表換一組別的表頭字樣（只剩直線那一條會抓）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "動這裡" not in s
+p.write_text(s+"\n## 補充\n\n| 動這裡 | 也要動 |\n|---|---|\n| 請求旗標 | 字串 false 也算打開 |\n", encoding="utf-8")
+PY
+check 'CB. 續表換一組別的表頭字樣（只剩直線那一條會抓）' 紅
+
+mutate 'CC. 一個直線都沒有的一欄表（分隔線帶冒號）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "\n:---:\n" not in s
+p.write_text(s+"\n## 補充\n\n請求旗標\n:---:\n字串 false 也算打開\n", encoding="utf-8")
+PY
+check 'CC. 一個直線都沒有的一欄表（分隔線帶冒號）' 紅
+
+mutate 'CD. 表外一行中間塞 HTML 表格' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "<" not in s
+p.write_text(s+"\n## 補充\n\n補充說明 <table><tr><td>請求旗標</td><td>字串 false 也算打開</td></tr></table>\n", encoding="utf-8")
+PY
+check 'CD. 表外一行中間塞 HTML 表格' 紅
+
+mutate 'CE. AGENTS.md 另開一節放第二張同步點表（表頭字樣拆成粗體）' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "改這裡" not in s and "記得同步這裡" not in s
+p.write_text(s+"\n## 同步點補充\n\n| 改**這**裡 | 記得同步**這**裡 |\n|---|---|\n| 請求旗標 | 字串 false 也算打開 |\n", encoding="utf-8")
+PY
+check 'CE. AGENTS.md 另開一節放第二張同步點表（表頭字樣拆成粗體）' 紅
+
+mutate 'CF. AGENTS.md 的路由表多一列帶契約索引連結' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); ls=p.read_text(encoding="utf-8").split("\n")
+k=[n for n,l in enumerate(ls) if l.startswith("| 查協作機器與專案登記 |")]
+assert len(k)==1 and not any("[契約：" in l for l in ls)
+ls.insert(k[0]+1, "| 改 SEC 指標 | [契約：投資與 SEC・SEC 官方指標挑值](docs/contracts/investment-sec.md#sec-官方指標挑值) |")
+p.write_text("\n".join(ls), encoding="utf-8")
+PY
+check 'CF. AGENTS.md 的路由表多一列帶契約索引連結' 紅
+
+mutate 'CK. 引用裡的續表（別的表頭字樣，只剩直線那一條會抓）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "動這裡" not in s
+p.write_text(s+"\n## 補充\n\n> | 動這裡 | 也要動 |\n> |---|---|\n> | 請求旗標 | 字串 false 也算打開 |\n", encoding="utf-8")
+PY
+check 'CK. 引用裡的續表（別的表頭字樣，只剩直線那一條會抓）' 紅
+
+mutate 'CL. 引用裡不帶直線的一欄表（要先剝掉引用前綴才看得到）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "> :---:" not in s
+p.write_text(s+"\n## 補充\n\n> 請求旗標\n> :---:\n> 字串 false 也算打開\n", encoding="utf-8")
+PY
+check 'CL. 引用裡不帶直線的一欄表（要先剝掉引用前綴才看得到）' 紅
+
+mutate 'CM. 清單裡不帶直線的一欄表（分隔線縮排在續行）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "\n  :--\n" not in s
+p.write_text(s+"\n## 補充\n\n- 請求旗標\n  :--\n  字串 false 也算打開\n", encoding="utf-8")
+PY
+check 'CM. 清單裡不帶直線的一欄表（分隔線縮排在續行）' 紅
+
+mutate 'CN. 清單續行裡縮排四格的引用藏一欄表（#667 r1）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "    > :---:" not in s
+p.write_text(s+"\n## 補充\n\n- 容器\n\n    > 請求旗標\n    > :---:\n    > 字串 false 也算打開\n", encoding="utf-8")
+PY
+check 'CN. 清單續行裡縮排四格的引用藏一欄表（#667 r1）' 紅
+
+mutate 'CO. 有序清單續行裡縮排的引用藏一欄表' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "    > :--\n" not in s
+p.write_text(s+"\n## 補充\n\n1. 容器\n\n    > 請求旗標\n    > :--\n    > 字串 false 也算打開\n", encoding="utf-8")
+PY
+check 'CO. 有序清單續行裡縮排的引用藏一欄表' 紅
+
+mutate 'CP. 清單續行裡 Tab 縮排的引用藏一欄表' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "\t> :---:" not in s
+p.write_text(s+"\n## 補充\n\n- 容器\n\n\t> 請求旗標\n\t> :---:\n\t> 字串 false 也算打開\n", encoding="utf-8")
+PY
+check 'CP. 清單續行裡 Tab 縮排的引用藏一欄表' 紅
+
+mutate 'CG. 對照：AGENTS.md 另開一節放一般表格（表頭不是同步點字樣，射程外）' <<'PY'
+import pathlib
+p=pathlib.Path("AGENTS.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "## 範例表格" not in s
+p.write_text(s+"\n## 範例表格\n\n| 項目 | 說明 |\n|---|---|\n| 甲 | 乙 |\n", encoding="utf-8")
+PY
+check 'CG. 對照：AGENTS.md 另開一節放一般表格（表頭不是同步點字樣，射程外）' 綠
+
+mutate 'CH. 對照：同步點表後空一行接分隔線與散文' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "\n---\n" not in s
+p.write_text(s+"\n---\n\n補充說明，不含直線也不含角括號。\n", encoding="utf-8")
+PY
+check 'CH. 對照：同步點表後空一行接分隔線與散文' 綠
+
+mutate 'CI. 改掉兩題共用的表頭常數' <<'PY'
+import pathlib
+p=pathlib.Path("test/contract-split.test.js"); s=p.read_text(encoding="utf-8")
+old="const SYNC_TABLE_HEADER = '| 改這裡 | 記得同步這裡 |';"
+assert s.count(old)==1
+p.write_text(s.replace(old,"const SYNC_TABLE_HEADER = '| 改這裡 | 記得同步 |';"), encoding="utf-8")
+PY
+check 'CI. 改掉兩題共用的表頭常數' 紅
+
 # ── 收尾：真的 assert，不是印出來就算（git status 失敗＝驗不了＝fail，不是放行）──
 if ! leftover=$(git status --porcelain); then
   echo "❌ 收尾的 git status 失敗——無法斷言收尾乾淨。"
