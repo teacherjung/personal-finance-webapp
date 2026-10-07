@@ -77,3 +77,32 @@ test('HTTP 並發「寫＋讀」：讀不到半套狀態（新增與清單同時
   const after2 = await GET('/transactions');
   assert.ok(after2.some((/** @type {any} */ t) => t.note === '並發丙'), '寫入完成後必可讀到');
 });
+
+test('HTTP 並發的 getDb…saveDb：兩個同時進來的「改帳單年月」請求，兩批都要改到', async () => {
+  // 題名關鍵字「HTTP 並發寫入不互蓋」那一題打的新增端點走櫃檯自己的寫入（addItem→mutate），
+  // LOCAL 下讀改寫整段在櫃檯裡同步跑完，碰不到 getDb…saveDb 這一對。這一題換成呼叫端自己
+  // `await getDb()` → 改 → `await saveDb()` 的端點（setBatchMonth）：讀改寫之間若夾進真正的外部 IO await
+  // （櫃檯的 saveDb 裡或 handler 裡都算），兩個請求可能都先讀到舊快照、再各自寫回整包——
+  // 後寫回的那一個會把先寫回的那一批改回去（誰先寫回看各自等多久，不一定是先到的那個）。
+  // 本題擋不住：夾進去的 await 短到兩個請求沒有真的交錯時，本題照樣綠。
+  const tag = `c4a-batch-${process.pid}`;
+  const A = `${tag}-a`, B = `${tag}-b`;
+  const mk = (/** @type {string} */ batch, /** @type {string} */ note) => ({
+    date: '2026-07-27', type: 'expense', category: '其他', amount: 333, note, source: 'stmt', ledger: 'card', importBatch: batch,
+  });
+  const ta = await repo.addItem('transactions', mk(A, '批次甲'));
+  const tb = await repo.addItem('transactions', mk(B, '批次乙'));
+  const stmtMonthOf = async (/** @type {string} */ id) =>
+    (await repo.getDb()).transactions.find((/** @type {any} */ t) => t.id === id)?.stmtMonth;
+  // 對照：兩批起點都沒有年月，「兩批都改到」才證得出兩次寫入都真的落庫
+  assert.equal(await stmtMonthOf(ta.id), undefined);
+  assert.equal(await stmtMonthOf(tb.id), undefined);
+  const [ra, rb] = await Promise.all([
+    POST('/statement/batch/month', { batchId: A, month: '2026-01' }),
+    POST('/statement/batch/month', { batchId: B, month: '2026-02' }),
+  ]);
+  assert.equal(ra.status, 200);
+  assert.equal(rb.status, 200);
+  assert.equal(await stmtMonthOf(ta.id), '2026-01', '甲批的年月不可被另一個請求的舊快照蓋回去');
+  assert.equal(await stmtMonthOf(tb.id), '2026-02', '乙批的年月不可被另一個請求的舊快照蓋回去');
+});
