@@ -743,7 +743,7 @@ check 'Q. README 連結誤用 repo-root 路徑（連到不存在）' 紅
 
 # ── 整份規則書只准有一張同步點表（裁示者 2026-10-07 裁 a）──
 # CA、CJ 是裁示點名的那個洞（CJ 照 #639 r4 第 2 條的原打法）；CB〜CF 分別對著其餘幾條判準；
-# CG、CH 是不該紅的對照；CI 對著兩題共用的表頭常數。
+# CK〜CM 是包在引用或清單裡的變體；CG、CH 是不該紅的對照；CI 對著兩題共用的表頭常數。
 
 mutate 'CA. 另開「同步點清單（續）」小節，續表塞一列沒帶契約連結的手寫規則' <<'PY'
 import pathlib
@@ -805,6 +805,30 @@ ls.insert(k[0]+1, "| 改 SEC 指標 | [契約：投資與 SEC・SEC 官方指標
 p.write_text("\n".join(ls), encoding="utf-8")
 PY
 check 'CF. AGENTS.md 的路由表多一列帶契約索引連結' 紅
+
+mutate 'CK. 引用裡的續表（別的表頭字樣，只剩直線那一條會抓）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "動這裡" not in s
+p.write_text(s+"\n## 補充\n\n> | 動這裡 | 也要動 |\n> |---|---|\n> | 請求旗標 | 字串 false 也算打開 |\n", encoding="utf-8")
+PY
+check 'CK. 引用裡的續表（別的表頭字樣，只剩直線那一條會抓）' 紅
+
+mutate 'CL. 引用裡不帶直線的一欄表（要先剝掉引用前綴才看得到）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "> :---:" not in s
+p.write_text(s+"\n## 補充\n\n> 請求旗標\n> :---:\n> 字串 false 也算打開\n", encoding="utf-8")
+PY
+check 'CL. 引用裡不帶直線的一欄表（要先剝掉引用前綴才看得到）' 紅
+
+mutate 'CM. 清單裡不帶直線的一欄表（分隔線縮排在續行）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "\n  :--\n" not in s
+p.write_text(s+"\n## 補充\n\n- 請求旗標\n  :--\n  字串 false 也算打開\n", encoding="utf-8")
+PY
+check 'CM. 清單裡不帶直線的一欄表（分隔線縮排在續行）' 紅
 
 mutate 'CG. 對照：AGENTS.md 另開一節放一般表格（表頭不是同步點字樣，射程外）' <<'PY'
 import pathlib
