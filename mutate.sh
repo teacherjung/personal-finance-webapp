@@ -743,7 +743,7 @@ check 'Q. README 連結誤用 repo-root 路徑（連到不存在）' 紅
 
 # ── 整份規則書只准有一張同步點表（裁示者 2026-10-07 裁 a）──
 # CA、CJ 是裁示點名的那個洞（CJ 照 #639 r4 第 2 條的原打法）；CB〜CF 分別對著其餘幾條判準；
-# CK〜CM 是包在引用或清單裡的變體；CG、CH 是不該紅的對照；CI 對著兩題共用的表頭常數。
+# CK〜CP 是包在引用或清單裡的變體（CN〜CP 是縮排四格以上或 Tab 的容器，#667 r1）；CG、CH 是不該紅的對照；CI 對著兩題共用的表頭常數。
 
 mutate 'CA. 另開「同步點清單（續）」小節，續表塞一列沒帶契約連結的手寫規則' <<'PY'
 import pathlib
@@ -829,6 +829,30 @@ assert s.endswith("\n") and "\n  :--\n" not in s
 p.write_text(s+"\n## 補充\n\n- 請求旗標\n  :--\n  字串 false 也算打開\n", encoding="utf-8")
 PY
 check 'CM. 清單裡不帶直線的一欄表（分隔線縮排在續行）' 紅
+
+mutate 'CN. 清單續行裡縮排四格的引用藏一欄表（#667 r1）' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "    > :---:" not in s
+p.write_text(s+"\n## 補充\n\n- 容器\n\n    > 請求旗標\n    > :---:\n    > 字串 false 也算打開\n", encoding="utf-8")
+PY
+check 'CN. 清單續行裡縮排四格的引用藏一欄表（#667 r1）' 紅
+
+mutate 'CO. 有序清單續行裡縮排的引用藏一欄表' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "    > :--\n" not in s
+p.write_text(s+"\n## 補充\n\n1. 容器\n\n    > 請求旗標\n    > :--\n    > 字串 false 也算打開\n", encoding="utf-8")
+PY
+check 'CO. 有序清單續行裡縮排的引用藏一欄表' 紅
+
+mutate 'CP. 清單續行裡 Tab 縮排的引用藏一欄表' <<'PY'
+import pathlib
+p=pathlib.Path("docs/sync-index.md"); s=p.read_text(encoding="utf-8")
+assert s.endswith("\n") and "\t> :---:" not in s
+p.write_text(s+"\n## 補充\n\n- 容器\n\n\t> 請求旗標\n\t> :---:\n\t> 字串 false 也算打開\n", encoding="utf-8")
+PY
+check 'CP. 清單續行裡 Tab 縮排的引用藏一欄表' 紅
 
 mutate 'CG. 對照：AGENTS.md 另開一節放一般表格（表頭不是同步點字樣，射程外）' <<'PY'
 import pathlib
