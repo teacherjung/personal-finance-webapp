@@ -1024,6 +1024,10 @@ const TABLE_BREAKERS = [
 // 原 AGENTS 的承重檢查隨全部搬出內容移動，避免只剩入口與索引受到檢查。
 const RULE_DOCUMENTS = ['AGENTS.md', 'docs/project-overview.md', 'docs/development-workflow.md', 'docs/money-guard-operations.md', 'docs/ui-conventions.md', 'docs/investment-semantics.md', 'docs/field-ownership.md', 'docs/project-collaboration.md', 'docs/sync-index.md'];
 
+// 同步點表的表頭與分隔線：題名關鍵字「整節的形狀」與「只准有這一張同步點表」兩題共用這一份，不各寫各的。
+const SYNC_TABLE_HEADER = '| 改這裡 | 記得同步這裡 |';
+const SYNC_TABLE_SEPARATOR = '|---|---|';
+
 const LINK_RE = /\[契約：[^\]]+\]\((?:\.\/)?((?:(?:docs\/)?contracts\/)?[^)#]+\.md)#([^)]+)\)/;
 
 /**
@@ -1359,12 +1363,12 @@ test('⭐ 拆分護欄｜同步點清單那一節**整節的形狀**是固定的
   // r7 打法：在真表頭前面插「同步規則」（不含 `|`）、`|---|`、`|--- 手寫的相反規則 |` 三行，
   // 88 列索引一字不動。舊寫法把 `|---|` 當成表頭、把那條手寫規則當成分隔線豁免掉 ⇒ 三句全綠；
   // 而 GitHub 實際渲染成「表頭一欄＋89 個資料列」：手寫規則看得見，88 個契約連結全部不再渲染。
-  const HEADER = '| 改這裡 | 記得同步這裡 |';
-  const SEPARATOR = '|---|---|';
+  const HEADER = SYNC_TABLE_HEADER;
+  const SEPARATOR = SYNC_TABLE_SEPARATOR;
   const hi = sec.indexOf(HEADER);
   assert.ok(hi > 0,
     `那一節裡找不到**逐字**等於下面這一行的表頭：\n${HEADER}\n`
-    + '⇒ 表頭不准改；真要改，先改這一題的 HEADER。');
+    + '⇒ 表頭不准改；真要改，先改本檔的 SYNC_TABLE_HEADER。');
   assert.equal(sec[hi + 1], SEPARATOR,
     `表頭（第 ${start + hi + 1} 行）的下一行必須**逐字**等於 ${JSON.stringify(SEPARATOR)}，`
     + `實得：${JSON.stringify(sec[hi + 1])}\n`
@@ -1407,6 +1411,80 @@ test('⭐ 拆分護欄｜同步點清單那一節**整節的形狀**是固定的
     '同步點清單那一節裡，索引表之外還有含 `|` 的行 ⇒ 那可能是第二張表或一列手寫規則，\n'
     + '**完全不受「整行由契約決定」那一題檢查**（#639 r4〜r6 實測四種打法）。\n'
     + `${多的.join('\n')}`);
+});
+
+test('⭐ 拆分護欄｜整份規則書只准有這一張同步點表（另開小節、續節、別的標題底下都算）', () => {
+  // ## 為什麼有這一題
+  //
+  // 題名關鍵字「整節的形狀」那一題只看同步點清單那一節（從那個 `##` 到下一個 `## `）。
+  // #639 r4 第 2 條實測：在它後面另開 `## 同步點清單（續）`、照抄表頭與分隔線，
+  // 續表裡放一列沒帶契約連結的手寫規則——那一題與題名關鍵字「整行由契約決定」那一題都看不到它。
+  // 裁示者 2026-10-07 裁「整份只准有這一張同步點表，另開小節塞進去的也算」；
+  // 問與裁的留痕貼在加這一題的那支 PR（❓ 問於 2026-09-24）。
+  //
+  // ## 範圍為什麼是 RULE_DOCUMENTS
+  //
+  // 裁示原話寫「整份 AGENTS.md」，問的時候同步點表還住在 AGENTS.md；
+  // #659 把它與其餘內容搬進 RULE_DOCUMENTS 那幾份，本檔的承重檢查照那一份清單跟著搬。
+  //
+  // ## 判準：不判斷「這一行是不是表格」，改問「那張表以外，有沒有長表格要用的東西」
+  //
+  // 理由同題名關鍵字「整節的形狀」那一題：判斷 GFM 表格等於重做剖析器。
+  //   ・docs/sync-index.md（同步點表住的那一份）：表以外任何一行都不准有 `|`、`<`，
+  //     也不准有只由 `-`、`:` 與空白組成、而且帶冒號的行（剝掉引用與清單前綴後再看）。
+  //     ⚠️ 第三樣是 GitHub `/markdown` 實測出來的（2026-10-07）：「甲／`:---:`／乙」三行
+  //     渲染成一欄的表，**一個 `|` 都沒有**；分隔線換成 `:--` 也是表；換成 `---` 則是標題加段落。
+  //   ・其他幾份（合法地有別的表格）：不准出現同步點表的表頭字樣「改這裡」「記得同步這裡」，
+  //     也不准出現索引列專用的連結寫法 `[契約：`。比對前先去掉 `*`、`_`、`~`、反引號與空白，
+  //     所以把字拆成粗體（`改**這**裡`）也認得出來。docs/sync-index.md 表以外的行也套這兩樣。
+  //
+  // ## 擋不住什麼
+  //   ・其他幾份檔裡，表頭用別的字、也沒帶 `[契約：` 的表：那幾份本來就有別的表，這裡分不出哪一張算同步點表。
+  //   ・把表頭字樣用上面那幾個記號以外的方式拆開（例如 HTML entity、零寬字元）。
+  //   ・docs/sync-index.md 裡不靠 `|`、`<`、帶冒號的分隔線也長得出表格的寫法：本題只實測過上面那幾種，不宣稱窮舉。
+  //   ・RULE_DOCUMENTS 以外的檔（契約、契約的 README、計畫文件）。
+  const lines = read('docs/sync-index.md').split('\n');
+  const hi = lines.indexOf(SYNC_TABLE_HEADER);
+  assert.ok(hi >= 0 && lines[hi + 1] === SYNC_TABLE_SEPARATOR,
+    'docs/sync-index.md 找不到逐字的同步點表表頭＋分隔線 ⇒ 這一題劃不出「那一張表」，不放行：\n'
+    + `${SYNC_TABLE_HEADER}\n${SYNC_TABLE_SEPARATOR}`);
+  // 那一張表＝表頭、分隔線、緊接著的連續索引列；列與列之間插了什麼由「整節的形狀」那一題擋。
+  let end = hi + 2;
+  while (end < lines.length && LINK_RE.test(lines[end])) end += 1;
+
+  /** @param {string} s */
+  const 去記號 = (s) => s.replace(/[*_~`\s]/gu, '');
+  /** @type {string[]} */
+  const 多的 = [];
+  for (const file of RULE_DOCUMENTS) {
+    const isIndex = file === 'docs/sync-index.md';
+    const ls = isIndex ? lines : read(file).split('\n');
+    ls.forEach((line, i) => {
+      if (isIndex && i >= hi && i < end) return;
+      /** @type {string[]} */
+      const why = [];
+      const flat = 去記號(line);
+      if (flat.includes('改這裡') || flat.includes('記得同步這裡')) why.push('同步點表的表頭字樣');
+      if (flat.includes('[契約：')) why.push('索引列專用的連結寫法 `[契約：`');
+      if (isIndex) {
+        if (line.includes('|')) why.push('直線 `|`');
+        if (line.includes('<')) why.push('`<`');
+        const bare = stripContainers(line);
+        if (/^[ \t:-]+$/u.test(bare) && bare.includes(':') && bare.includes('-')) why.push('帶冒號的分隔線（不用 `|` 也會長出表格）');
+      }
+      if (why.length) 多的.push(`${file}:${i + 1}（${why.join('、')}）：${line.trim().slice(0, 60)}`);
+    });
+  }
+  assert.deepEqual(多的, [],
+    `整份規則書（RULE_DOCUMENTS）只准有一張同步點表＝docs/sync-index.md 第 ${hi + 1}〜${end} 行那一張。\n`
+    + '下面這幾行在那張表以外，卻用了同步點表才會用的寫法（裁示者 2026-10-07 裁：另開小節、續節、別的標題底下都算）：\n'
+    + `${多的.join('\n')}\n`
+    + '怎麼修：\n'
+    + '  ・要加一條同步點 ⇒ 在對應的契約加一節、登記進本檔的 MANIFEST，再在那一張表裡加一列連到那一節；\n'
+    + '    連結指對那一節、其餘內容對不上時，題名關鍵字「整行由契約決定」那一題會印出該貼的那一行。\n'
+    + '  ・只是要寫說明 ⇒ docs/sync-index.md 表以外別用 `|`、`<` 與帶冒號的分隔線；\n'
+    + '    每一份都別用「改這裡」「記得同步這裡」與 `[契約：` 這種同步點表專用的寫法，改用一般說法或一般連結。\n'
+    + '  ・真的需要第二張同步點表 ⇒ 那是裁示者裁掉的事，先問他，不要改這一題。');
 });
 
 test('⭐ 拆分護欄｜用名字指到同步點清單的句子，那個名字必須真的在表上（#639）', () => {
