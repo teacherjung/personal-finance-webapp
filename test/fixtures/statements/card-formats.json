@@ -1,0 +1,435 @@
+[
+  {
+    "id": "fubon-mail",
+    "label": "富邦同列說明 PDF",
+    "format": "pdf",
+    "source": "test/statement-parsers.test.js：parseFubon 單列；金額、店名、末碼與日期全為合成值。",
+    "rows": [
+      [
+        "台北富邦銀行 信用卡帳單"
+      ],
+      [
+        "帳單年月：115/01"
+      ],
+      [
+        "卡號末四碼 4321"
+      ],
+      [
+        "本期應繳總額：1,000"
+      ],
+      [
+        "上期應繳總額：700"
+      ],
+      [
+        "已繳款金額：700"
+      ],
+      [
+        "本期新增款項：1,000"
+      ],
+      [
+        "114/12/31",
+        "合成書店",
+        "115/01/02",
+        "1,200"
+      ],
+      [
+        "115/01/03",
+        "合成書店退款",
+        "115/01/04",
+        "-200"
+      ],
+      [
+        "115/01/05",
+        "富邦E化繳費網",
+        "115/01/06",
+        "-700"
+      ]
+    ],
+    "expected": {
+      "bank": "富邦",
+      "bankEvidence": "header",
+      "lastFour": "4321",
+      "statementMonth": "2026-01",
+      "statementDue": 1000,
+      "statementTotals": {
+        "due": 1000,
+        "prevDue": 700,
+        "paidAndRefund": 700,
+        "newCharges": 1000
+      },
+      "transactions": [
+        {
+          "date": "2025-12-31",
+          "postDate": "2026-01-02",
+          "desc": "合成書店",
+          "amount": 1200,
+          "isPayment": false,
+          "isRefund": false
+        },
+        {
+          "date": "2026-01-03",
+          "postDate": "2026-01-04",
+          "desc": "合成書店退款",
+          "amount": -200,
+          "isPayment": false,
+          "isRefund": true
+        },
+        {
+          "date": "2026-01-05",
+          "postDate": "2026-01-06",
+          "desc": "富邦E化繳費網",
+          "amount": -700,
+          "isPayment": true,
+          "isRefund": false
+        }
+      ]
+    }
+  },
+  {
+    "id": "fubon-web",
+    "label": "富邦下一列說明 PDF",
+    "format": "pdf",
+    "source": "test/statement-parsers.test.js：富邦官網版續行數字店名及頁尾；交易全合成，重複列代表兩筆消費。",
+    "rows": [
+      [
+        "台北富邦銀行 帳單明細查詢"
+      ],
+      [
+        "帳單年月：115/06"
+      ],
+      [
+        "卡號末四碼 5432"
+      ],
+      [
+        "本期應繳總額：2,791"
+      ],
+      [
+        "115/06/02",
+        "115/06/03",
+        "TWD",
+        "1,234"
+      ],
+      [
+        "全聯福利中心",
+        "1758"
+      ],
+      [
+        "115/06/02",
+        "115/06/03",
+        "TWD",
+        "1,234"
+      ],
+      [
+        "全聯福利中心",
+        "1758"
+      ],
+      [
+        "115/06/04",
+        "合成商店",
+        "115/06/05",
+        "USD",
+        "10.00",
+        "323"
+      ],
+      [
+        "本期應繳總額",
+        "2,791"
+      ]
+    ],
+    "expected": {
+      "bank": "富邦",
+      "bankEvidence": "header",
+      "lastFour": "5432",
+      "statementMonth": "2026-06",
+      "statementDue": 2791,
+      "statementTotals": {
+        "due": 2791,
+        "prevDue": null,
+        "paidAndRefund": null,
+        "newCharges": null
+      },
+      "transactions": [
+        {
+          "date": "2026-06-02",
+          "postDate": "2026-06-03",
+          "desc": "全聯福利中心1758",
+          "amount": 1234,
+          "isPayment": false,
+          "isRefund": false
+        },
+        {
+          "date": "2026-06-02",
+          "postDate": "2026-06-03",
+          "desc": "全聯福利中心1758",
+          "amount": 1234,
+          "isPayment": false,
+          "isRefund": false
+        },
+        {
+          "date": "2026-06-04",
+          "postDate": "2026-06-05",
+          "desc": "合成商店（USD 10.00）",
+          "amount": 323,
+          "isPayment": false,
+          "isRefund": false
+        }
+      ]
+    }
+  },
+  {
+    "id": "taishin-mail",
+    "label": "台新斜線日期 PDF",
+    "format": "pdf",
+    "source": "test/statement-parsers.test.js：台新單列與外幣；摘要使用 extractStatementTotals 的既有標籤，全部數字合成。",
+    "rows": [
+      [
+        "台新國際商業銀行 信用卡帳單"
+      ],
+      [
+        "帳單結帳日：115/06/20"
+      ],
+      [
+        "繳款截止日：115/07/05"
+      ],
+      [
+        "卡號末四碼 6543"
+      ],
+      [
+        "本期應繳總金額：407"
+      ],
+      [
+        "115/06/02",
+        "115/06/04",
+        "合成商店",
+        "450",
+        "USD",
+        "14.50"
+      ],
+      [
+        "115/06/02",
+        "115/06/04",
+        "國外交易服務費",
+        "7"
+      ],
+      [
+        "115/06/05",
+        "115/06/06",
+        "合成退款",
+        "-50"
+      ]
+    ],
+    "expected": {
+      "bank": "台新",
+      "bankEvidence": "header",
+      "lastFour": "6543",
+      "statementMonth": "2026-06",
+      "statementDue": 407,
+      "statementTotals": {
+        "due": 407,
+        "prevDue": null,
+        "paidAndRefund": null,
+        "newCharges": null
+      },
+      "transactions": [
+        {
+          "date": "2026-06-02",
+          "postDate": "2026-06-04",
+          "desc": "合成商店（USD/14.50）",
+          "amount": 450,
+          "isPayment": false,
+          "isRefund": false
+        },
+        {
+          "date": "2026-06-02",
+          "postDate": "2026-06-04",
+          "desc": "國外交易服務費",
+          "amount": 7,
+          "isPayment": false,
+          "isRefund": false
+        },
+        {
+          "date": "2026-06-05",
+          "postDate": "2026-06-06",
+          "desc": "合成退款",
+          "amount": -50,
+          "isPayment": false,
+          "isRefund": true
+        }
+      ]
+    }
+  },
+  {
+    "id": "taishin-reprint",
+    "label": "台新七碼日期及上一列說明 PDF",
+    "format": "pdf",
+    "source": "lib/statement.js：parseTaishinPdf 七碼日期分支；test/statement-parsers.test.js：上一列說明；版型組合是合成回歸，未做真單校準。",
+    "rows": [
+      [
+        "台新銀行 信用卡帳單"
+      ],
+      [
+        "帳單結帳日：115/01/20"
+      ],
+      [
+        "卡號末四碼 7654"
+      ],
+      [
+        "本期應繳總金額：500"
+      ],
+      [
+        "ＦＰ－合成餐飲"
+      ],
+      [
+        "1141231",
+        "1150102",
+        "200",
+        "6408",
+        "0000",
+        "TW"
+      ],
+      [
+        "合成書店"
+      ],
+      [
+        "1150103",
+        "1150104",
+        "300",
+        "6408",
+        "0000",
+        "TW"
+      ]
+    ],
+    "expected": {
+      "bank": "台新",
+      "bankEvidence": "header",
+      "lastFour": "7654",
+      "statementMonth": "2026-01",
+      "statementDue": 500,
+      "statementTotals": {
+        "due": 500,
+        "prevDue": null,
+        "paidAndRefund": null,
+        "newCharges": null
+      },
+      "transactions": [
+        {
+          "date": "2025-12-31",
+          "postDate": "2026-01-02",
+          "desc": "FP-合成餐飲",
+          "amount": 200,
+          "isPayment": false,
+          "isRefund": false
+        },
+        {
+          "date": "2026-01-03",
+          "postDate": "2026-01-04",
+          "desc": "合成書店",
+          "amount": 300,
+          "isPayment": false,
+          "isRefund": false
+        }
+      ]
+    }
+  },
+  {
+    "id": "taishin-xlsx",
+    "label": "台新官網 XLSX",
+    "format": "xlsx",
+    "source": "test/statement-pipeline.test.js：taishinXlsxB64 欄位順序；test/statement-reconcile.test.js：本期帳單金額；金額與明細全合成。",
+    "rows": [
+      [
+        "台新銀行 2026/02 信用卡明細"
+      ],
+      [
+        "帳單結帳日：115/01/04"
+      ],
+      [
+        "卡號末四碼 8765"
+      ],
+      [
+        "本期帳單金額",
+        "",
+        "新臺幣300.50元"
+      ],
+      [
+        "消費日",
+        "入帳日",
+        "說明",
+        "幣別",
+        "金額",
+        "",
+        "",
+        "外幣"
+      ],
+      [
+        "2025/12/31",
+        "2026/01/02",
+        "合成書店",
+        "TWD",
+        100,
+        "",
+        "",
+        ""
+      ],
+      [
+        "2026/01/01",
+        "2026/01/02",
+        "合成商店",
+        "TWD",
+        250.5,
+        "",
+        "",
+        "USD/8.00"
+      ],
+      [
+        "2026/01/02",
+        "2026/01/03",
+        "合成退款",
+        "TWD",
+        -50,
+        "",
+        "",
+        ""
+      ]
+    ],
+    "expected": {
+      "bank": "台新",
+      "bankEvidence": "header",
+      "lastFour": "8765",
+      "statementMonth": "2026-01",
+      "statementDue": 300.5,
+      "statementTotals": {
+        "due": 300.5,
+        "prevDue": null,
+        "paidAndRefund": null,
+        "newCharges": null
+      },
+      "transactions": [
+        {
+          "date": "2025-12-31",
+          "postDate": "2026-01-02",
+          "desc": "合成書店",
+          "amount": 100,
+          "isPayment": false,
+          "isRefund": false
+        },
+        {
+          "date": "2026-01-01",
+          "postDate": "2026-01-02",
+          "desc": "合成商店（USD/8.00）",
+          "amount": 250.5,
+          "isPayment": false,
+          "isRefund": false
+        },
+        {
+          "date": "2026-01-02",
+          "postDate": "2026-01-03",
+          "desc": "合成退款",
+          "amount": -50,
+          "isPayment": false,
+          "isRefund": true
+        }
+      ]
+    }
+  }
+]
