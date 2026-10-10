@@ -47,6 +47,7 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
     ['E', 'data/seed.json'],   // 只在空庫首次啟動時種進去，重啟驗不到（Grok #573 掃後）
     ['E', 'scripts/grok-scan.js'], ['E', 'scripts/grok-sandbox.sb'], ['E', 'scripts/git-hooks/pre-push'], ['E', 'eslint.config.js'], ['E', '.claude/launch.json'],
     ['E', 'tools/merge.js'], ['E', 'tests/merge.test.js'], ['E', 'templates/pre-push'], ['E', 'rules.json'],
+    ['E', 'kit-lock.json'], ['E', 'cases/DIGEST.md'],   // 2026-10-10 整批同步：共用檔清單（套件 README 第 1 步要歸級）與每條規矩「為什麼」的摘要（同步清單第五節第 1 條）
   ];
   const families = settings.acceptance.families;
   assert.equal(FAMILY_SAMPLES.length, families.length, 'families 與 FAMILY_SAMPLES 條數不同——新增／刪除家族要同步這張表');
@@ -175,8 +176,16 @@ test('⭐ 待裁清單與驗收分級都不是閘：CI 設定、pre-push、packa
   }
   for (const keep of ['node tools/gates/check-review-verdicts.js 1', 'node scripts/check-node-version.js']) assert.doesNotMatch(keep, RETIRED_GATES, `RETIRED_GATES 誤中了還活著的 ${keep}`);
   const gateFiles = readdirSync(join(ROOT, 'tools/gates')).filter((f) => f.endsWith('.js')).map((f) => join('tools/gates', f));
+  // 點名例外（2026-10-10 整批同步；Fable 代裁 R4，William 10/10 授權）：套件的待裁閘 tools/gates/check-pending-rulings.js 本來就要讀待裁清單——
+  // 它是擁有者 2026-10-07 在套件裁的真閘（套件 #48），不是把清單工具接進閘；tools/pending-rulings.js 本身仍只列不擋，這一題對其他每一支照舊守。
+  // 例外只在它「沒啟用」時成立：理財的設定把它登記成已安裝未啟用，合併指令不跑它；要啟用就得連這一題一起改，不會靜靜變。
+  const PENDING_GATE = 'tools/gates/check-pending-rulings.js';
+  const pendingGate = settings.gates.find((g) => [g.command, ...(g.args ?? [])].join(' ').includes(PENDING_GATE));
+  assert.ok(pendingGate, `${PENDING_GATE} 在磁碟上卻沒有登記——套件的閘登記對帳題會紅，這裡的例外也找不到對象`);
+  assert.notEqual(pendingGate.state, '已啟用', '待裁閘登記成已啟用了：要啟用請連這一題的例外一起改（Fable 代裁 R4 的條件）');
+  assert.notEqual(settings.machines.find((m) => m.name.startsWith('待裁閘'))?.state, '已啟用', '機器表的待裁閘是已啟用：要啟用請連這一題一起改');
   assert.ok(gateFiles.length >= 5, `tools/gates 只列到 ${gateFiles.length} 支——掃不到閘本體，這題變空包彈`);
-  for (const f of [...workflows, 'scripts/git-hooks/pre-push', 'tools/merge.js', 'tools/run-checks.js', ...gateFiles]) {
+  for (const f of [...workflows, 'scripts/git-hooks/pre-push', 'tools/merge.js', 'tools/run-checks.js', ...gateFiles.filter((g) => g !== PENDING_GATE)]) {
     const txt = read(f);
     assert.doesNotMatch(txt, /pending-rulings|acceptance-tier/, `${f} 叫了待裁清單或分級工具＝它變成一道會因為沒有網路或沒有權杖而擋人的閘`);
     assert.doesNotMatch(txt, RETIRED_GATES, `${f} 還在叫 2026-09-18 第 7 步刪掉的舊閘腳本（切換日起合併路徑只有 tools/gates）`);
@@ -186,6 +195,7 @@ test('⭐ 待裁清單與驗收分級都不是閘：CI 設定、pre-push、packa
   assert.doesNotMatch(JSON.stringify(pkg.scripts ?? {}), RETIRED_GATES, 'package.json 的 script 還在叫第 7 步刪掉的舊閘');
   for (const g of settings.gates) {
     const line = [g.command, ...(g.args ?? [])].join(' ');
+    if (g === pendingGate) continue;   // 上面的點名例外（沒啟用才成立）
     assert.doesNotMatch(line, /pending-rulings|acceptance-tier/, `settings.json 登記的閘「${g.name}」叫了它＝合併指令會跑它、退出碼 2 變成擋人`);
     assert.doesNotMatch(line, RETIRED_GATES, `settings.json 登記的閘「${g.name}」指到第 7 步刪掉的舊閘＝合併指令會起不了它`);
   }
