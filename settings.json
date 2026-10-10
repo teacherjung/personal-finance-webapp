@@ -22,6 +22,7 @@
   "implementer": "Claude",
   "reviewer": "Codex"
  },
+ "owner": "William",
  "sources": [
   {
    "tool": "本機 codex CLI 起的審查 session",
@@ -53,12 +54,12 @@
   {
    "item": "真實資料檔清單",
    "rules": "B4",
-   "where": "AGENTS.md 鐵則「敏感資料絕不進版控」那一條（列 data/store.json、*.bak、data/*backup*）＋ .gitignore 開頭「個人實際資料與憑證」那一節（最完整的一份）；scripts/grok-scan.js 建盒子後的禁區檢查另帶一份（多 .env、.env.local）——三份不一致、尚無單一正本"
+   "where": "AGENTS.md 鐵則「敏感資料絕不進版控」那一條（列 data/store.json、*.bak、data/*backup*）＋ .gitignore 開頭「個人實際資料與憑證」那一節（最完整的一份）；scripts/grok-scan.js 建盒子後的禁區檢查另帶一份（多 .env、.env.local）——三份不一致、尚無單一正本（2026-10-10 整批同步：.gitignore 尾端補了 .env、.env.local，跟掃描那一份對上；AGENTS.md 鐵則那一條沒列 .env，三份仍未統一成單一正本）"
   },
   {
    "item": "忽略清單、檢查豁免允許清單",
    "rules": "E7",
-   "where": "忽略＝.gitignore 與 prototype/forest-ui-lab/.gitignore（兩份的生效樣式都由 settings.json 的 ignoreLists 登記、套件的 tests/ignore-lists.test.js 逐字比對——搬家第 2 步起在本專案三關裡跑；根目錄那份另由 test/no-hiding-places.test.js 的 ALLOWED_GITIGNORE 再釘一份。所以改任何一份忽略檔，要同一支改 ignoreLists、ALLOWED_GITIGNORE（根目錄那份時），並跑 node tools/build-settings.js）；檢查豁免＝eslint.config.js 的兩組 ignores（全域一組＋xlsx 引入限制那組；test/no-hiding-places.test.js 的 ALLOWED_ESLINT_IGNORES 以 import 讀實際值釘住）；型別檢查射程＝jsconfig.json 的 include（test/ 刻意不在；test/ts-check-coverage.test.js 只釘 lib、public、scripts、test-doubles、prototype 五個目錄與 server.js 必須直接納入，不釘還排除了什麼）；版控外的 .git/info/exclude 不在射程"
+   "where": "忽略＝.gitignore 與 prototype/forest-ui-lab/.gitignore（兩份的生效樣式都由 settings.json 的 ignoreLists 登記、套件的 tests/ignore-lists.test.js 逐字比對——搬家第 2 步起在本專案三關裡跑；根目錄那份另由 test/no-hiding-places.test.js 的 ALLOWED_GITIGNORE 再釘一份。所以改任何一份忽略檔，要同一支改 ignoreLists、ALLOWED_GITIGNORE（根目錄那份時），並跑 node tools/build-settings.js）；檢查豁免＝eslint.config.js 的兩組 ignores（全域一組＋xlsx 引入限制那組；test/no-hiding-places.test.js 的 ALLOWED_ESLINT_IGNORES 以 import 讀實際值釘住）；型別檢查射程＝jsconfig.json 的 include（test/ 刻意不在；test/ts-check-coverage.test.js 只釘 lib、public、scripts、test-doubles、prototype 五個目錄與 server.js 必須直接納入，不釘還排除了什麼）；版控外的 .git/info/exclude 不在射程；檢查豁免另有 kit-lock.json 的 exceptions（tests/kit-lock.test.js 比對；2026-10-10 整批同步起）"
   },
   {
    "item": "路標考題掃描的目錄範圍",
@@ -89,14 +90,33 @@
    "item": "合併後驗收分級與動作的正本（路徑家族表＋各級動作）",
    "rules": "H6",
    "where": "settings.json 的 acceptance（路徑家族表＋每一級的動作；由 tools/acceptance-tier.js 讀、合併後跑；每條家族的級別由 test/acceptance-table.test.js 逐條釘住、F 排第一照 William 2026-09-15 搬家第 3 題 a；第 6 步 2026-09-17 起，舊的 scripts/acceptance-tier.js 已退役）"
+  },
+  {
+   "item": "「指示檔」與「常設指示」寫在哪（兩方每次開工都會自動整份讀進去的那一份）",
+   "rules": "K6",
+   "where": "CANDIDATE-K6"
+  },
+  {
+   "item": "「進度摘要」放在哪、已結束的留幾天（各方共用一份）",
+   "rules": "J5",
+   "where": "CANDIDATE-J5"
   }
  ],
+ "backlog": {
+  "file": "PROJECT.md",
+  "section": "## 待辦（依優先序；已完結主線的結案紀錄在[完工紀錄](docs/archive/project-completion-log.md)）"
+ },
+ "downstream": {
+  "projects": []
+ },
  "mainBranch": "main",
  "scanner": {
   "tool": "Grok CLI（xAI）：一律經 node scripts/grok-scan.js --base <sha> --head <sha> --prompt <指示檔> --out <回覆檔> 發射（呼叫紀律與三個失效條件＝scripts/grok-scan.js 檔頭）、不准手動啟動它的 CLI；執行檔版本與 sha256 釘在該腳本；grok 自己會升版（裁示者 2026-09-22 裁「auto_update 維持開著」），升版＝在倉庫根目錄跑 `npm run grok:bump`（重驗必要字串→改釘值與考題 fixture；不 commit、不 push；重驗不過就退 2 不寫），細節與劃界＝`scripts/grok-bump.js` 檔頭",
   "assignedBy": "掃描發射者＝起得了掃描者的那一方（William 2026-09-11 裁「甲」改成角色寫法）；定義＝RULES A1、G4；現況登記在本格；本專案現況＝Claude（照現行方式起的 Codex 帶外層沙箱、實測套不上第二層、金絲雀 fail-closed）；要換現況＝想換的那一方自己實測、貼出可重跑的結果，再問 William",
   "tieBreak": "實作者（裁示者 2026-09-25 裁、第二輪 A1：兩方都起得了掃描者時，預設是實作者；原本這一格寫「出現兩方都起得了時要補一條」，這就是那一條）；本專案今天只有一方起得了（見 assignedBy），這一格要到兩方都起得了才用得到",
   "fallback": "實作者（第二輪 G4：專案沒有掃描者、或沒有任何一方起得了時，由實作者寫未執行並轉正式）；掃得起但掃不成時，一律由掃描發射者（現況 Claude）在PR說明固定小標「### 複審後掃」下逐字寫「未執行：<原因>」、不擋合併，轉正式也由掃描發射者做",
+  "strongest": "grok-4.7",
+  "maxEffort": "xhigh",
   "isolation": {
    "provider": "專案自建",
    "wrap": [
@@ -183,6 +203,20 @@
     "repos/{project}/git/ref/heads/{branch}",
     "--jq",
     "{sha:.object.sha}"
+   ],
+   "repoTree": [
+    "gh",
+    "api",
+    "repos/{repo}/git/trees/{ref}?recursive=1",
+    "--jq",
+    "if .truncated then error(\"平台把檔案清單截斷了\") else [.tree[]|select(.type==\"blob\")|{path:.path,sha:.sha}] end"
+   ],
+   "repoFile": [
+    "gh",
+    "api",
+    "repos/{repo}/contents/{path}?ref={ref}",
+    "--jq",
+    "{content:(.content|@base64d)}"
    ],
    "markReady": [
     "node",
@@ -374,7 +408,8 @@
    "(^|_)(move|send)_(fund|money|cash|asset|securit[a-z]*|stock|share|crypto|coin)s?(_|$)",
    "(^|_)(create|place|submit|send|stage|preview|prepare|draft|amend|modify|edit|update|cancel|delete|execute|close|open|buy|sell|purchase|exercise|liquidate|replace|redeem|pay)_?\\w*?securit[a-z]*s?(_|$)",
    "(^|_)securit[a-z]*s?_(create|place|submit|send|stage|preview|prepare|draft|amend|modify|edit|update|cancel|delete|execute|close|open|buy|sell|purchase|exercise|liquidate|replace|redeem|pay)(_|$)",
-   "(^|_)(convert|swap)_(currenc[a-z]*|fund|money|cash|asset|crypto|coin|stock|share|securit[a-z]*)s?(_|$)"
+   "(^|_)(convert|swap)_(currenc[a-z]*|fund|money|cash|asset|crypto|coin|stock|share|securit[a-z]*)s?(_|$)",
+   "(^|_)(transfer|withdraw(al)?|deposit|remit(tance)?|payout|disburse(ment)?|payment|wire)s?(_|$)"
   ]
  },
  "acceptance": {
@@ -544,9 +579,118 @@
    {
     "pattern": "^rules\\.json$",
     "tier": "E（不需驗收）"
+   },
+   {
+    "pattern": "^kit-lock\\.json$",
+    "tier": "E（不需驗收）"
+   },
+   {
+    "pattern": "^cases/DIGEST\\.md$",
+    "tier": "E（不需驗收）"
    }
   ],
   "unknownTier": "C（要重啟＋走核心流程）"
+ },
+ "risk": {
+  "families": [
+   {
+    "pattern": "^public/[^/]+\\.css$",
+    "tier": "低"
+   },
+   {
+    "pattern": "^public-site/[^/]+\\.css$",
+    "tier": "低"
+   },
+   {
+    "pattern": "^public/.*\\.(js|html|ts)$",
+    "tier": "中"
+   },
+   {
+    "pattern": "^public-site/.*\\.html$",
+    "tier": "中"
+   },
+   {
+    "pattern": "^test/",
+    "tier": "低"
+   },
+   {
+    "pattern": "^docs/",
+    "tier": "低"
+   },
+   {
+    "pattern": "^(README|PROJECT)\\.md$",
+    "tier": "低"
+   },
+   {
+    "pattern": "^docs/contracts/",
+    "tier": "高"
+   },
+   {
+    "pattern": "^docs/(project-collaboration|money-guard-operations|money-guard-two-pattern-tables|github-branch-protection-setup)\\.md$",
+    "tier": "高"
+   }
+  ],
+  "raise": [
+   "改到「金額」、「資料存取」、「機密」、「判準」、「禁區」或「閘」的做法（只是提到這些字不算）",
+   "刪掉或放寬「既有考題」的行為檢查",
+   "改到「契約」規定的行為或契約文件本身的做法（只是提到這個詞不算）",
+   "改到兩頁以上共用的畫面程式的做法（只是提到不算）",
+   "前端開始讀新的後端欄位"
+  ]
+ },
+ "reviewTiers": {
+  "高": {
+   "full": "每一輪",
+   "diffOnly": "不適用",
+   "afterPassFix": "全審",
+   "scan": "掃"
+  },
+  "中": {
+   "full": "第 1〜7 輪",
+   "diffOnly": "第 8 輪起",
+   "afterPassFix": "只核差異",
+   "scan": "掃"
+  },
+  "低": {
+   "full": "第 1〜3 輪",
+   "diffOnly": "第 4 輪起",
+   "afterPassFix": "只核差異",
+   "scan": "不掃"
+  }
+ },
+ "reviewers": [
+  {
+   "participant": "Claude",
+   "strongest": "claude-fable-5-1",
+   "second": "claude-opus-5-5",
+   "maxEffort": "max",
+   "autoMode": "Ultracode",
+   "source": "Claude CLI",
+   "launch": "送審產生器 node tools/review-launch.js <編號> --reviewer <識別值> 照下一格的樣板印出填好的那一行；為什麼這樣寫見 README.md「本倉庫自己怎麼合併」的「送審」那一項",
+   "command": "cd {reviewTree} && claude -p \"$(cat {promptFile})\" --model {model} --effort {effort} --permission-mode dontAsk --setting-sources user,project --add-dir {mutationCopy} --verbose --output-format json --allowedTools 'Read,Grep,Glob,Bash(node --test *),Bash(npm --prefix {mutationCopy} test *),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git rev-parse HEAD),Bash(git -C {mutationCopy} rev-parse HEAD),Bash(git -C {mutationCopy} status --porcelain),Bash(git -C {mutationCopy} diff),Bash(gh pr view *),Bash(gh pr diff *),Bash(gh pr checks *),Bash(gh run view *),Bash(gh run list *),Bash(gh pr comment {change} *),Edit(/{mutationCopy}/**),Workflow' --disallowedTools 'Write,NotebookEdit,WebFetch,WebSearch,Edit(/{reviewTree}/**),Bash(gh pr merge *),Bash(gh pr edit *),Bash(gh pr close *),Bash(gh pr review *),Bash(gh pr ready *),Bash(git push *),Bash(git commit *),Bash(git checkout *),Bash(git switch *),Bash(git stash *),Bash(git worktree *),Bash(git fetch *),Bash(npm install *),Bash(npm ci *),Bash(npx *),Bash(node -e *)' < /dev/null > {outFile}",
+   "machine": "放行清單以外的指令一律被拒（不跳出詢問）；Edit 工具改不了審查樹、只准改突變副本；不讀主目錄的本機設定檔",
+   "promptOnly": "放行的指令仍可能寫檔（例如 git diff 的 --output），副本裡改了程式再跑考題＝能跑任意程式，所以審查樹唯讀靠提示；讀檔的禁令管不到考題程式自己讀檔；助手被拒時最後的輸出看不到，要逐筆搜「has been denied」",
+   "verified": ""
+  },
+  {
+   "participant": "Codex",
+   "strongest": "gpt-6-astra",
+   "second": "gpt-6-sol",
+   "maxEffort": "max",
+   "autoMode": "ultra（這一檔會自動派助手）",
+   "source": "codex CLI",
+   "launch": "送審產生器 node tools/review-launch.js <編號> --reviewer <識別值> 照下一格的樣板印出填好的那一行；為什麼這樣寫見 README.md「本倉庫自己怎麼合併」的「送審」那一項",
+   "command": "codex exec -m {model} -c model_reasoning_effort='\"{effort}\"' -c approval_policy='\"never\"' -s workspace-write -c sandbox_workspace_write.network_access=true -C {reviewTree} - < {promptFile} > {outFile} 2>&1",
+   "machine": "幾乎沒有：審查樹與系統暫存區都寫得進；使用者層放行規則命中的指令在沙箱外跑；樣板帶 approval_policy＝never，申請提權一律不准（不帶就照本機設定檔自動核准）",
+   "promptOnly": "唯讀、不轉正式、不合併、只貼一則留言，全靠提示；退出 0 不代表通過、也不代表留言已貼成功（啟動失敗會退非零），發審的一方要自己去 PR 看留言在不在；設定檔預設推理是 low，指令漏帶就靜默降級；唯讀沙箱配 --add-dir 突變副本（2026-10-07 實測）連副本、暫存區、網路都被擋，不能拿來讓審查樹唯讀",
+   "verified": ""
+  }
+ ],
+ "reviewLaunch": {
+  "changeLink": "https://github.com/{project}/pull/{change}",
+  "commentLink": "https://github.com/{project}/pull/{change}#issuecomment-{comment}",
+  "postComment": "gh pr comment {change} -R {project} --body-file <你寫好的結論檔>",
+  "copyTest": "npm --prefix {mutationCopy} test -- <考題檔>"
  },
  "ignoreLists": [
   {
@@ -576,7 +720,9 @@
     "/meeting_0724_1414.md",
     "*.grok-bump-tmp",
     "/lib/_xlsx_guard_probes/",
-    "/public/_xlsx_guard_probes/"
+    "/public/_xlsx_guard_probes/",
+    ".env",
+    ".env.local"
    ]
   },
   {
@@ -617,6 +763,15 @@
   ]
  },
  "gates": [
+  {
+   "name": "待裁（本支貼的 ❓ 都配到 ⚖️ 或 🚫）",
+   "rules": "A5",
+   "command": "node",
+   "args": [
+    "tools/gates/check-pending-rulings.js"
+   ],
+   "state": "已安裝未啟用"
+  },
   {
    "name": "協作欄位（四欄齊全、實作者不等於複審者）",
    "rules": "A2、E1",
@@ -681,7 +836,7 @@
  },
  "machines": [
   {
-   "name": "平台介面（閘與待裁清單問平台的十個動作，答案形狀不合就不放行）",
+   "name": "平台介面（閘、待裁清單與下游落後問平台的十二個動作，答案形狀不合就不放行）",
    "rules": "E5、H1",
    "state": "已啟用",
    "verified": "2026-09-14"
@@ -694,13 +849,13 @@
   },
   {
    "name": "協作欄位閘（四欄齊全、實作者不等於複審者）",
-   "rules": "A2、E1",
+   "rules": "A2、D3、E1",
    "state": "已啟用",
    "verified": "2026-09-14"
   },
   {
-   "name": "結論聯集閘（阻擋各自撤銷、放行只認指定那一位對目前版本的通過）",
-   "rules": "F4、F5",
+   "name": "結論聯集閘（阻擋只有同一位能解除、放行只認指定那一位對目前版本的通過）",
+   "rules": "F4、F5、F7",
    "state": "已啟用",
    "verified": "2026-09-14"
   },
@@ -801,6 +956,12 @@
    "verified": ""
   },
   {
+   "name": "共用檔清單（釘住套件版本；專案改到套件的檔要記例外）",
+   "rules": "E7、K1",
+   "state": "已安裝未啟用",
+   "verified": ""
+  },
+  {
    "name": "專案設定產生器",
    "rules": "K1",
    "state": "已啟用",
@@ -820,9 +981,51 @@
   },
   {
    "name": "待裁清單工具（掃整個專案的留言；只列不擋）",
-   "rules": "D1",
+   "rules": "D1、I3",
    "state": "已啟用",
    "verified": "2026-09-17"
+  },
+  {
+   "name": "待裁閘（本支貼的 ❓ 還沒配到 ⚖️ 或 🚫 就不放行；判斷用待裁清單工具那一份）",
+   "rules": "A5",
+   "state": "已安裝未啟用",
+   "verified": ""
+  },
+  {
+   "name": "風險分級工具（合併前依檔案算風險級別、印出複審與掃描分級表那一列，只算不擋）",
+   "rules": "D4",
+   "state": "已安裝未啟用",
+   "verified": ""
+  },
+  {
+   "name": "舊文字掃描（列出這支刪掉或改掉的字串還出現在哪，只列不擋）",
+   "rules": "K5",
+   "state": "已安裝未啟用",
+   "verified": ""
+  },
+  {
+   "name": "開工印待辦（列出待辦清單裡提到這支改到的檔的那幾條，只列不擋）",
+   "rules": "F6",
+   "state": "已安裝未啟用",
+   "verified": ""
+  },
+  {
+   "name": "進度摘要檢查（摘要每則的形狀、兩個時間、沒動的線、附件條號、已合併對不對得上平台，只列不擋）",
+   "rules": "J5",
+   "state": "已安裝未啟用",
+   "verified": ""
+  },
+  {
+   "name": "本週成果產生器（最近七天合併進主幹的 PR 照日期列成摘要那一節，--write 才換掉那一節）",
+   "rules": "J5",
+   "state": "已安裝未啟用",
+   "verified": ""
+  },
+  {
+   "name": "下游落後（套件這一邊印出登記的使用專案落後幾支、哪些共用檔不同、設定少哪些欄位與機器列，只列不擋）",
+   "rules": "K1",
+   "state": "已安裝未啟用",
+   "verified": ""
   }
  ]
 }
