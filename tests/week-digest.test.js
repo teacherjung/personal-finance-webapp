@@ -87,7 +87,7 @@ test('③形狀：產出的那一節丟給進度摘要檢查 0 條；日期新�
   assert.deepEqual(evaluate(doc(empty), { now: { year: 2026, month: 10, day: 9 }, prStates: { 'acme/kit#41': { merged: true } } }).problems, []);
 });
 
-test('④--write 只換那一節：前後的節一個字不動、分隔線留著；沒有那一節＝null', () => {
+test('④--write 只換那一節：前後的節一個字不動、分隔線留著；沒有那一節＝null；結尾照 Markdown 認（同級或更高、# 前面 0〜3 個空白）、像標題卻不合格式＝拒寫', () => {
   const before = doc(['- 10/01', '  - 套件：舊的']);
   const after = replaceSection(before, ['- 10/09', '  - 套件：新的——已合併（#1）']);
   assert.ok(after.includes(`${HEADING}（最近七天）\n\n- 10/09\n  - 套件：新的——已合併（#1）\n\n---\n\n## 已結束`), after);
@@ -97,6 +97,30 @@ test('④--write 只換那一節：前後的節一個字不動、分隔線留著
   assert.equal(head(after), head(before)); assert.equal(tail(after), tail(before));
   assert.equal(replaceSection(before.replace(HEADING, '## 本週'), ['- 10/09']), null, '找不到那一節＝不寫');
   assert.equal(replaceSection(`${before}\n${HEADING}（又一次）\n`, ['- 10/09']), null, '那一節出現兩次＝不寫（不知道換哪一個）');
+  // 那一節的結尾照 Markdown 認（理財 #672 r1 第 2 條）：# 前面 1〜3 個空白也是標題，後面那一節要原樣留著
+  for (const pad of [' ', '  ', '   ']) {
+    const shifted = before.replace('## 已結束（留 30 天）', `${pad}## 已結束（留 30 天）`);
+    const out = replaceSection(shifted, ['- 10/09']);
+    assert.equal(typeof out, 'string', `「${pad}## 已結束」是合格的標題`);
+    assert.equal(out.slice(out.indexOf(`${pad}## 已結束`)), shifted.slice(shifted.indexOf(`${pad}## 已結束`)), `前面 ${pad.length} 個空白的標題與後面全部原樣留著`);
+  }
+  // 更高一級的標題（「# 」一級）也是結尾：照寫、那一節換新、後面逐字留著（#74 r1：原本只驗了二級的縮排）
+  for (const pad of ['', ' ', '   ']) {
+    const higher = before.replace('## 已結束（留 30 天）', `${pad}# 已結束（留 30 天）`).replace('### 套件｜舊事｜已結束 10/01｜無永久決定', '### 套件｜舊事｜已結束 10/01｜無永久決定\nsentinel-higher-heading');
+    const out = replaceSection(higher, ['- 10/09', '  - 套件：新的——已合併（#1）']);
+    assert.equal(typeof out, 'string', `「${pad}# 已結束」是合格的一級標題`);
+    assert.ok(out.includes('  - 套件：新的——已合併（#1）') && !out.includes('套件：舊的'), '那一節確實換新');
+    assert.equal(out.slice(out.indexOf(`${pad}# 已結束`)), higher.slice(higher.indexOf(`${pad}# 已結束`)), '一級標題與後面全部逐字留著（含專屬那一行）');
+  }
+  // 長得像標題、格式不對＝分不出結尾，整個不寫（回第幾行與那一行）
+  for (const badHead of ['##已結束（留 30 天）', '    ## 已結束（留 30 天）', '\t## 已結束（留 30 天）', '#已結束']) {
+    const shifted = before.replace('## 已結束（留 30 天）', badHead);
+    const out = replaceSection(shifted, ['- 10/09']);
+    assert.equal(typeof out, 'object', `「${badHead}」要拒寫：${typeof out}`);
+    assert.ok(out && out.line === badHead && shifted.split('\n')[out.suspect - 1] === badHead, `回的行號要指到那一行：${JSON.stringify(out)}`);
+  }
+  // PR 編號開頭、三個 # 的小標不算可疑（照樣是那一節的內容）
+  assert.equal(typeof replaceSection(doc(['- 10/01', '#73 那一支', '### 小標']), ['- 10/09']), 'string');
 });
 
 const SETTINGS = { participants: [{ role: '裁示者（人）', id: 'William', account: 'owner-acct' }, { role: 'AI 甲', id: 'Claude', account: 'owner-acct' }] };
@@ -211,6 +235,24 @@ process.stderr.write("unexpected " + url); process.exit(3);
   assert.equal(fs.readFileSync(capFile2, 'utf8'), original, '退 2 時檔案不動');
   const commentCalls = JSON.parse(fs.readFileSync(record, 'utf8')).filter((c) => c.args[c.args.length - 1].includes('/comments'));
   assert.equal(commentCalls.length, MAX_PAGES, '真的翻到了上限那一頁才放棄');
+  // 那一節後面的標題格式不對＝退 2、整份檔一個位元組不動、不說「其餘的節沒動」（理財 #672 r1 第 2 條：原本會吞掉已結束那一節、還說沒動）
+  const badFile = path.join(dir, 'bad-heading.md');
+  const badOriginal = original.replace('## 已結束（留 30 天）', '##已結束（留 30 天）').replace('### 套件｜舊事｜已結束 10/01｜無永久決定', '### 套件｜舊事｜已結束 10/01｜無永久決定\nsentinel: before-write-end-record');
+  fs.writeFileSync(badFile, badOriginal);
+  const bad = cli([...base, '--file', badFile, '--write', '--no-acceptance']);
+  assert.equal(bad.status, 2, bad.stdout + bad.stderr);
+  assert.match(bad.stderr, /長得像標題、格式卻不對/u);
+  assert.doesNotMatch(bad.stdout, /其餘的節沒動/u);
+  assert.equal(fs.readFileSync(badFile, 'utf8'), badOriginal, '拒寫時整份檔一個位元組不動');
+  // 前面多一個空白的標題是合格的：照寫，已結束那一節（含專屬那一行）原樣留著
+  const padFile = path.join(dir, 'pad-heading.md');
+  const padOriginal = badOriginal.replace('##已結束（留 30 天）', ' ## 已結束（留 30 天）');
+  fs.writeFileSync(padFile, padOriginal);
+  const pad = cli([...base, '--file', padFile, '--write', '--no-acceptance']);
+  assert.equal(pad.status, 0, pad.stdout + pad.stderr);
+  const padWritten = fs.readFileSync(padFile, 'utf8');
+  assert.equal(padWritten.slice(padWritten.indexOf(' ## 已結束')), padOriginal.slice(padOriginal.indexOf(' ## 已結束')), '後面那一節逐字留著');
+  assert.ok(padWritten.includes('sentinel: before-write-end-record'));
   // 退 2 的幾種
   const noSection = path.join(dir, 'no-section.md');
   fs.writeFileSync(noSection, doc(['- 10/01']).replace(HEADING, '## 本週'));

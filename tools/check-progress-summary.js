@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 進度摘要檢查（規矩 J5）：讀倉庫外那份共用進度摘要，列出不合檔頭寫法、時間寫反、沒動的線、附件條號指不到、
+// 進度摘要檢查（規矩 J5）：讀倉庫外那份共用進度摘要，列出不合檔頭寫法、時間寫反、沒動的線、超過大小上限、附件條號指不到、
 // 「已合併」跟平台對不上的地方；只列不擋（有問題也退 0），接進鉤子時帶 --strict 才擋。
 //
 // 為什麼：進度摘要是擁有者最常看的檔，卻沒有任何機器看它（套件缺點稽核 2026-10-06 第一主題）。
@@ -30,6 +30,10 @@
 //     施工中、等複審、等驗收、等裁示四種狀態的則（STALE_STATES），核實時間超過 STALE_VERIFIED_DAYS 天＝列（第 8 天起；Codex 唸出來才不會是上週的狀態）；暫停中的不重複列核實，
 //     寫在進行中的「已結束」與不在選單的狀態不算（前者該搬去已結束那一節、後者已另列）；只比月日、未來的日期不算；月日從 STAMP 重讀、讀不出（例如一位數的月）＝已列成缺欄、不算天數；
 //     --strict 時這兩種跟其餘問題一樣算；「再改時間」＝核實與整理兩個時間都改成現在（只改核實會撞到「核實晚於整理」那一條）；
+//   ⑧大小與孤兒附件（擁有者 2026-10-10 授權 Fable 代裁 Q8；只列不擋、都用位元組算、換行先統一成 LF）：本文（整份減掉「本週成果」與「附件」兩節——本週成果是機器照那一週合了幾支印的、
+//     寫的人控制不了）超過 BODY_MAX_BYTES＝列；附件（另放一份檔就量整份檔，放本檔就量那一節）超過 ATTACH_MAX_BYTES＝列；一條附件（從原文量，條號那一行起到下一條前、空行不算）
+//     超過 ATTACH_ITEM_MAX_BYTES＝列（從原文量：空行以外每一行原樣都算，含分隔線與條號的前導零；只放去哪查，逐輪經過留在 PR 說明；#72 r1 R2）；本文與附件那一節只算真的存在的換行（#72 r1 R1）；沒有任何一則引用的附件條＝列（附件那一節以外的引用都算，只被別的附件條引用不算；
+//     附件條跟它的線一起到期：已結束那一行滿 30 天刪時它引的附件條一起刪，刪前先確認裡面沒有還沒貼出去的原話或還沒歸位的決定）。
 //   ⑦最近誰提交（擁有者 2026-10-10 裁「那三件小事就做」的第三件）：摘要在 git 倉庫裡（那一層是個小倉庫）就印最近 RECENT_HOURS 小時改過本檔的提交（--recent <小時> 改窗口，只收非負整數）；
 //     只算改到本檔的；只印、不是問題、不動退出碼——「現在誰在動」那一欄靠人改、會落後（10/10 量到一則寫沒人、那個視窗其實在跟擁有者對話），提交紀錄才是誰真的動過；不在倉庫裡或 git 不能用＝印查不到；
 //     log 帶 --no-show-signature 與 --encoding=UTF-8（使用者的 git 顯示設定不污染清單；r2 R1）、時間印提交時間（跟 --since 同一種；r2 R2）、
@@ -63,6 +67,11 @@ const STALE_VERIFIED_DAYS = 7;
 const STALE_STATES = ['施工中', '等複審', '等驗收', '等裁示'];
 // 最近誰提交的預設窗口（小時）；--recent 改
 const RECENT_HOURS = 1;
+// 大小上限（擁有者 2026-10-10 授權 Fable 代裁 Q8，位元組、1 KB＝1,000）：本文不含本週成果與附件那一節、附件（整份附件檔或本檔那一節）、一條附件
+const BODY_MAX_BYTES = 30000;
+const ATTACH_MAX_BYTES = 60000;
+const ATTACH_ITEM_MAX_BYTES = 1500;
+const bytesOf = (s) => Buffer.byteLength(s, 'utf8');
 // 附件條號的上限：真的摘要到 2026-10-07 是 69 條；超過這個數字的幾乎一定是寫壞的（例如把留言編號寫成條號）
 const MAX_REF = 100000;
 // 一個範圍最多展開幾條（閉區間，1〜200 是 200 條）：防「1〜100000」這種把整份附件引進來的寫法
@@ -381,6 +390,63 @@ function checkWeek(lines, ctx) {
 }
 
 /**
+ * 大小與孤兒附件（擁有者 2026-10-10 授權 Fable 代裁 Q8）：本文、附件、一條附件的位元組上限，與沒有任何一則引用的附件條。
+ * 本文＝整份（換行統一成 LF）減掉「本週成果」與「附件」兩節（標題行起、到下一個 ## 之前）；附件＝另放一份檔就量整份檔，放本檔就量那一節；
+ * 一條附件＝從原文量：條號那一行起到下一條前，空行以外的每一行原樣都算（含分隔線與條號的前導零），行與行之間的換行算一個位元組；
+ * 本文與附件那一節只算真的存在的換行（#72 r1 R1、R2）；引用＝附件那一節以外的「附件第 … 條」（只被別的附件條引用不算）。
+ */
+function checkSizes(text, attachmentsText, attachments) {
+  const problems = [];
+  let body = 0;
+  let inlineAttach = 0;
+  let where = null;
+  const refText = [];
+  const inlineLines = [];
+  const lines = normalize(text).split('\n');
+  lines.forEach((line, i) => {
+    // 只算真的存在的換行：最後一段後面沒有換行就不加（#72 r1 R1：逐行一律 +1 會把剛好卡在上限的內容多算 1）
+    const b = bytesOf(line) + (i < lines.length - 1 ? 1 : 0);
+    if (line.startsWith('## ')) where = line.startsWith(SECTIONS.week) ? 'week' : line.startsWith(SECTIONS.attachments) ? 'attach' : null;
+    if (where === 'attach') { inlineAttach += b; if (!line.startsWith('## ')) inlineLines.push(line); return; }
+    refText.push(line);
+    if (where !== 'week') body += b;
+  });
+  if (body > BODY_MAX_BYTES) problems.push(`大小：本文（不含本週成果與附件那一節）${body} 位元組，超過上限 ${BODY_MAX_BYTES}：先結案、縮附件、刪過期再寫，不是刪交接要用的資訊`);
+  const attachBytes = attachmentsText !== null ? bytesOf(normalize(attachmentsText)) : inlineAttach;
+  if (attachBytes > ATTACH_MAX_BYTES) problems.push(`大小：附件${attachmentsText !== null ? '檔' : '那一節'} ${attachBytes} 位元組，超過上限 ${ATTACH_MAX_BYTES}：先縮超過一條上限的、刪跟線一起到期的`);
+  // 一條附件從原文量（#72 r1 R2：用解析後重組的文字會漏掉分隔線、條號的前導零，而且有沒有「## 附件」標題結果不同）：
+  // 條號那一行起到下一條前，空行以外的每一行都算（原樣、含分隔線），行與行之間的換行算一個位元組
+  const sizes = new Map();
+  const measure = (raw) => {
+    let cur = null;
+    for (const line of raw) {
+      const m = /^(\d+)\. /u.exec(line);
+      if (m) { cur = Number(m[1]); sizes.set(cur, bytesOf(line)); continue; }
+      if (cur !== null && line.trim()) sizes.set(cur, sizes.get(cur) + 1 + bytesOf(line));
+    }
+  };
+  measure(inlineLines);
+  if (attachmentsText !== null) {
+    const fileLines = normalize(attachmentsText).split('\n');
+    const h = fileLines.findIndex((l) => l.startsWith(SECTIONS.attachments));
+    if (h < 0) measure(fileLines);
+    else {
+      const rest = fileLines.slice(h + 1);
+      const next = rest.findIndex((l) => l.startsWith('## '));
+      measure(next < 0 ? rest : rest.slice(0, next));
+    }
+  }
+  for (const [n, b] of sizes) {
+    if (b > ATTACH_ITEM_MAX_BYTES) problems.push(`附件第 ${n} 條 ${b} 位元組，超過一條的上限 ${ATTACH_ITEM_MAX_BYTES}：只留去哪查（網址、版本碼、留言編號、檔名），逐輪經過留在 PR 說明，全文可以搬到 Archive`);
+  }
+  const cited = new Set(parseRefs(refText.join('\n')).numbers);
+  for (const n of attachments.keys()) {
+    if (!cited.has(n)) problems.push(`附件第 ${n} 條沒有任何一則引用：先確認裡面沒有還沒貼出去的原話或還沒歸位的決定，再刪或補進它那條線的「已留」`);
+  }
+  return problems;
+}
+
+/**
  * 純判斷層。text＝整份摘要；now＝{ year, month, day }；prStates＝{ 'owner/repo#n': { merged: true|false|null } }；
  * repos＝{ 套件: 'owner/repo' }；offline＝不看 prStates。
  * 回 { unsure, problems, entries, attachments, cited }：unsure 非空＝查不了。
@@ -431,6 +497,7 @@ function evaluate(text, { now, prStates = {}, repos = {}, offline = false, attac
   }
   for (const s of findSections(sections, SECTIONS.done)) problems.push(...checkDone(s.lines, ctx));
   for (const s of findSections(sections, SECTIONS.week)) problems.push(...checkWeek(s.lines, ctx));
+  problems.push(...checkSizes(text, attachmentsText, attachments));
   return { unsure: null, problems, entries: entries.length, attachments: attachments.size, attachmentsInline: inline.size, attachmentsFile: fromFile, cited: [...cited] };
 }
 
@@ -560,4 +627,4 @@ if (require.main === module) {
   process.exit(result.code);
 }
 
-module.exports = { run, evaluate, fetchPrStates, ghEnv, expandRefs, parseRefs, prRefs, parseArgs, FIELDS, STATES, PROJECTS, KNOWN_SECTIONS, DONE_DAYS, WEEK_DAYS, STALE_PAUSED_DAYS, STALE_VERIFIED_DAYS, STALE_STATES, RECENT_HOURS, MAX_REF, MAX_RANGE };
+module.exports = { run, evaluate, fetchPrStates, ghEnv, expandRefs, parseRefs, prRefs, parseArgs, FIELDS, STATES, PROJECTS, KNOWN_SECTIONS, DONE_DAYS, WEEK_DAYS, STALE_PAUSED_DAYS, STALE_VERIFIED_DAYS, STALE_STATES, RECENT_HOURS, BODY_MAX_BYTES, ATTACH_MAX_BYTES, ATTACH_ITEM_MAX_BYTES, MAX_REF, MAX_RANGE };

@@ -5,6 +5,7 @@
 //   ②新增的行裡用同一種抓法抓出一模一樣的字串＝作者自己留著用，不列；只是包含它的照列（改名加長）；
 //   ③在真的倉庫裡：刪掉的字還留在別的檔（例如契約）就列出那一處，有命中也退 0（只列不擋）；從子目錄跑也搜整個倉庫；
 //     搜的是 HEAD 那一版（還沒提交的改動不算）；三點差異：基準之後主幹自己的改動不算成刪掉；刪掉或改名的檔，舊路徑照搜；
+//     舊路徑與命中的檔名照 git 的原名（雙引號、反斜線、中文都配得到、印得出，不是 git 加引號的跳脫碼）；
 //   ④基準版本找不到、不在倉庫裡、主幹沒填又沒給 --base、--base 沒接值、不認得的參數＝退 2，訊息說是哪一種；
 //     git diff 或 git grep 出錯＝退 2（不可以當成沒命中）；
 //   ⑤git 那一族環境變數指向別的倉庫也照樣掃這一個（E4）；⑥字串太多、命中太多都照實印出沒搜／沒列的數量，命中只列前 10 處。
@@ -112,6 +113,38 @@ test('③b 三點差異：基準之後主幹自己的改動不算成刪掉；刪
     assert.match(text, /「tools\/old-tool\.js」還出現在 1 處/u, '改名的檔，舊路徑照搜');
     assert.match(text, /README\.md:1：跑 node tools\/old-tool\.js/u);
   } finally { r.cleanup(); }
+});
+
+test('③c 舊路徑與命中的檔名照 git 的原名：雙引號、反斜線、中文檔名都配得到、印得出（理財 #672 r1 第 1 條）', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-text-quote-'));
+  const g = (...args) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.quotePath=true', ...args], { cwd: dir, env: gitEnv(), encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  try {
+    g('init', '-q', '-b', 'main');
+    const olds = ['tools/quote"old.js', 'tools/slash\\old.js', 'docs/中文舊檔名.md', 'tools/plain-old.js'];
+    for (const o of olds) { fs.mkdirSync(path.dirname(path.join(dir, o)), { recursive: true }); fs.writeFileSync(path.join(dir, o), 'x\n'); }
+    fs.writeFileSync(path.join(dir, 'README.md'), olds.map((o) => `Run ${o} to continue.`).join('\n') + '\n');
+    fs.writeFileSync(path.join(dir, '說明文件.md'), '舊的在 docs/中文舊檔名.md 那裡\n');
+    g('add', '-A'); g('commit', '-q', '-m', 'base');
+    const base = g('rev-parse', 'HEAD');
+    g('mv', 'tools/quote"old.js', 'tools/new-a.js');
+    g('mv', 'tools/slash\\old.js', 'tools/new-b.js');
+    g('rm', '-q', 'docs/中文舊檔名.md');
+    g('mv', 'tools/plain-old.js', 'tools/new-c.js');
+    g('commit', '-q', '-m', 'head');
+    const res = run(['--base', base], { settings: SETTINGS, cwd: dir });
+    assert.equal(res.code, 0, res.lines.join('\n'));
+    for (const o of olds) {
+      const head = res.lines.findIndex((l) => l.startsWith(`「${o}」還出現在 `));
+      assert.ok(head >= 0, `舊路徑「${o}」要列出來：\n${res.lines.join('\n')}`);
+    }
+    assert.ok(res.lines.some((l) => l.startsWith('  README.md:')), '命中的檔名照原名');
+    assert.ok(res.lines.some((l) => l.startsWith('  說明文件.md:1：')), `中文檔名的命中照原名印（不是跳脫碼）：\n${res.lines.join('\n')}`);
+    assert.ok(!res.lines.some((l) => /\\\d{3}|"README|"說明/u.test(l)), `不該出現 git 的引號或八進位跳脫碼：\n${res.lines.join('\n')}`);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('④基準版本找不到、不在倉庫裡、主幹沒填又沒給 --base、不認得的參數＝退 2；空白設定的複本裡跑指令入口＝退 2', () => {

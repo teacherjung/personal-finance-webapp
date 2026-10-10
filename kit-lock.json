@@ -1,6 +1,6 @@
 {
   "repo": "teacherjung/ai-collab-kit",
-  "version": "b4e6656246a663333231ca6af29412ff102e0a55",
+  "version": "658c0e20b2e54669f9702e6484fbdc2deaf374f6",
   "syncedAt": "2026-10-10",
   "entries": [
     {
@@ -10,12 +10,12 @@
     },
     {
       "mode": "100644",
-      "blob": "3b5612ecb48e364ccae3c95f588f725b18d64c46",
+      "blob": "91db1c6668390fc3ea8d318482da90d2d7217022",
       "path": "MACHINES.md"
     },
     {
       "mode": "100644",
-      "blob": "b845866137a0a50135adf58efc25e0d9ba1f1020",
+      "blob": "7193b4da5b4f3d3e3623e0024b939192d30f9d84",
       "path": "RULES.md"
     },
     {
@@ -30,7 +30,7 @@
     },
     {
       "mode": "100644",
-      "blob": "da0ca3bd9abbdfc556a03db7f4f8657e5884e48a",
+      "blob": "7fbcb42dcd23900cfa1a6391ef3bf9d71444baf7",
       "path": "rules.json"
     },
     {
@@ -185,7 +185,7 @@
     },
     {
       "mode": "100644",
-      "blob": "1fc4f2902c67f3d7d533b8ce6777a22c380c1d8b",
+      "blob": "8c67fa90dfed4b1d4a1c9ed888e03104003d910d",
       "path": "tests/check-progress-summary.test.js"
     },
     {
@@ -265,7 +265,7 @@
     },
     {
       "mode": "100644",
-      "blob": "8edd4df9926d03dce60f089ced0d927b3d7cc57d",
+      "blob": "5e71fd3fcaacc124bcf163da4de677c775e2ee77",
       "path": "tests/helpers/unfilled-settings.json"
     },
     {
@@ -360,7 +360,7 @@
     },
     {
       "mode": "100644",
-      "blob": "6581205fe949f30cd9b8366fb15adc9054d7b13f",
+      "blob": "8bc056bf08d208491ec7a974f02092a32b8bd1aa",
       "path": "tests/stale-text.test.js"
     },
     {
@@ -370,7 +370,7 @@
     },
     {
       "mode": "100644",
-      "blob": "d40b70c6f921b7009168343c2954eb5c72b0684a",
+      "blob": "2d6734be39c883ebc88041097a2b86ca865bd31d",
       "path": "tests/week-digest.test.js"
     },
     {
@@ -405,7 +405,7 @@
     },
     {
       "mode": "100644",
-      "blob": "e78279e2193888feed83ebd511235b1e26f5e8fe",
+      "blob": "64dfffbeda609b4cc0ceaeff362cffff5ae920ab",
       "path": "tools/check-progress-summary.js"
     },
     {
@@ -525,7 +525,7 @@
     },
     {
       "mode": "100644",
-      "blob": "d355ac2f764ff0c67b44cdf938454d61b8e42f3d",
+      "blob": "b3469125e11de52886dc542954c030cdd3e788a1",
       "path": "tools/stale-text.js"
     },
     {
@@ -535,7 +535,7 @@
     },
     {
       "mode": "100755",
-      "blob": "3bd62201404697a8ab50f83b9d751f17d4d0a54c",
+      "blob": "78e0d9237f667d00b72318df10aacde96fc992c8",
       "path": "tools/week-digest.js"
     }
   ],

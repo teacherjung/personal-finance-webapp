@@ -13,7 +13,8 @@
 //     同一天照 --repos 登記的順序分專案、同專案照合併時間；標題裡的換行與多餘空白收掉；
 //   ④驗收留痕：那支 PR 的留言用待裁清單工具同一套判斷（tools/pending-rulings.js 的 evaluate：第一行「## ✅ 驗收（YYYY-MM-DD）：標題」、
 //     真的日曆日、原話那一行、登記過的貼文帳號；r1 R2），採計的最後一則的日期加成「；月/日 已驗收」；留言讀齊每一頁（r1 R3）；--no-acceptance 不問；
-//   ⑤--write 只換那一節（從「## 本週成果」那一行到下一個「## 」之前），分隔線留著；找不到那一節、或出現兩次＝退 2、檔案不動；
+//   ⑤--write 只換那一節（從「## 本週成果」那一行到下一個同級或更高的標題之前；# 前面 0〜3 個空白也算標題），分隔線留著；
+//     找不到那一節、出現兩次、或那一節裡有長得像標題卻不合格式的行（分不出結尾）＝退 2、檔案不動；
 //     檔在問完平台之後才讀、讀完立刻寫（r1 R1：先讀再問平台、最後寫回舊快照，會把別的工作階段這段時間改的其他節蓋掉）；
 //   ⑥問平台固定問 github.com、先清掉選主機／選倉庫／指向別倉庫的環境變數；分頁：一頁滿 100 筆且最舊的還在窗內才翻下一頁，
 //     翻到上限還沒到窗口邊界＝退 2、不寫（r1 R4：不拿不完整的清單換掉那一節）；
@@ -130,9 +131,17 @@ function render(items, { order = [], nowMs = Date.now(), days = DAYS } = {}) {
   return lines;
 }
 
+/** 那一節到哪裡結束：下一個同級或更高的標題（跟 Markdown 一樣，# 前面 0〜3 個空白也算標題、# 後面要空一格或直接換行）。 */
+const BOUNDARY = /^ {0,3}#{1,2}(?:[ \t]|$)/u;
 /**
- * 只換「## 本週成果」那一節：從標題行的下一行到下一個「## 」之前；分隔線（---）留著。
- * 找不到、或那一節出現兩次＝null（不寫）。換行先統一成 LF。
+ * 長得像同級或更高的標題、但不合上面的格式（例如「##已結束」沒空格、四個空白或定位字元開頭）：分不出那一節到哪裡結束，
+ * 照舊吞到下一個合格的標題會把中間那一節刪掉（理財 #672 r1 第 2 條），所以整個不寫。「#73」這種 PR 編號開頭的不算。
+ */
+const SUSPECT = /^[ \t]*#{1,2}(?:[ \t]|$|[^\s#\d])/u;
+
+/**
+ * 只換「## 本週成果」那一節：從標題行的下一行到下一個同級或更高的標題（BOUNDARY）之前；分隔線（---）留著；換行先統一成 LF。
+ * 回換好的整份文字；找不到、或那一節出現兩次回 null；那一節裡有長得像標題、格式不對的行回 { suspect：第幾行, line }。後兩種都不寫。
  */
 function replaceSection(text, bodyLines) {
   const lines = String(text).replace(/\r\n?/gu, '\n').split('\n');
@@ -140,8 +149,10 @@ function replaceSection(text, bodyLines) {
   if (heads.length !== 1) return null;
   const h = heads[0];
   let n = h + 1;
-  while (n < lines.length && !lines[n].startsWith('## ')) n += 1;
+  while (n < lines.length && !BOUNDARY.test(lines[n])) n += 1;
   const old = lines.slice(h + 1, n);
+  const bad = old.findIndex((l) => SUSPECT.test(l));
+  if (bad >= 0) return { suspect: h + 2 + bad, line: old[bad] };
   const keepRule = old.some((l) => /^-{3,}\s*$/u.test(l));
   const fresh = ['', ...bodyLines, '', ...(keepRule ? ['---', ''] : [])];
   return [...lines.slice(0, h + 1), ...fresh, ...lines.slice(n)].join('\n');
@@ -246,6 +257,10 @@ function run(argv, { runner = runGh, out = process.stdout, err = process.stderr,
   try { text = fs.readFileSync(opts.file, 'utf8'); } catch (e) { err.write(`本週成果產生器：讀不到 ${opts.file}（${e.message}）\n`); return 2; }
   const next = replaceSection(text, lines);
   if (next === null) { err.write(`本週成果產生器：${opts.file} 裡找不到唯一的「${HEADING}」那一節，沒有寫\n`); return 2; }
+  if (typeof next !== 'string') {
+    err.write(`本週成果產生器：${opts.file} 第 ${next.suspect} 行「${next.line.trim().slice(0, 40)}」長得像標題、格式卻不對（# 前面最多三個空白、# 後面要空一格）：分不出那一節到哪裡結束，沒有寫；改好那一行再跑\n`);
+    return 2;
+  }
   fs.writeFileSync(opts.file, next);
   out.write(`已把 ${opts.file} 的「${HEADING}」那一節換成 ${lines.length} 行（其餘的節沒動；記得提交那份檔）\n`);
   return 0;
