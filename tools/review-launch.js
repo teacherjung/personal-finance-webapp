@@ -263,7 +263,12 @@ function launch(changeArg, reviewerArg, { settings = readSettings(), platform = 
 
   const record = { change: id, reviewer, round, head, base, root, tree, mutation, promptFile, outFile, startedAt: now().toISOString() };
   const before = new Set(lockedTrees(root).keys());
-  fs.mkdirSync(folder, { recursive: true });
+  // 排他地建（不帶 recursive：已經在就丟 EEXIST）：上面那一次檢查跟這裡之間，另一個送審可能剛好建好同一輪的資料夾；
+  // 帶 recursive 會接受別人的資料夾，下面開樹失敗時再把它整個刪掉（理財 #672 r4 第 1 條）。建成的才是自己的，失敗才收。
+  try { fs.mkdirSync(folder); } catch (e) {
+    if (e && e.code === 'EEXIST') throw new LaunchError(`${folder} 已經在了：另一個送審剛好在開同一輪，或上一次的樹還沒收（先跑 --close ${id}）`);
+    throw e;
+  }
   const created = [];
   try {
     git(root, ['worktree', 'add', '--detach', '-q', tree, head]);

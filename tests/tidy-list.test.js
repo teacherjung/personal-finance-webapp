@@ -24,6 +24,7 @@
 //   ⑥f（Fable 代裁 D1：git 出聲就判斷不了）包著真 git 的假 git：全域那幾次（工作樹登記、分支清單、目前分支、stash、rev-parse）
 //     印警告＝退 2（rev-parse 三處各自單獨試）；目前分支的輸出多一行＝退 2；找主幹時遠端那一次安靜退錯誤碼或被殺掉＝退 2（不默默換成本機主幹；
 //     確定沒有遠端主幹時用本機的照舊，見①）；主目錄那一次 git 回空的＝退 2；
+//   ⑥h git 目錄另存（--separate-git-dir）：git 列的第一筆（主工作樹，路徑是 git 目錄本身）不列；
 //   ⑥g主目錄要先核實：用捷徑當目前資料夾照樣不列主目錄；主目錄的真實路徑讀不到（EACCES、EIO）＝退 2；status、merge-base 印警告、status 安靜地退非 0＝那一樣進判斷不了、不列；分支清單、stash 清單、工作樹登記塞一筆認不得的＝那一筆進判斷不了
 //     （不安靜丟掉）、其餘照算；
 //   ⑥輸出：預設只印各類幾個（有東西才提示加 --list）、--list 才印整份；
@@ -617,6 +618,29 @@ test('⑥g主目錄要先核實：用捷徑當目前資料夾照樣不列主目�
       assert.match(res.lines[0], new RegExp(`主目錄的真實路徑判斷不了（${code}）`, 'u'));
     }
   } finally { r.cleanup(); }
+});
+
+test('⑥h git 目錄另存（--separate-git-dir、core.worktree 指回工作目錄）：主工作樹那一筆不列——存歷史的目錄不是可收的工作樹（理財 #672 r4 第 2 條）', () => {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tidy-list-sep-')));
+  const work = path.join(base, 'work');
+  const meta = path.join(base, 'metadata.git');
+  const empty = path.join(base, 'empty-tmp');
+  fs.mkdirSync(work); fs.mkdirSync(empty);
+  try {
+    sh(work, 'init', '-q', '--separate-git-dir', meta, '-b', 'main');
+    sh(work, 'config', 'core.worktree', work);
+    sh(work, 'config', 'maintenance.auto', 'false');
+    fs.writeFileSync(path.join(work, 'a.txt'), 'x\n');
+    sh(work, 'add', '-A'); sh(work, 'commit', '-q', '-m', 'one');
+    fs.writeFileSync(path.join(work, 'a.txt'), 'y\n');
+    sh(work, 'add', '-A'); sh(work, 'commit', '-q', '-m', 'two');
+    sh(work, 'switch', '-q', '--detach', 'HEAD~1');   // 主工作樹停在主幹歷史裡、乾淨、分離狀態：不跳過就會被列
+    const listed = sh(work, 'worktree', 'list', '--porcelain');
+    const res = run({ settings: SETTINGS, cwd: work, argv: ['--tmp', empty, '--list'] });
+    assert.equal(res.code, 0, res.lines.join('\n'));
+    assert.deepEqual(res.worktrees, [], `主工作樹那一筆不列（git 列的是：${listed.split('\n')[0]}）`);
+    assert.equal(fs.readFileSync(path.join(work, 'a.txt'), 'utf8'), 'x\n');
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
 });
 
 test('⑦git 那一族環境變數指向別的倉庫，照樣看這一個（E4）', () => {

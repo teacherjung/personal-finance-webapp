@@ -210,8 +210,10 @@ function staleWorktrees(cwd, main, branches, trees, unsure) {
   const mainDir = m.value;
   const listed = new Set(branches.map((b) => b.name));
   const out = [];
-  for (const w of trees) {
-    if ((w.real || path.resolve(w.dir)) === mainDir) continue;
+  for (const [i, w] of trees.entries()) {
+    // 主目錄：git 的工作樹清單第一筆一定是主工作樹（git 文件寫明）。git 目錄另存（--separate-git-dir）時那一筆的路徑是 git 目錄本身、
+    // 不是 git-common-dir 的上一層——只拿上一層去比會把存歷史的目錄列成可收（理財 #672 r4 第 2 條）。兩種都跳過。
+    if (i === 0 || (w.real || path.resolve(w.dir)) === mainDir) continue;
     if (w.locked) continue;
     if (w.shapeBad) { unsure.push({ dir: w.dir, why: '工作樹登記那一筆形狀認不得' }); continue; }
     if (w.unsure) { unsure.push({ dir: w.dir, why: `工作樹的資料夾判斷不了在不在（${w.unsure}）` }); continue; }

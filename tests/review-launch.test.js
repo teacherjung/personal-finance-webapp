@@ -546,3 +546,30 @@ test('⑤b產生送審提示期間換版：訊息說清楚是哪兩版、要重�
     assert.ok(!/review-acme-kit/u.test(sh(r.dir, 'worktree', 'list')), '不可以開樹');
   } finally { for (const d of [r.dir, dir]) fs.rmSync(d, { recursive: true, force: true }); }
 });
+
+test('⑤c同一輪兩個送審交錯：後到的那一個（先看到不在、別人才建好）退 2，不可以刪掉別人建好的樹、提示與輸出（理財 #672 r4 第 1 條）', () => {
+  const r = repo();
+  const dir = tmp('review-launch-out-');
+  const realExists = fs.existsSync;
+  try {
+    const s = settingsFor();
+    // 先讓 B 正常開完
+    const b = main(['7', '--reviewer', 'Beta'], { settings: s, platform: fakePlatform(answersFor(r)), cwd: r.dir, dir, template: TEMPLATE });
+    assert.equal(b.code, 0, b.lines.join('\n'));
+    const folder = path.join(fs.realpathSync(dir), 'review-acme-kit-7-r1');   // 工具用的是真實路徑（/var 與 /private/var）
+    fs.writeFileSync(path.join(folder, 'output.log'), 'B 的專屬輸出\n');
+    const listBefore = sh(r.dir, 'worktree', 'list', '--porcelain');
+    // A：檢查「在不在」那一刻還不在（B 是在那之後才建好的）
+    fs.existsSync = (p) => (String(p) === folder ? false : realExists(p));
+    const a = main(['7', '--reviewer', 'Beta'], { settings: s, platform: fakePlatform(answersFor(r)), cwd: r.dir, dir, template: TEMPLATE });
+    fs.existsSync = realExists;
+    assert.equal(a.code, 2, a.lines.join('\n'));
+    assert.match(a.lines.join('\n'), /已經在了：另一個送審剛好在開同一輪/u);
+    assert.equal(fs.readFileSync(path.join(folder, 'output.log'), 'utf8'), 'B 的專屬輸出\n', 'B 的輸出還在');
+    for (const f of ['tree', 'mutation', 'prompt.md', 'launch.json']) assert.ok(realExists(path.join(folder, f)), `B 的 ${f} 還在`);
+    assert.equal(sh(r.dir, 'worktree', 'list', '--porcelain'), listBefore, 'B 的兩棵樹登記沒被動');
+  } finally {
+    fs.existsSync = realExists;
+    for (const d of [r.dir, dir]) fs.rmSync(d, { recursive: true, force: true });
+  }
+});
