@@ -42,8 +42,9 @@
 
 ### 審查（RULES F1〜F10）
 
+- **套件的審查規定（2026-10-10 整批同步起）**：風險級別＝RULES D4 與 `node tools/risk-tier.js <編號>`；複審與掃描分級＝RULES F2、G1 與 `PROJECT-SETTINGS.md` 第十節；送審提示＝RULES F3 與 `templates/review-request.md`，可以用 `node tools/review-launch.js <編號> --reviewer <識別值> --dir <資料夾>` 產生；送審前跑 `node tools/stale-text.js`（RULES K5）；複審者的模型、推理與怎麼起＝RULES F11 與 `settings.json` 的 reviewers（`PROJECT-SETTINGS.md` 第十一節）；文字快速通道＝RULES F12（William 當複審者，結論標頭的角色寫 `William`、來源字串寫 `William 本人`）。口頭指定過的模型與推理（含 9/29、10/1 兩次）一律由設定第十一節與 C28 取代。下面兩條（觸發與指令列、送審提示詞骨架）跟它們不一致的，以它們為準；複審必驗清單的項號以同步進來的 `templates/review-fixed-dimensions.md` 為準。
 - **Codex 審查的觸發（William 常設授權，2026-07-27 立、2026-08-03 擴充）**：Claude 直接用本機 `codex` CLI 起審查、不必先問——PR 進行中的每一輪複審，與每批合併進 main 後的例行審查。指令列＝`codex exec -m <當輪最強模型> -c model_reasoning_effort='"<最高推理>"' -s workspace-write -c sandbox_workspace_write.network_access=true -C "/private/tmp/codex-review-pr<N>" - < <提示詞檔>`（模型與推理依 AGENTS.md 常設指示 C28：發審者每輪依平台當時提供的模型與推理等級清單核對，明確指定最強模型、最高推理；不使用 auto 選模／推理或自動升降級模式，判不出最高者先問 William；歷史設定 gpt-6-astra／xhigh 是 William 2026-09-07 的裁示、落點＝https://github.com/teacherjung/personal-finance-webapp/pull/579#issuecomment-5574063644 ；設定寫在指令上、不動 `~/.codex/config.toml`；網路要開，否則綁 localhost 的端點測試被沙箱擋掉 `listen EPERM`；其餘一律這組設定、AI 不可自行分類降級）。審查樹由實作者備與收，複審者不得自建 worktree；diff 一律 `git diff -M origin/main...HEAD`。
-- **送審提示詞骨架（RULES F3）**：請讀 `RULES.md`（A3、B、F 節）＋`templates/review-fixed-dimensions.md`（複審必驗清單）＋`templates/verdict-header.md`＋本節；逐字寫明三選一結論與這一輪的來源字串（標準表＝`PROJECT-SETTINGS.md`）、不可轉正式、不可合併。本專案「看情況查」那三項的值（複審必驗清單第 10〜12 項）：金額顯示一律走共用格式器（`money`／`moneyCur`／`pct`，`public/app.js`）；共用樣式住 `public/styles.css`；表格表頭欄數與資料列一致。
+- **送審提示詞骨架（RULES F3）**：請讀 `RULES.md`（A3、B、F 節）＋`templates/review-fixed-dimensions.md`（複審必驗清單）＋`templates/verdict-header.md`＋本節；逐字寫明三選一結論與這一輪的來源字串（標準表＝`PROJECT-SETTINGS.md`）、不可轉正式、不可合併。本專案「看情況查」那三項的值（複審必驗清單第 9〜11 項）：金額顯示一律走共用格式器（`money`／`moneyCur`／`pct`，`public/app.js`）；共用樣式住 `public/styles.css`；表格表頭欄數與資料列一致。
 - 複審者絕不讀 `data/store.db`（含 `.bak`／`-wal`／`-shm`）與 `data/store.json`；缺 `node_modules`＝備樹失敗，停下回報、不自行 `npm install`；動到 money 路徑的支，送審前用隔離的 `STORE_FILE` 重現。
 - 給 William 的回報＝RULES J1、J2：逐條判定摘要＋連結，不主動貼審查回覆原文（他問才貼）。
 - 修不修＝RULES F6；停下來問 William＝RULES F8，F8 那兩個詞哪些算＝下方界線表；磨太久＝RULES F9（範本 `templates/self-review.md`）與 F10（範本 `templates/third-round-self-check.md`）。⚠️ **讓檢查變鬆一律等他**：放寬、關掉、豁免任何一道閘、弱化會進三關／CI 的考題通過條件、或關掉重開 PR 以脫離閘的阻擋——都是「停下來回報」，不是選項題。
@@ -91,6 +92,7 @@
 
 ### 回報（RULES J1、J2）
 
+- **套件的共通規定（2026-10-10 整批同步起）**：七段版面與發出前的核對＝RULES J1 與 `templates/progress-report.md`；進度摘要＝RULES J5（每條線一則只放現況、覆寫不疊加、經過交給 git）；放哪、已結束的留幾天＝`settings.json` 位置表 J5 那一列（留 30 天、附件另放 `progress-attachments.md`）。本節下面的原文跟它們不一致的，以它們為準，已知的有：「只在本專案、不進套件」（2026-10-05 起這套規定放進套件）、「只留最近七天」（2026-10-07 起 30 天）、「把回報項目與日期時間記清楚」與「寫成給人唸的散文」（2026-10-07 新形狀：一條線一則、時間寫月/日 時:分）、「程序附件」區（2026-10-09 起附件另放一份檔）、「標籤固定粗體」（2026-10-06 起七個標籤用【】框起來、每段一律清單，見 AGENTS.md 那三則常設指示）、「不在任何倉庫裡」（2026-10-07 起摘要那一層是只在本機、不推送的 git 小倉庫，見設定 J5 那一列）。套件沒寫到的（檔名為什麼用英文與 E6 的射程、決定的落點 `PROJECT.md`、各條的出處與沿革）照本節。本節原文等整批同步確認承接完整之後的第二支再改成指路。
 - **第八行「進度摘要」**（William 2026-09-21 裁；**同日稍早那條「語音回報檔」由他當場取消、由這一條取代**——他要改用 Codex 的語音功能唸，不要 Claude 自己做音檔）：七段（第七段「附件」）＝RULES J1，這裡不複述；**第八行是本專案自己加的**。他裁的是**只在本專案、不進套件**；落在這裡是實作者照 RULES K1 選的正本位置。**回報時那一格寫「已更新（時間）」＝實作者的操作化**，他沒有裁那一格要寫什麼。
 - **那份摘要檔放哪、叫什麼＝實作者選的**（他沒有裁位置）：**本專案主目錄的上一層**（跟倉庫同層、**不在任何倉庫裡**），檔名 `progress-summary.md`。⚠️ **檔名用英文**＝照 **RULES E6**（原文：「檔名只用英文字母、數字、半形符號。」）；2026-09-22 裁示者也指出了這件事（**實作者轉述，沒有原話也沒有留痕**）。⚠️ 射程只講得到這裡：**守 E6 的那支考題**（`test/doc-naming.test.js`）掃的是 `git ls-files`，**掃不到**這份倉庫外的檔——所以這一條在這裡**靠自覺、不是機器抓得到的**。⚠️ **E6 本身沒有「只管被追蹤路徑」的限定**，不要把考題的射程讀成規則的射程（#632 r3：掃描器這樣講，實作者照收，結果把一條真的規則寫成不適用——**已更正**）。至於「它在倉庫外所以可以中文」，那是**實作者自開的例外、沒有問過他**。理由（放倉庫外）：進倉庫會讓每次更新都污染變更紀錄，還得動 `.gitignore` 與它的登記考題。⚠️ **刻意不寫絕對路徑**——公開倉庫不寫機器路徑（2026-09-21 為這件事退過一輪）；要用的人在對話裡問。
 - **他當場裁的三件**：①每次**回報時同時更新**，把回報項目與日期時間記清楚 ②**只留最近七天** ③⚠️ **七天只刪「已經結束」的**——**還沒完成的工作、卡住的問題、等他裁示的事，一直留到處理完**，不受七天限制。
@@ -105,6 +107,7 @@
 
 ### Grok（本專案）
 
+- **掃描者的模型與推理（2026-10-10 整批同步起）**：RULES G1「掃描者每次都用最強的模型、最高的推理（填在專案設定）」；值填在 `settings.json` 的 `scanner.strongest`、`scanner.maxEffort`。`scripts/grok-scan.js` 還沒讀這兩格，改掃描程式是同步之後的另一支。
 - **身分與管道**：William 機器裝有 Grok CLI（xAI）。它的正式工作通道都在 repo 外（材料制），站外 session 看不到規則書——所以對它的約束靠**發稿者控制材料**：材料檔的指示要載明該次適用的界線（審查／查核性質、無行動權限）。⚠️ 那段界線的逐字正本＝教學影片 repo `../teaching-videos/AGENTS.md`「Grok 材料檔標準邊界前綴」節——每份材料逐字照抄那四行，本 repo 刻意不另存副本。專案對它維持「未信任」預設。
 - **教學線三職**（操作面分兩處）：①**查核記者**＝腳本名詞／數字／案例查核；②**選題雷達**＝每集開工時跑一次，X 輿情只回答「散戶最近在誤解什麼」供選題——**不得產出持股輿情、行情判斷或任何進入投資決策的資訊**（錢的絕對邊界規則 5 的延伸）；①②的操作面在教學影片 repo 的 `AGENTS.md`。③**讀者測試員**＝本 repo 的 app 就地解釋等文案定稿前扮零基礎讀者、回報哪句看不懂——產線在這裡；它與工讀生的讀者測試站射程不同、互不取代，見 `docs/learning-hub-contract.md` 第三節。三職都不需 repo 權限，材料由發稿者抽出來給它。
 - **程式線＝複審後掃（RULES G1〜G4；常設、對稱、每支只掃一次）**：Grok **不進任何樹**（worktree 只是另一個 checkout，對會跑指令的未信任 CLI 不構成隔離），它工作的地方是 OS 沙箱裡的**盒子**（已 commit 原始碼的副本，在裡面跑 repo 程式是准的）。**呼叫紀律**：一律 `node scripts/grok-scan.js --base <sha> --head <sha> --prompt <指示檔>`，不准手動啟動它的 CLI、不在任何 repo 目錄啟動它；六步流程、沙箱劃界與三個失效條件（CLI 版本不同＝當未跑／金絲雀非 0＝不掃／缺掃描時序一行＝當未跑）住 `scripts/grok-scan.js` 檔頭。紀錄照 `templates/scan-record.md` 寫在 PR說明的固定小標 `### 複審後掃` 下（2026-09-17 切換日起用套件的小標；之前的支用「### Grok 複審後掃」，歷史紀錄不改）；逐條判定＝這一支的實作者；掃描發射者＝上一段。

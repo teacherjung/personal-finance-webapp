@@ -6,6 +6,7 @@
 // 而這個套件的整個賣點是搬得動。但實際量過，它們只用到平台的**九個動作**——所以不是搬三千行，
 // 是定九個問題。（2026-09-14 加第十個 allComments：待裁清單要掃整個專案的留言，題目所屬的PR關了，題目還在——
 // 搬家驗屋抓到只掃開著的PR，真語料 12 題裡 4 題會從清單消失。）
+// （2026-10-08 加第十一、十二個 repoTree、repoFile：下游落後要在套件這邊讀使用專案的倉庫。）
 //
 // ## 分工：套件定問題，專案定怎麼問
 //
@@ -98,6 +99,20 @@ const OPERATIONS = {
     params: ['branch'],
     what: '讀一個分支現在指到哪一顆',
     shape: { sha: LINE },
+  },
+  // 2026-10-08 加後兩個（下游落後；擁有者 2026-10-07 裁「現在就做」）：在套件這邊讀使用專案的倉庫。倉庫用參數 {repo} 指名、
+  // 不用 {project}——{project} 是這個專案自己；{repo} 一樣寫死在指令裡，不由環境變數決定問哪個倉庫。
+  repoTree: {
+    kind: 'list',
+    params: ['repo', 'ref'],
+    what: '讀別的倉庫某一條分支上的每一個檔（路徑與內容雜湊；⚠️ 必須是全部，平台把清單截斷時這條指令要失敗）',
+    shape: { path: LINE, sha: LINE },
+  },
+  repoFile: {
+    kind: 'object',
+    params: ['repo', 'ref', 'path'],
+    what: '讀別的倉庫某一條分支上一個檔的內容（原文）',
+    shape: { content: TEXT },
   },
   markReady: { kind: 'action', params: ['change'], what: '把一支PR從草稿轉成正式' },
   merge: { kind: 'action', params: ['change'], what: '按下合併鍵' },

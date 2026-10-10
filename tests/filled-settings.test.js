@@ -19,8 +19,11 @@
 // ⚠️ 巢狀：複本裡的這一題與「誘餌倉庫」那題（也會整份考卷重跑）看到 KIT_NESTED_SUITE=1 就標成跳過，
 //    免得無限巢狀；跳過在報告裡是 skipped，不是靜靜通過。
 // 案例簿：複本**一律不帶** cases/、把那一列登記成未移植（不帶案例簿的專案的樣子）；案例簿考題只讀設定的機器表那一列、不叫外面，
-//   所以巢狀那一輪固定走「不帶」那條路，而且這一題核對它真的走了（四題跳過、原因寫出來）。帶案例簿時的完整檢查由外層那一輪做
+//   所以巢狀那一輪固定走「不帶」那條路，而且這一題核對它真的走了（五題跳過、原因寫出來）。帶案例簿時的完整檢查由外層那一輪做
 //   （套件自己的倉庫）；在不帶案例簿的專案裡，外層同樣是跳過。
+// 共用檔清單：反過來，複本**照使用專案的樣子帶一份**（空白範本那一列是已安裝未啟用，假設定把它翻成已啟用；複本 git init 之後
+//   先跑 kit-lock.js --write 寫清單；--write 要讀套件倉庫，所以在旁邊另建一個只放共用檔的假套件倉庫、提交一次當那一版），
+//   所以巢狀那一輪真的走「工作樹對清單」那一題；套件倉庫自己是上游、外層那一輪是跳過。
 // ⚠️ 守不到的：考題沒走到的分支；考題自己寫死、既不讀設定也不叫 gh 的外部呼叫；
 //   假 gh 只攔「保留測試環境 PATH 的 gh 呼叫」——用絕對路徑叫 gh、或經過會重建 PATH 的 shell（例如 sh -lc）就攔不到，
 //   這不是程序層級的禁止連網（r1 T2）；禁區與家目錄以外的地方被寫，這一題看不到。
@@ -35,11 +38,12 @@ const { gitEnv } = require('../tools/git-env.js');
 const { OPERATIONS } = require('../tools/platform.js');
 const { unfilled } = require('./helpers/kit-copy.js');
 const { MACHINE: CASEBOOK, NOT_CARRIED_REASON } = require('../tools/build-casebook-index.js');
+const { MACHINE: KIT_LOCK, LOCK_FILE, SHARED_PATHS } = require('../tools/kit-lock.js');
 
 const ROOT = path.join(__dirname, '..');
 const NESTED = process.env.KIT_NESTED_SUITE === '1';
 /** 工具與考題從根目錄讀的那幾份；複本裡的 settings.json 會換成下面填了假值的那一份，PROJECT-SETTINGS.md 由它重新產生。 */
-const ROOT_FILES = ['settings.json', 'rules.json', 'RULES.md', 'MACHINES.md', 'PROJECT-SETTINGS.md'];
+const ROOT_FILES = ['settings.json', 'rules.json', 'RULES.md', 'MACHINES.md', 'PROJECT-SETTINGS.md', 'AGENTS.md'];   // AGENTS.md：使用專案一定有自己的那一份，指示檔長度題量它
 const ROOT_DIRS = ['tools', 'tests', 'templates'];   // cases/ 刻意不帶（上面「案例簿」那段）
 
 /** 只記錄、退 97 的錄音機（一條 argv）。 */
@@ -53,7 +57,8 @@ function fakeFilled({ log, box, zones }) {
   for (const loc of s.locations) loc.where = '假的位置';
   s.mainBranch = 'main';
   s.defaultDivision = { implementer: 'Alpha', reviewer: 'Beta' };
-  s.scanner = { tool: '假的掃描者', assignedBy: 'Alpha', tieBreak: '無', fallback: '無', isolation: { provider: '專案自建', wrap: [...recorder(log, 'isolation'), '{box}'], boxRoot: box, forbidden: zones } };
+  s.owner = 'Boss';
+  s.scanner = { tool: '假的掃描者', assignedBy: 'Alpha', tieBreak: '無', fallback: '無', strongest: '假的最強', maxEffort: '假的最高', isolation: { provider: '專案自建', wrap: [...recorder(log, 'isolation'), '{box}'], boxRoot: box, forbidden: zones } };
   s.platform = {
     name: 'Fake', project: 'fake/repo', clearEnv: ['GH_REPO'],
     operations: Object.fromEntries(Object.entries(OPERATIONS).map(([name, op]) => [name, [...recorder(log, `op:${name}`), ...op.params.map((p) => `{${p}}`)]])),
@@ -64,6 +69,11 @@ function fakeFilled({ log, box, zones }) {
   const fb = s.forbidden;
   s.forbidden = { ...fb, name: '錢', servers: [...fb.servers, 'broker-x'], safeServers: [...fb.safeServers, 'other'], deny: [...fb.deny, 'mcp__o__x'] };
   s.acceptance = { tiers: [{ id: '重', action: '重啟' }, { id: '輕', action: '看一眼' }], families: [{ pattern: '^lib/', tier: '重' }, { pattern: '^docs/', tier: '輕' }], unknownTier: '重' };
+  s.risk = { families: [{ pattern: '^lib/', tier: '高' }, { pattern: '^docs/', tier: '低' }], raise: ['假的升級條件'] };
+  s.reviewers = [{ participant: 'Beta', strongest: '假的最強', second: '假的次強', maxEffort: '最高', autoMode: '假的自動模式', source: '假的 CLI', launch: '假的啟動方式', command: '假的指令 {model} {effort} {reviewTree}', machine: '假的', promptOnly: '假的', verified: '2026-09-15' }];
+  s.backlog = { file: '假的待辦.md', section: '## 假的待辦' };
+  s.downstream = { projects: [{ name: '假的下游', repo: 'fake/app', branch: 'main', versionWithoutLock: 'f'.repeat(40), versionWithoutLockFrom: '假的出處' }] };
+  s.reviewLaunch = { changeLink: 'https://x.invalid/{project}/{change}', commentLink: 'https://x.invalid/{project}/{change}#{comment}', postComment: '假的貼法 {change}', copyTest: '假的考法 {mutationCopy}' };
   s.checks = { prepareWorktree: recorder(log, 'prepare'), commands: [recorder(log, 'check')], mainWorktree: '一般工作樹', indexAnchors: ['README.md'] };   // 準備指令也填成有動作的（r1 T1：填「無」＝這一格沒考到）；兩個選填登記也填成登記了的樣子
   s.gates = s.gates.map((g) => ({ ...g, state: '已啟用' }));
   s.mergeCommand = { command: process.execPath, args: [...recorder(log, 'merge').slice(1), '{change}', '--match-head-commit', '{sha}', '--body', 'Reviewed-By: {reviewer}\nMerged-By: {merger}'] };
@@ -105,6 +115,16 @@ test('整份考卷在「每一欄都填了假值」的設定底下跑：全綠�
     const build = sh([process.execPath, 'tools/build-settings.js']);
     assert.equal(build.status, 0, `前提：假設定產得出設定說明（${build.stderr}）`);
     for (const step of [['git', 'init', '-q'], ['git', 'add', '-A']]) assert.equal(sh(step).status, 0, `前提：複本要是版本控制目錄（git ${step[1]}）`);
+    assert.deepEqual(settings.machines.filter((m) => m.name === KIT_LOCK).map((m) => m.state), ['已啟用'], '前提：複本把共用檔清單登記成帶（使用專案的樣子）');
+    const kitSrc = path.join(scratch, 'kit-src');
+    fs.mkdirSync(kitSrc);
+    for (const p of SHARED_PATHS) if (fs.existsSync(path.join(copy, p))) fs.cpSync(path.join(copy, p), path.join(kitSrc, p), { recursive: true });
+    const inKit = (args) => spawnSync('git', args, { cwd: kitSrc, env: { ...env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' }, encoding: 'utf8' });
+    for (const step of [['init', '-q'], ['add', '-A'], ['commit', '-q', '-m', 'kit']]) assert.equal(inKit(step).status, 0, `前提：假套件倉庫 git ${step[0]}`);
+    const kitVersion = inKit(['rev-parse', 'HEAD']).stdout.trim();
+    const lockRun = sh([process.execPath, 'tools/kit-lock.js', '--write', '--kit', kitSrc, '--version', kitVersion, '--repo', 'acct/kit', '--date', '2026-09-29']);
+    assert.equal(lockRun.status, 0, `前提：複本寫得出共用檔清單（${lockRun.stdout}${lockRun.stderr}）`);
+    assert.ok(fs.existsSync(path.join(copy, LOCK_FILE)), '前提：複本有共用檔清單');
 
     for (const d of watched) fs.utimesSync(d, PAST, PAST);
     // 報告格式固定成 spec：下面數跳過原因靠的是報告文字（裁示批 r1 T1：換成別的格式會假紅）
@@ -112,7 +132,7 @@ test('整份考卷在「每一欄都填了假值」的設定底下跑：全綠�
     const failing = r.stdout.split('\n').filter((l) => /^✖|^not ok/u.test(l)).slice(0, 12).join('\n');
     assert.equal(r.status, 0, `填了假設定的整份考卷不是全綠：\n${failing}`);
     const skippedCasebook = r.stdout.split(NOT_CARRIED_REASON).length - 1;
-    assert.equal(skippedCasebook, 4, `巢狀那一輪要走「不帶案例簿」那條路：四題跳過、各寫一次原因（實際 ${skippedCasebook} 次）`);
+    assert.equal(skippedCasebook, 5, `巢狀那一輪要走「不帶案例簿」那條路：五題跳過、各寫一次原因（實際 ${skippedCasebook} 次）`);
     const calls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim() : '';
     assert.equal(calls, '', `有考題照設定去叫了外面（平台、合併、三關、隔離或 gh）：\n${calls.split('\n').slice(0, 8).join('\n')}`);
     for (const d of watched) {

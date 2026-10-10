@@ -80,6 +80,11 @@ const ALLOWED_GITIGNORE = [
   //    加進全域 `ignores`，基準 exit 0 的那一題變 exit 1。
   '/lib/_xlsx_guard_probes/',
   '/public/_xlsx_guard_probes/',
+  // 憑證檔：.env、.env.local 是工具與部署平台慣用的本機祕密檔（不是我們寫了沒在用的程式碼）。
+  // 2026-10-10 整批同步帶進套件 #64 的忽略清單（套件那邊擁有者 10/08 裁；理財這邊同步清單第六節、William 10/08 點頭）；
+  // 掃描程式 scripts/grok-scan.js 建盒子後的禁區檢查本來就帶這兩個名字，這裡補上讓 .gitignore 也擋。
+  '.env',
+  '.env.local',
 ];
 
 /**

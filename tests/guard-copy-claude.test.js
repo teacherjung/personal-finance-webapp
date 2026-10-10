@@ -101,7 +101,7 @@ function landed(scratch, srcOpts = {}, buildOpts = {}) {
 }
 const refuses = (fn, re, why) => assert.throws(fn, (e) => e instanceof Refusal && re.test(e.message), why);
 /** 指紋對不上那一條路的結尾（突變與對照組用）。 */
-const FP_FAIL = "原句轉給裁示者（補複本的順序在 tools/guard-copy.js 檔頭）' >&2; exit 2;; esac";
+const FP_FAIL = "原句轉給擁有者（補複本的順序在 tools/guard-copy.js 檔頭）' >&2; exit 2;; esac";
 /**
  * 那一行裡查「複本裡只有那四個檔與 tools 目錄」的那一道（對照組用：拿掉它、換回修正前只查連結的寫法、吞掉 find 的失敗）。
  * 從那一行裡找出來、不逐字寫死：這一道的條件被改掉時，要紅在行為斷言、不是紅在對照組找不到字。
@@ -152,7 +152,7 @@ test('①範本的形狀：兩組各剛好一組、佔位各一個、不含機�
   assert.equal(cmd.split(` -size -${CLAUDE_MAX_FILE_BYTES}c`).length, 3, '允許的兩處都帶大小上限，數字跟 CLAUDE_MAX_FILE_BYTES 一樣');
   assert.equal(cmd.split('-size').length, 3, '沒有別的大小條件');
   assert.equal(cmd.split('&& case "$guard_odd" in "") guard_sum="$(').length, 2, 'find 的輸出是空的才去算指紋');
-  assert.match(cmd, /不要手工造複本、不要自己改那一行，原句轉給裁示者/u, '指紋對不上那一句要叫 AI 停手、轉給裁示者');
+  assert.match(cmd, /不要手工造複本、不要自己改那一行，原句轉給擁有者/u, '指紋對不上那一句要叫 AI 停手、轉給擁有者');
 
   const change = doc.hooks.ConfigChange;
   assert.equal(change.length, 1);
@@ -196,6 +196,7 @@ test('①範本的形狀：兩組各剛好一組、佔位各一個、不含機�
 
 test('②--claude-line 只讀不寫、不需要 git；指紋三方互證；複本裡設定檔的位元組逐字釘住；沒提交的清單改動只改得到那一行', () => withScratch((scratch) => {
   const src = sourceRepo(scratch);
+  assert.deepEqual(['maintenance.auto', 'gc.auto'].map((k) => git(src, 'config', '--get', k).stdout.trim()), ['false', '0'], '前提：暫存倉庫關掉自動整理（不然提交後的背景打包可能撞上下面的快照）');
   const home = fakeHome(scratch);
   const noGit = fs.mkdtempSync(path.join(scratch, 'empty-path-'));   // PATH 裡什麼都沒有：要 git 的話這裡就起不來
   const before = snapshot(src);
@@ -220,7 +221,7 @@ test('②--claude-line 只讀不寫、不需要 git；指紋三方互證；複�
   // 工作樹沒提交的改動：清單以外的欄位不影響指紋；清單改了＝那一行的指紋跟著變，但複本（抽已合併版本）不變
   const settingsFile = path.join(src, 'settings.json');
   const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
-  fs.writeFileSync(settingsFile, JSON.stringify({ ...settings, mergeAuthorization: '別的欄位' }));
+  fs.writeFileSync(settingsFile, JSON.stringify({ ...settings, notInGuardList: '別的欄位' }));
   assert.equal(treeFingerprint(src), fp, '清單以外的欄位（連同整份檔的排版）不進指紋');
   fs.writeFileSync(settingsFile, JSON.stringify({ ...settings, forbidden: LOOSE }, null, 2));
   assert.notEqual(treeFingerprint(src), fp, '工作樹的清單改了，--claude-line 的指紋要跟著變');
@@ -316,7 +317,7 @@ test('③--claude 落地：位置、四個唯讀檔、沒有暫存殘留；再�
   failsWith(editFile(CLAUDE_TEMPLATE_REL, (c) => { const out = c.replace(FP_FAIL, FP_FAIL.replace('exit 2', 'exit 0')); assert.notEqual(out, c, '前提：真的改到範本'); return out; }), /指紋檢查沒有作用/u, '範本的指紋檢查被改成不擋（提交進版本）');
   const cliBad = tool(crash.bad, ['--claude'], { home: crash.badHome });
   assert.deepEqual([cliBad.status, cliBad.stdout], [1, ''], `指令入口：試跑沒過＝退 1、標準輸出空的（${cliBad.stderr}）`);
-  assert.match(cliBad.stderr, /自我試跑沒過[\s\S]*沒有落地/u);
+  assert.match(cliBad.stderr, /自我試跑沒過[\s\S]*沒有落地[\s\S]*不要手工造複本——原句轉給擁有者。/u, '試跑沒過要叫 AI 停手、轉給擁有者');
   assert.deepEqual(fs.readdirSync(baseOf(crash.badHome)), []);
 
   // 寫到一半出錯（基底目錄的上層不給寫）：退 1、什麼都沒落地
@@ -354,7 +355,7 @@ test('④那個名字已經在、但不自洽＝拒絕、不覆寫、不刪；�
     assert.deepEqual(snapshot(baseOf(home)), before, `${why}：不覆寫、不刪、不留暫存骨架`);
     const cli = tool(good.src, ['--claude'], { home });
     assert.deepEqual([cli.status, cli.stdout], [2, ''], `${why}：指令入口退 2（${cli.stderr}）`);
-    assert.match(cli.stderr, /原句轉給裁示者/u);
+    assert.match(cli.stderr, /原句轉給擁有者/u);
     assert.deepEqual(snapshot(baseOf(home)), before);
   };
   stays(plant((dir) => { fs.chmodSync(path.join(dir, 'settings.json'), 0o644); fs.appendFileSync(path.join(dir, 'settings.json'), ' '); }), '內容改過一個位元組');

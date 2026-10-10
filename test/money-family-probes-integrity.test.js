@@ -41,7 +41,8 @@ const HELPER = path.join(ROOT, 'test', 'helpers', 'money-family-probes.js');
 
 // helper 檔案位元組的 sha256（William 2026-09-01 裁示的那顆釘）。
 // 2026-10-03 重算（只搬移兩處註解路標；探針矩陣仍為 115、內容未變）。
-const HELPER_BYTES_SHA256 = 'e9df6166523161cfbb2dab13d421c20677188a6354eeb47dea7d9769dac09ca3';
+// 2026-10-10 重算（整批同步跟上套件 #55、#67：兩支探針換形狀、加 10 支連寫探針、矩陣 115→125、錢的尾句認兩句、註解跟上尾句分三種；William 裁 R1＝准）。
+const HELPER_BYTES_SHA256 = 'cf3ccca0f3868306c11f02a9cb97e98075db3ca926e3470f80c9b34b23818132';
 
 test('承重字表 helper 的位元組與釘相符（本行程不載入它＝它的程式碼在這裡沒有執行機會）', () => {
   const actual = createHash('sha256').update(readFileSync(HELPER)).digest('hex');

@@ -629,7 +629,7 @@ function buildClaude({ from = null, root = ROOT, home = os.homedir(), allowTemp 
   /** 那個名字已經在：自洽＝不寫、就地試跑（HOME＝真的那個家目錄）；不自洽＝拒絕，不覆寫也不刪。 */
   const existing = () => {
     const problem = copyProblem(copyDir, fp);
-    if (problem) throw new Refusal(`${copyDir} 已經在、但不是一份自洽的複本（${problem}）：這支不覆寫、也不刪它。不要手工修它——原句轉給裁示者，看過之後整個目錄移走再重跑`);
+    if (problem) throw new Refusal(`${copyDir} 已經在、但不是一份自洽的複本（${problem}）：這支不覆寫、也不刪它。不要手工修它——原句轉給擁有者，看過之後整個目錄移走再重跑`);
     return { commit, tracking, copyDir, fp, existed: true, failure: test(home) };
   };
   if (fs.lstatSync(copyDir, { throwIfNoEntry: false })) return existing();   // lstat：名字是壞掉的連結也算「已經在」
@@ -780,7 +780,7 @@ function mainClaude(args, env) {
     else if (r.withdrawn) where = `落地前的試跑（HOME 指到暫存骨架）過了，落地之後用這個家再試跑沒過＝在這個人的登入設定下試跑沒過：這一次落地的那一份已經撤掉${r.stagingLeft ? '（改名進暫存骨架）' : '，沒有留下任何東西'}`;
     else where = `落地前的試跑（HOME 指到暫存骨架）過了，落地之後用這個家再試跑沒過＝在這個人的登入設定下試跑沒過，而且撤不掉：${r.copyDir} 還在，指紋是這一個的那一行現在就照用這一份——看過之後自己處理（先 chmod -R u+w）`;
     process.stderr.write([`來源版本：${r.commit}（已在 ${r.tracking} 裡）`, `指紋：${r.fp}`,
-      `自我試跑沒過（${r.failure}）：${where}。不要手工造複本——原句轉給裁示者。`, ...left, ''].join('\n'));
+      `自我試跑沒過（${r.failure}）：${where}。不要手工造複本——原句轉給擁有者。`, ...left, ''].join('\n'));
     return 1;
   }
   let sameAsTree = null;

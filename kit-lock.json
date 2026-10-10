@@ -1,0 +1,553 @@
+{
+  "repo": "teacherjung/ai-collab-kit",
+  "version": "67d0d2d4aacdbe4df06b1b354ebb53b638077f3d",
+  "syncedAt": "2026-10-11",
+  "entries": [
+    {
+      "mode": "100644",
+      "blob": "b20f2e16aa25433f76a2dbcbc66d9484b4ed6e6d",
+      "path": "GLOSSARY.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "b99aeaf814d2a9ac5352cabb1ad1f143d721b294",
+      "path": "MACHINES.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "350b70462fa6223bfe382b5051fe1d30cd7c565c",
+      "path": "RULES.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "699e249284712b0eb0e4066b8f18e5b80e0f1ac7",
+      "path": "cases/DIGEST.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "e3aa050b419b427da123948c28224b4df75cde49",
+      "path": "docs/money-guard-two-pattern-tables.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "da328908b7ce5b52eb48cc772a785a527f4b7558",
+      "path": "rules.json"
+    },
+    {
+      "mode": "100644",
+      "blob": "9d0adfe222b0a93341679421a0a2254c4c162ef4",
+      "path": "templates/canary-install.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "2f722f7428286768dd39a42e2865c397bd80af56",
+      "path": "templates/ci-github.yml"
+    },
+    {
+      "mode": "100644",
+      "blob": "61246166b15c6af542be118cd2074ddaca470c90",
+      "path": "templates/code-pitfalls.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "0afc36db894bb9c629a4f9eb0716e63313050825",
+      "path": "templates/collab-fields-github.yml"
+    },
+    {
+      "mode": "100644",
+      "blob": "a957c0f27422d77a0e972477b5e26a2cdcc797b3",
+      "path": "templates/hook-claude-pinned.json"
+    },
+    {
+      "mode": "100644",
+      "blob": "9cec97adb16792006bbda4b2b7d44f126bf44006",
+      "path": "templates/hook-claude.json"
+    },
+    {
+      "mode": "100644",
+      "blob": "78e273c0e0e5ab819fe3c8f390d99f4ffa73b692",
+      "path": "templates/hook-codex-global.json"
+    },
+    {
+      "mode": "100644",
+      "blob": "07deae0aec0e5f48de1758a5e8eaadc0b15aae7c",
+      "path": "templates/hook-codex.json"
+    },
+    {
+      "mode": "100644",
+      "blob": "33e22c1aa289204c0a5ef3455b32db55cf8cd794",
+      "path": "templates/managed-deny-install.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "0fb04cc578d3c697fde9d859464f94d76481991c",
+      "path": "templates/platform-github.json"
+    },
+    {
+      "mode": "100644",
+      "blob": "4f4ae79aeb632f1b3ea07d217417c46c88eb9f85",
+      "path": "templates/pr-body.md"
+    },
+    {
+      "mode": "100755",
+      "blob": "6100cd06ae022422f707ed82cf12acf7bca12999",
+      "path": "templates/pre-push"
+    },
+    {
+      "mode": "100644",
+      "blob": "a3cd975bd3aa25cf314562ada29d1eadd3b462b5",
+      "path": "templates/progress-report.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "f2e3c9a348a4cef9911199e8a968d837ccae2e74",
+      "path": "templates/publish-checklist.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "11e9e4c8d5f00d73d949114bc4cf3df88119a2b3",
+      "path": "templates/review-fixed-dimensions.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "0e9e1d383528918596cb0cb7edc2c76c86f5be42",
+      "path": "templates/review-request.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "1f3ff7b6b87ecbf3a2bc92810e8aa2f8f0c0a303",
+      "path": "templates/ruling-record.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "6266028706a4724408e9a2b1846799deb6caafad",
+      "path": "templates/scan-record.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "87b78644962e505612777e718140ff196a76ed5a",
+      "path": "templates/self-review.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "eb882c2de1a3ccd2bd2d7b34ec1e4aef6d4d5800",
+      "path": "templates/third-round-self-check.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "9e3e1ebe9f6a222ce69d0753c96a143f1cf41b43",
+      "path": "templates/verdict-header.md"
+    },
+    {
+      "mode": "100644",
+      "blob": "ad5cb3bd2394280b979321368130caa4f347f8a0",
+      "path": "tests/acceptance-tier.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "aa2291effbb2a669c31e3c0ebc856f587d8bc50b",
+      "path": "tests/agents-entry.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "37d75e81ace8cc99d7cb75693420b97a974810bc",
+      "path": "tests/backlog-touch.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "839cede4f2ce5a7678f5bd67e315ad195904a72f",
+      "path": "tests/canary-server.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "40f7bf3f88efcde81a896fabbfee1fdba8fd67f5",
+      "path": "tests/casebook.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "8ddc46014a3433991069e2eb183cb8678734aef5",
+      "path": "tests/check-checks-really-ran.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "511ac333046fff9b33d57d3a8fa7fb822494a8f9",
+      "path": "tests/check-collab-fields.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "e7cdaaf82305fd242879f0df58792593a48dd21b",
+      "path": "tests/check-cross-merge.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "8bf96820535496d1244b7e51909851ad3b714836",
+      "path": "tests/check-pending-rulings.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "8c67fa90dfed4b1d4a1c9ed888e03104003d910d",
+      "path": "tests/check-progress-summary.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "eb6c5cdbd56d2851e0c4547636051f40597bcec3",
+      "path": "tests/check-review-verdicts.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "6d9ca66c5f5d1f026c62fbdfd250616ec0b2ac78",
+      "path": "tests/check-stacked.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "ada651efe8b763bdb98fa5701d1c76daaba23a2b",
+      "path": "tests/claude-pin.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "15d37f744244323b04b745de1e7ff1b86ae6e674",
+      "path": "tests/data-contract.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "5a21d1868c47b03745de0601c4a4eaac758e0bb1",
+      "path": "tests/downstream-lag.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "5f4a8e6ebff2ebd6702a6d4d67a1b3892f8cdd04",
+      "path": "tests/file-names.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "ae44399f37e538c4dca71c2654ab2b5fc733a1a1",
+      "path": "tests/filled-settings.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "0b31220d8122cb13add319aaa03a256f9fd2b795",
+      "path": "tests/forbidden-defaults.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "2b71a73e171177bfcb0104c499f74a5b73e0f901",
+      "path": "tests/forbidden-tools.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "b07b7882611dc234a89a88ccbeadfb3de9bc619b",
+      "path": "tests/git-env.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "820b21994eb22c2c159eb63bf76c234e1b66d3af",
+      "path": "tests/guard-copy-claude.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "7adff4671f76503bad3d57bab350e2f90b2f545f",
+      "path": "tests/guard-copy.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "96786b8a9f6d232a8d15f2529ea54b93f30c2d62",
+      "path": "tests/helpers/fake-isolation.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "1a793bdf91fc4e262fa1e24e3ebd9d5b2fd3d3e4",
+      "path": "tests/helpers/guard-rig.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "3afbebe2fffa90e06dc34206503f00f359bcb52f",
+      "path": "tests/helpers/kit-copy.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "7beab6ad6b57191cd52a06c7b4ae4212ae2dade6",
+      "path": "tests/helpers/unfilled-settings.json"
+    },
+    {
+      "mode": "100644",
+      "blob": "23c9e3d576b4cde2bae7d582edea079887bff531",
+      "path": "tests/ignore-lists.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "59fcad94bfd09aa813f771fb490512dc77865c0b",
+      "path": "tests/kit-lock.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "4ec18a499ee5efb1884d0bde3c2d7f9ef7c9782e",
+      "path": "tests/manifest.json"
+    },
+    {
+      "mode": "100644",
+      "blob": "558a3e5ba4659cb6c958d111713bd14d8b6d7ecf",
+      "path": "tests/manifest.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "321321f7641b1a0726ade18b601162b2c2629d33",
+      "path": "tests/markdown-effective.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "72124d67bbbe630435ae7537ade30b212f7cae5f",
+      "path": "tests/merge.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "04a798ce7fd1bcc61648a13e38b3f7f0e3d2cc05",
+      "path": "tests/package.json"
+    },
+    {
+      "mode": "100644",
+      "blob": "e9b15e18b1bc90edf607733dd2094211376a2b58",
+      "path": "tests/pending-rulings.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "17f8eaf0c646ce6099b4f9d88f36759e31c91da9",
+      "path": "tests/placement.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "5c176c495f0f2475a5cb15ba6e179b9b7d75b510",
+      "path": "tests/platform.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "cf6bfa68b22002a6bf21f8ea0912c834cad9aefd",
+      "path": "tests/review-launch.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "a1d22d5258d9fb3093330c17c98cf38fb5797a17",
+      "path": "tests/risk-tier.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "acc363bfc12cd6519a18287f3c380be6b4b0ad08",
+      "path": "tests/rules-length.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "3f03c8be2cc0172a0f6a5560b52d0664e0894959",
+      "path": "tests/run-checks.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "099e96f9910fe71fc27cedb3fa8fdddc4d86a155",
+      "path": "tests/scan-postmortem.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "1b3a8d171f0763f50dab2bf6e4d51032acf7a5cc",
+      "path": "tests/scan-probe.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "fe82ac071027b30fb4c10fc59c862e276d3c0641",
+      "path": "tests/settings.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "a04243a6896e1d446e1d3a998fc2766f7615debb",
+      "path": "tests/signposts.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "8bc056bf08d208491ec7a974f02092a32b8bd1aa",
+      "path": "tests/stale-text.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "67a101d85e194b3a4414f07517f870a53bb17dcd",
+      "path": "tests/tidy-list.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "49fd1e996c99b16d740a5cbc575c47987d3fdebc",
+      "path": "tests/time-point.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "aec503eeaca95224a712aad3a979b33f076e1127",
+      "path": "tests/week-digest.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "e93baaa481013776d10daffab182ee7a95ae123f",
+      "path": "tools/acceptance-tier.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "f14d6cbe29fa8a21dc9f1fd1ec3db8a3f6dcf6b3",
+      "path": "tools/backlog-touch.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "6edc33fdd14569709d23e081c58a9a54f9191c3b",
+      "path": "tools/build-casebook-index.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "60a51cd871bc06043c282ef71f8172316ed21a30",
+      "path": "tools/build-rules.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "3e90ee1324e5ece88a27bccdcb76b5aa1ecc95a7",
+      "path": "tools/build-settings.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "29699b353e6266a6a676639b2476372892ac709e",
+      "path": "tools/canary-server.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "64dfffbeda609b4cc0ceaeff362cffff5ae920ab",
+      "path": "tools/check-progress-summary.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "456adcc0acc3e86f3acffa1f7fdf75a6810db672",
+      "path": "tools/claude-pin.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "6526d6e2b718f69119baf2f5cb9d5908d275a19c",
+      "path": "tools/downstream-lag.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "1c1c5981c638498d3923ee6f41e3807c42e9de10",
+      "path": "tools/forbidden-tools.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "2cb6e5269a2f06a13e8303d5f147fb3afb916ab3",
+      "path": "tools/gates/check-checks-really-ran.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "2a94e2d06b5d4c7c5d7dfe08706f23d2ab3910de",
+      "path": "tools/gates/check-collab-fields.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "bec6b8b791388187028dd1dfc7a94762e8703829",
+      "path": "tools/gates/check-cross-merge.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "740d010f792e7a0faa9c961608fa82e1bd2e4921",
+      "path": "tools/gates/check-pending-rulings.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "d38a34c341a9265c69f729c6badd354003af4905",
+      "path": "tools/gates/check-review-verdicts.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "8ae3f48706a95ca4a279c683c945810b7514345e",
+      "path": "tools/gates/check-stacked.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "adf9b4ebaa1bdc734e81b959ffb00adbabfbc32a",
+      "path": "tools/git-env.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "ce32f37fba86fd5feba4e7624bc4777bd44e9ae7",
+      "path": "tools/guard-copy.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "b150d1f22566f9243df6a282abfcf0b494885643",
+      "path": "tools/kit-lock.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "8937381e1e134eb1e6a1aada5b9ded1e47bacbc0",
+      "path": "tools/markdown-effective.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "20fbbaadfabb92cd2f8cb3da6c6100d3c35e1dea",
+      "path": "tools/merge.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "65252889ec4926c28dcda3c7cacb801bb162cd84",
+      "path": "tools/package.json"
+    },
+    {
+      "mode": "100644",
+      "blob": "7b05dc0ee11587c8c6832328ae453b9775353f0a",
+      "path": "tools/pending-rulings.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "6c48889e2d0f906dd0a76a3b0b4d6c59b13a8706",
+      "path": "tools/platform.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "5617b4866563c996580dbe178e5762710cfb0922",
+      "path": "tools/review-launch.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "c7dad9989dcf6e2c052059c5a27ca3e7b7dfea32",
+      "path": "tools/risk-tier.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "9e73368ba8967f1bfd4c89254a14c069cd26b424",
+      "path": "tools/run-checks.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "1db2cb050b4dc3b90ae80e0949394b76492933af",
+      "path": "tools/scan-postmortem.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "beb068a45e993d93bccb2d4bfafd5349a4283d43",
+      "path": "tools/scan-probe.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "5b37fb779ee0e7472fe34ae924987e8aaf7594b7",
+      "path": "tools/settings-data.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "b3469125e11de52886dc542954c030cdd3e788a1",
+      "path": "tools/stale-text.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "3aacf1e0f6d7837d6904f1d56e9be69ab2db5f55",
+      "path": "tools/tidy-list.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "17bc510013530602a08124c4a22d5256b9b3875a",
+      "path": "tools/time-point.js"
+    },
+    {
+      "mode": "100755",
+      "blob": "b1dd228a0eeb605f3175c31272e4477525ee4dac",
+      "path": "tools/week-digest.js"
+    }
+  ],
+  "exceptions": []
+}

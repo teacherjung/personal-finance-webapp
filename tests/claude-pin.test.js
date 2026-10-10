@@ -77,7 +77,7 @@ test('②夾具：等式題真的會紅——相符、清單改一個字、指�
   assert.equal(d.state, 'mismatch', '清單改一個字、那一行沒換');
   assert.match(d.problems.join('\n'), /--claude-line/u, '訊息要指到重印的做法');
   assert.doesNotMatch(d.problems.join('\n'), /[0-9a-f]{64}/u, '訊息不可以把算出來的新指紋遞出去（要重印就跑工具，不是手改那一行）');
-  fs.writeFileSync(settingsFile, JSON.stringify({ ...before, mergeAuthorization: '清單以外的欄位' }));
+  fs.writeFileSync(settingsFile, JSON.stringify({ ...before, notInGuardList: '清單以外的欄位' }));
   assert.equal(state(drifted), 'ok', '對照組：改的是清單以外的欄位＝不必換');
   fs.appendFileSync(path.join(drifted, 'tools', 'settings-data.js'), '\n');
   assert.equal(state(drifted), 'mismatch', '四個檔裡的程式檔多一個位元組');

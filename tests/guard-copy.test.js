@@ -66,6 +66,8 @@ function sourceRepo(scratch, { forbidden = FAKE, edit, mainBranch = 'main', merg
   fs.writeFileSync(path.join(src, 'settings.json'), JSON.stringify({ participants: [], mainBranch, forbidden, gates: [] }, null, 2));
   if (edit) edit(src);
   assert.equal(git(src, 'init', '-q').status, 0);
+  // 關掉自動整理：跟 tests/helpers/guard-rig.js 的 sourceRepo 同一個理由（這一支也在這個倉庫上走目錄：收暫存時）
+  for (const [key, value] of [['maintenance.auto', 'false'], ['gc.auto', '0']]) assert.equal(git(src, 'config', key, value).status, 0);
   assert.equal(git(src, 'add', '-A').status, 0);
   const c = git(src, 'commit', '-qm', 'src');
   assert.equal(c.status, 0, c.stderr);
@@ -118,6 +120,7 @@ test('前提：這台機器有 /usr/bin/shasum 與 /bin/sh（沒有的話全域�
 
 test('①複本剛好四個檔、唯讀、內容來自提交的版本；指紋可重現、跟 shasum 自己算的一樣', () => withScratch((scratch) => {
   const src = sourceRepo(scratch);
+  assert.deepEqual(['maintenance.auto', 'gc.auto'].map((k) => git(src, 'config', '--get', k).stdout.trim()), ['false', '0'], '前提：暫存倉庫關掉自動整理（不然提交後的背景打包可能撞上收暫存時走的目錄）');
   // 工作樹上沒提交的改動不可以進複本
   fs.appendFileSync(path.join(src, 'tools', 'forbidden-tools.js'), '\n// 沒提交的改動\n');
   const a = build({ from: 'HEAD', to: path.join(scratch, 'copy-a'), root: src, allowTemp: true });
