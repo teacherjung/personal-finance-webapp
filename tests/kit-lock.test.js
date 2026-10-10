@@ -343,7 +343,7 @@ test('指令入口：--check 綠退 0、紅退 1、清單壞掉或 git 失敗退
   r.except([ex('tools/a.js')]);
   p = r.cli('--check');
   assert.equal(p.status, 0, p.stdout);
-  assert.match(p.stdout, /  例外：tools\/a\.js（agent-a，2026-09-29 起）：先在專案修\n不一樣的每一個都有例外對上。\n$/u, '有例外時照實列出來');
+  assert.match(p.stdout, / {2}例外：tools\/a\.js（agent-a，2026-09-29 起）：先在專案修\n不一樣的每一個都有例外對上。\n$/u, '有例外時照實列出來');
   fs.writeFileSync(path.join(r.root, lock.LOCK_FILE), '[]');
   p = r.cli('--check');
   assert.equal(p.status, 2, p.stdout);
