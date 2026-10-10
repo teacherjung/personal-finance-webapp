@@ -5,7 +5,8 @@
 //
 // 守得到的：四欄齊全；實作者與複審者不是同一位；只讀說明開頭那一段（碰到註解、圍欄、引用等特殊行就停、指出行號）；欄名要錨在行首；
 //   冒號後不吃換行；角色要剛好命中一個（不是「包含」）；括號裡藏第二個角色不算；
-//   混用文字系統＝看不出是誰；平台問不到或設定沒填＝退 2。
+//   混用文字系統＝看不出是誰；平台問不到或設定沒填＝退 2；
+//   範本 templates/pr-body.md 跟閘的必填清單綁在一起：每個必填欄名都以「- **欄名**：」的形狀出現在開頭那一段、閘自己的讀法讀得到（擁有者 2026-10-10 裁 a；改欄名要兩邊一起改）。
 // ⚠️ 守不到的：欄位填的內容是不是真的（寫「某某」不代表真的是某某複審的）；
 //   「預計修改的檔案」「最糟失去什麼」兩欄只驗非空，不驗內容。
 'use strict';
@@ -14,6 +15,9 @@ const assert = require('node:assert/strict');
 const { gateRun, problemsOf, fieldValue, canonicalRole, rolesOf, REQUIRED_FIELDS } = require('../tools/gates/check-collab-fields.js');
 const { PlatformError } = require('../tools/platform.js');
 const { runInCopy } = require('./helpers/kit-copy.js');
+const fs = require('node:fs');
+const path = require('node:path');
+const { leadingText } = require('../tools/markdown-effective.js');
 
 const ROLES = ['Alpha', 'Beta', 'Gamma'];
 
@@ -148,6 +152,21 @@ test('⑤自審藏在藏字元裡：折回來之後要被抓到，不是被放�
       `${JSON.stringify(reviewer)} 折回來就是同一位，要判成自審（判成「看不出是誰」也算擋下來，但訊息會誤導）`,
     );
   }
+});
+
+test('⑨範本 templates/pr-body.md 的欄名跟閘的必填清單綁在一起：每個必填欄名都以「- **欄名**：」的形狀出現在開頭那一段，而且閘自己讀得到', () => {
+  const tpl = fs.readFileSync(path.join(__dirname, '..', 'templates', 'pr-body.md'), 'utf8');
+  assert.ok(REQUIRED_FIELDS.length >= 4, '必填清單至少四欄（清單被清空這一題就守不到東西）');
+  // 形狀只看閘真的會讀的那一段（leadingText：碰到圍欄、引用等特殊行就停）——看整份檔的話，檔尾圍欄裡的範例也能滿足斷言（r2 R1）
+  const missing = (text) => REQUIRED_FIELDS.filter((f) => {
+    const esc = f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return !new RegExp(`^- \\*\\*${esc}\\*\\*：`, 'mu').test(leadingText(text)) || fieldValue(text, f) === '';
+  });
+  assert.deepEqual(missing(tpl), [], '範本 templates/pr-body.md 開頭那一段缺「- **欄名**：」這一行、或閘自己讀不到（角括號裡的提示字也算有值）：欄名改了要範本與閘的 REQUIRED_FIELDS 一起改');
+  // 反例：前段的實作者欄掉了粗體、檔尾圍欄裡另有一份粗體的範例——要抓到前段那一筆，不能被範例滿足
+  const bad = tpl.replace('- **實作者**：', '- 實作者：') + '\n```md\n- **實作者**：<識別值>\n```\n';
+  assert.notEqual(bad, tpl + '\n```md\n- **實作者**：<識別值>\n```\n', '反例要真的動到前段那一行');
+  assert.deepEqual(missing(bad), ['實作者'], '前段掉粗體、檔尾圍欄裡有同名粗體範例：要抓到前段那一筆');
 });
 
 test('角色名單來自專案設定，不是寫死的', () => {

@@ -85,7 +85,7 @@ test('啟用表裡每一支機器標的規矩條號都存在', () => {
 /** 從 MACHINES.md 的標籤定義表抽名字（跟 rules-length 那題同一個來源），再判一個標籤的**名字**是哪一個。 */
 function labelNames() {
   const text = fs.readFileSync(path.join(__dirname, '..', 'MACHINES.md'), 'utf8');
-  const at = text.indexOf('句尾的執行者標籤，定義在這裡、只在這裡');
+  const at = text.indexOf('每條最後一行的執行者標籤，定義在這裡、只在這裡');
   assert.ok(at >= 0, '找不到標籤定義表');
   const names = [];
   for (const line of text.slice(at).split('\n')) {
@@ -244,6 +244,7 @@ test('⑨考題用的空白設定跟 settings.json 形狀一致，而且對外�
   assert.deepEqual(u.checks.indexAnchors, [UNSET], '索引錨點要沒登記');
   for (const p of u.participants) assert.equal(p.id, UNSET, `身分「${p.role}」要沒填`);
   assert.deepEqual(u.defaultDivision, { implementer: UNSET, reviewer: UNSET }, '預設分工要沒填（空白範本不可以帶套件倉庫自己的分工）');
+  assert.equal(u.owner, UNSET, '擁有者要沒填（空白範本不可以帶套件倉庫自己的擁有者）');
 });
 
 test('⑨b 空白設定跟 settings.json 在套件共用的欄位逐字相同（只准專案自己的值不同）', () => {
@@ -254,11 +255,11 @@ test('⑨b 空白設定跟 settings.json 在套件共用的欄位逐字相同（
   // 閘的順序各專案可以不同（合併指令照登記順序跑），所以排序後比。
   const a = read();
   const u = unfilled();
-  assert.deepEqual(u.machines.map((m) => [m.name, m.rules]), a.machines.map((m) => [m.name, m.rules]), '機器表的名字或條號兩份不一樣：改了一份要一起改另一份');
+  assert.deepEqual(u.machines.map((m) => [m.name, m.rules]), a.machines.map((m) => [m.name, m.rules]), '機器表的名字或條號兩份不一樣：要改請兩份一起改（settings.json 與 tests/helpers/unfilled-settings.json），再跑 node tools/build-settings.js');
   const gateKey = (g) => JSON.stringify([g.name, g.rules, g.command, g.args]);
-  assert.deepEqual(u.gates.map(gateKey).sort(), a.gates.map(gateKey).sort(), '閘的名字、條號或指令兩份不一樣');
-  assert.deepEqual(u.locations.map((l) => [l.item, l.rules]), a.locations.map((l) => [l.item, l.rules]), '位置表的項目或條號兩份不一樣');
-  assert.equal(u.accountRule, a.accountRule, '貼文帳號資格兩份不一樣');
+  assert.deepEqual(u.gates.map(gateKey).sort(), a.gates.map(gateKey).sort(), '閘的名字、條號或指令兩份不一樣：要改請兩份一起改（settings.json 與 tests/helpers/unfilled-settings.json），再跑 node tools/build-settings.js');
+  assert.deepEqual(u.locations.map((l) => [l.item, l.rules]), a.locations.map((l) => [l.item, l.rules]), '位置表的項目或條號兩份不一樣：要改請兩份一起改（settings.json 與 tests/helpers/unfilled-settings.json），再跑 node tools/build-settings.js');
+  assert.equal(u.accountRule, a.accountRule, '貼文帳號資格兩份不一樣：要改請兩份一起改（settings.json 與 tests/helpers/unfilled-settings.json），再跑 node tools/build-settings.js');
 });
 
 test('設定的倉庫身分要跟這棵樹的遠端倉庫對得上（照舊習慣抄了套件根目錄那份設定卡＝紅）', (t) => {
@@ -301,5 +302,5 @@ test('照 GitHub 範本填完平台動作與合併指令，設定說明書照樣
   // 說明書把 ASCII 標點一律跳脫（字面編碼），所以比對跳脫後的樣子
   assert.ok(line.includes('Reviewed\\-By'), `說明書那一行要看得到 Reviewed-By：${line}`);
   assert.ok(line.includes('\\\\n'), '換行在說明書裡寫成看得見的 \\n（跳脫後是兩個反斜線加 n）');
-  assert.ok(md.includes('allComments'), '十個動作都排得出來');
+  assert.ok(md.includes('allComments') && md.includes('repoFile'), '十二個動作都排得出來');
 });

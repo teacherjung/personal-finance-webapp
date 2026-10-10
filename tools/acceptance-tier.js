@@ -50,31 +50,42 @@ function classify(paths, table) {
   return { level: level ? level.id : null, hits, unknown: hits.filter((h) => !h.known).map((h) => h.path), actions };
 }
 
-function run(changeId, { settings = readSettings(), platform = { ask } } = {}) {
-  if (!changeId) return { code: 2, lines: ['用法：node tools/acceptance-tier.js <變更編號>'] };
-  const table = tableOf(settings);
-  if (!table) return { code: 2, lines: ['專案設定裡的驗收分級表沒填好（tiers、families、unknownTier 要齊、unknownTier 與每個家族的 tier 都要在 tiers 裡）：算不出來。'] };
+/**
+ * 問平台這一支動到哪些路徑（含改名或複製前的舊路徑），並對帳平台自報的總數。合併前的風險分級（tools/risk-tier.js）也用這一份，
+ * 兩支對「這支動到哪些檔」不會各算各的。算不出來＝{ error: [一行說明] }，what 是錯誤訊息開頭的工具名。
+ */
+function changedPaths(changeId, { settings, platform, what }) {
   let files;
   let change;
   try {
     change = platform.ask('change', { change: String(changeId) }, { settings });
     files = platform.ask('changedFiles', { change: String(changeId) }, { settings });
   } catch (e) {
-    if (e instanceof PlatformError || (e && e.name === 'PlatformError')) return { code: 2, lines: [`驗收分級：問不到平台（${e.message}）——算不出來。`] };
+    if (e instanceof PlatformError || (e && e.name === 'PlatformError')) return { error: [`${what}：問不到平台（${e.message}）——算不出來。`] };
     throw e;
   }
   // 改名或複製的檔沒帶舊路徑＝清單不合契約（r1 Medium⑦）：舊路徑驗不到就不能只算輕的那一半
   const halfRenamed = files.find((f) => /^(renamed|copied)$/u.test(String(f.status)) && !f.previousPath);
-  if (halfRenamed) return { code: 2, lines: [`檔案清單裡「${halfRenamed.path}」標成 ${halfRenamed.status} 卻沒帶舊路徑：舊路徑驗不到，算不出來。`] };
+  if (halfRenamed) return { error: [`檔案清單裡「${halfRenamed.path}」標成 ${halfRenamed.status} 卻沒帶舊路徑：舊路徑驗不到，算不出來。`] };
   // 平台有自報總數就對帳：少給幾筆就不能印出一個看起來很輕的級別（平台的檔案端點有筆數上限）
   let countNote = '（平台沒自報總數，清單完整性沒對帳）';
   if (change.changedFileCount !== null) {
-    if (!/^\d+$/u.test(change.changedFileCount)) return { code: 2, lines: [`平台自報的檔數「${change.changedFileCount}」不是數字：對不了帳，算不出來。`] };
-    if (Number(change.changedFileCount) !== files.length) return { code: 2, lines: [`平台自報這支動了 ${change.changedFileCount} 個檔，清單只拿到 ${files.length} 筆：清單不完整（可能超過平台的筆數上限），算不出來。`] };
+    if (!/^\d+$/u.test(change.changedFileCount)) return { error: [`平台自報的檔數「${change.changedFileCount}」不是數字：對不了帳，算不出來。`] };
+    if (Number(change.changedFileCount) !== files.length) return { error: [`平台自報這支動了 ${change.changedFileCount} 個檔，清單只拿到 ${files.length} 筆：清單不完整（可能超過平台的筆數上限），算不出來。`] };
     countNote = `（清單 ${files.length} 筆與平台自報總數相符）`;
   }
   const paths = [...new Set(files.flatMap((f) => [f.path, f.previousPath].filter(Boolean)))];
-  if (!paths.length) return { code: 2, lines: ['這一支變更沒有動到任何檔案：算不出來（不猜）。'] };
+  if (!paths.length) return { error: ['這一支變更沒有動到任何檔案：算不出來（不猜）。'] };
+  return { paths, countNote };
+}
+
+function run(changeId, { settings = readSettings(), platform = { ask } } = {}) {
+  if (!changeId) return { code: 2, lines: ['用法：node tools/acceptance-tier.js <變更編號>'] };
+  const table = tableOf(settings);
+  if (!table) return { code: 2, lines: ['專案設定裡的驗收分級表沒填好（tiers、families、unknownTier 要齊、unknownTier 與每個家族的 tier 都要在 tiers 裡）：算不出來。'] };
+  const got = changedPaths(changeId, { settings, platform, what: '驗收分級' });
+  if (got.error) return { code: 2, lines: got.error };
+  const { paths, countNote } = got;
   const r = classify(paths, table);
   const lines = [`驗收分級｜變更 ${changeId}：${r.level}（動到 ${paths.length} 個路徑）${countNote}`];
   for (const a of r.actions) lines.push(`  ・${a.tier}：${a.action}`);
@@ -89,4 +100,4 @@ if (require.main === module) {
   process.exit(result.code);
 }
 
-module.exports = { run, classify, tableOf };
+module.exports = { run, classify, tableOf, changedPaths };

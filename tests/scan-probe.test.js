@@ -295,8 +295,11 @@ test('指令入口：例外收成退 2，訊息不帶路徑；真的跑一遍指
   assert.match(boom.lines.join('\n'), /EBOOM/u);
   assert.ok(!boom.lines.join('\n').includes('/Users/someone'), '例外訊息不可以帶路徑');
 
-  const r = runInCopy('tools/scan-probe.js');
-  assert.equal(r.status, 2, '空白設定的複本：沒設隔離＝不掃（不讀本倉庫那份——填了真設定會在真禁區埋假機密）');
+  // 空白範本把這一列登記成已安裝未啟用（專案還沒接隔離）；這裡要考的是「啟用了、但沒設隔離」那一條路，所以自己把它登記成已啟用
+  const settings = unfilled();
+  settings.machines = settings.machines.map((m) => (m.name === MACHINE ? { ...m, state: '已啟用' } : m));
+  const r = runInCopy('tools/scan-probe.js', [], { settings });
+  assert.equal(r.status, 2, '空白設定的複本（只把這一列改成已啟用）：沒設隔離＝不掃（不讀本倉庫那份——填了真設定會在真禁區埋假機密）');
   assert.match(`${r.stdout || ''}`, /沒有隔離/u);
 });
 

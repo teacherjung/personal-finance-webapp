@@ -22,6 +22,7 @@
   "implementer": "未設定",
   "reviewer": "未設定"
  },
+ "owner": "未設定",
  "sources": [
   {
    "tool": "未設定",
@@ -73,14 +74,33 @@
    "item": "合併後驗收分級與動作的正本（路徑家族表＋各級動作）",
    "rules": "H6",
    "where": "未設定"
+  },
+  {
+   "item": "「指示檔」與「常設指示」寫在哪（兩方每次開工都會自動整份讀進去的那一份）",
+   "rules": "K6",
+   "where": "未設定"
+  },
+  {
+   "item": "「進度摘要」放在哪、已結束的留幾天（各方共用一份）",
+   "rules": "J5",
+   "where": "未設定"
   }
  ],
+ "backlog": {
+  "file": "未設定",
+  "section": "未設定"
+ },
+ "downstream": {
+  "projects": []
+ },
  "mainBranch": "未設定",
  "scanner": {
   "tool": "未設定",
   "assignedBy": "未設定",
   "tieBreak": "實作者",
   "fallback": "實作者",
+  "strongest": "未設定",
+  "maxEffort": "未設定",
   "isolation": {
    "provider": "未設定",
    "wrap": [],
@@ -115,6 +135,12 @@
     "未設定"
    ],
    "branchSha": [
+    "未設定"
+   ],
+   "repoTree": [
+    "未設定"
+   ],
+   "repoFile": [
     "未設定"
    ],
    "markReady": [
@@ -286,14 +312,14 @@
    "download"
   ],
   "patterns": [
-   "(^|_)(transfer|withdraw(al)?|deposit|remit(tance)?|payout|disburse(ment)?|payment|wire)s?(_|$)",
    "(^|_)(convert|exchange|swap)_\\w*?(currenc|fund|money|cash|asset|crypto|coin|stock|share|securit)"
   ],
   "patternsReadSafe": [
    "(^|_)(move|send)_(fund|money|cash|asset|securit[a-z]*|stock|share|crypto|coin)s?(_|$)",
    "(^|_)(create|place|submit|send|stage|preview|prepare|draft|amend|modify|edit|update|cancel|delete|execute|close|open|buy|sell|purchase|exercise|liquidate|replace|redeem|pay)_?\\w*?securit[a-z]*s?(_|$)",
    "(^|_)securit[a-z]*s?_(create|place|submit|send|stage|preview|prepare|draft|amend|modify|edit|update|cancel|delete|execute|close|open|buy|sell|purchase|exercise|liquidate|replace|redeem|pay)(_|$)",
-   "(^|_)(convert|swap)_(currenc[a-z]*|fund|money|cash|asset|crypto|coin|stock|share|securit[a-z]*)s?(_|$)"
+   "(^|_)(convert|swap)_(currenc[a-z]*|fund|money|cash|asset|crypto|coin|stock|share|securit[a-z]*)s?(_|$)",
+   "(^|_)(transfer|withdraw(al)?|deposit|remit(tance)?|payout|disburse(ment)?|payment|wire)s?(_|$)"
   ]
  },
  "acceptance": {
@@ -311,12 +337,67 @@
   ],
   "unknownTier": "未設定"
  },
+ "risk": {
+  "families": [
+   {
+    "pattern": "未設定",
+    "tier": "未設定"
+   }
+  ],
+  "raise": [
+   "改到「金額」、「資料存取」、「機密」、「判準」、「禁區」或「閘」的做法（只是提到這些字不算）",
+   "刪掉或放寬「既有考題」的行為檢查"
+  ]
+ },
+ "reviewTiers": {
+  "高": {
+   "full": "每一輪",
+   "diffOnly": "不適用",
+   "afterPassFix": "全審",
+   "scan": "掃"
+  },
+  "中": {
+   "full": "第 1〜7 輪",
+   "diffOnly": "第 8 輪起",
+   "afterPassFix": "只核差異",
+   "scan": "掃"
+  },
+  "低": {
+   "full": "第 1〜3 輪",
+   "diffOnly": "第 4 輪起",
+   "afterPassFix": "只核差異",
+   "scan": "不掃"
+  }
+ },
+ "reviewers": [
+  {
+   "participant": "未設定",
+   "strongest": "未設定",
+   "second": "未設定",
+   "maxEffort": "未設定",
+   "autoMode": "未設定",
+   "source": "未設定",
+   "launch": "未設定",
+   "command": "未設定",
+   "machine": "未設定",
+   "promptOnly": "未設定",
+   "verified": ""
+  }
+ ],
+ "reviewLaunch": {
+  "changeLink": "未設定",
+  "commentLink": "未設定",
+  "postComment": "未設定",
+  "copyTest": "未設定"
+ },
  "ignoreLists": [
   {
    "file": ".gitignore",
    "patterns": [
     "node_modules/",
-    ".DS_Store"
+    ".DS_Store",
+    ".env",
+    ".env.local"
    ]
   }
  ],
@@ -335,6 +416,15 @@
   ]
  },
  "gates": [
+  {
+   "name": "待裁（本支貼的 ❓ 都配到 ⚖️ 或 🚫）",
+   "rules": "A5",
+   "command": "node",
+   "args": [
+    "tools/gates/check-pending-rulings.js"
+   ],
+   "state": "已安裝未啟用"
+  },
   {
    "name": "複審結論聯集（有沒有未撤銷的阻擋、有沒有對目前版本的通過）",
    "rules": "A2、F4、F5",
@@ -387,26 +477,26 @@
  },
  "machines": [
   {
-   "name": "平台介面（閘與待裁清單問平台的十個動作，答案形狀不合就不放行）",
+   "name": "平台介面（閘、待裁清單與下游落後問平台的十二個動作，答案形狀不合就不放行）",
    "rules": "E5、H1",
    "state": "已啟用",
-   "verified": "2026-09-13"
+   "verified": ""
   },
   {
    "name": "合併指令（依序跑完登記的閘，任一道紅就停）",
    "rules": "H1",
    "state": "已啟用",
-   "verified": "2026-09-12"
+   "verified": ""
   },
   {
    "name": "協作欄位閘（四欄齊全、實作者不等於複審者）",
-   "rules": "A2、E1",
+   "rules": "A2、D3、E1",
    "state": "已安裝未啟用",
    "verified": ""
   },
   {
-   "name": "結論聯集閘（阻擋各自撤銷、放行只認指定那一位對目前版本的通過）",
-   "rules": "F4、F5",
+   "name": "結論聯集閘（阻擋只有同一位能解除、放行只認指定那一位對目前版本的通過）",
+   "rules": "F4、F5、F7",
    "state": "已安裝未啟用",
    "verified": ""
   },
@@ -420,7 +510,7 @@
    "name": "忽略清單一致考題（登記的每一份忽略檔跟生效的樣式一字不差）",
    "rules": "B4、E7",
    "state": "已啟用",
-   "verified": "2026-09-13"
+   "verified": ""
   },
   {
    "name": "推送前鉤子範本＋三關執行器（讀設定的三關、前後驗工作資料夾（樹））",
@@ -438,37 +528,37 @@
    "name": "清版本控制環境變數的共用實作（GIT_ 前綴整族清）",
    "rules": "E4",
    "state": "已啟用",
-   "verified": "2026-09-13"
+   "verified": ""
   },
   {
    "name": "閘的退出路徑與進入點行為題（每一道閘的考題各有「真的跑一遍指令」與「問不到＝退 2」）",
    "rules": "E5",
    "state": "已啟用",
-   "verified": "2026-09-13"
+   "verified": ""
   },
   {
    "name": "檔名考題（已追蹤路徑只用可見 ASCII；例外名單寫死、只出不進）",
    "rules": "E6",
    "state": "已啟用",
-   "verified": "2026-09-13"
+   "verified": ""
   },
   {
    "name": "掃描前試探（禁區各埋一個假機密，從盒內試讀試寫；隔離本身由專案設定指定誰提供）",
    "rules": "G2",
-   "state": "已啟用",
-   "verified": "2026-09-12"
+   "state": "已安裝未啟用",
+   "verified": ""
   },
   {
    "name": "掃描後比對（假機密與未給盒子的真值不得出現在回覆、日誌、檔名）",
    "rules": "G2",
-   "state": "已啟用",
-   "verified": "2026-09-12"
+   "state": "已安裝未啟用",
+   "verified": ""
   },
   {
    "name": "合併閘登記對帳題（磁碟上的閘 vs 設定登記的閘）",
    "rules": "H1",
    "state": "已啟用",
-   "verified": "2026-09-13"
+   "verified": ""
   },
   {
    "name": "堆疊閘（底必須是主幹、不可以有別支疊在上面）",
@@ -498,35 +588,83 @@
    "name": "本文長度考題",
    "rules": "K2",
    "state": "已啟用",
-   "verified": "2026-09-12"
+   "verified": ""
   },
   {
    "name": "案例簿考題＋索引產生器",
    "rules": "K1、K2",
    "state": "已啟用",
-   "verified": "2026-09-12"
+   "verified": ""
+  },
+  {
+   "name": "共用檔清單（釘住套件版本；專案改到套件的檔要記例外）",
+   "rules": "E7、K1",
+   "state": "已安裝未啟用",
+   "verified": ""
   },
   {
    "name": "專案設定產生器",
    "rules": "K1",
    "state": "已啟用",
-   "verified": "2026-09-12"
+   "verified": ""
   },
   {
    "name": "範本存在與固定小標考題",
    "rules": "E1、G3",
    "state": "已啟用",
-   "verified": "2026-09-13"
+   "verified": ""
   },
   {
    "name": "路標考題（帶記號的引號路標要指得到）",
    "rules": "K3",
    "state": "已啟用",
-   "verified": "2026-09-13"
+   "verified": ""
   },
   {
    "name": "待裁清單工具（掃整個專案的留言；只列不擋）",
-   "rules": "D1",
+   "rules": "D1、I3",
+   "state": "已安裝未啟用",
+   "verified": ""
+  },
+  {
+   "name": "待裁閘（本支貼的 ❓ 還沒配到 ⚖️ 或 🚫 就不放行；判斷用待裁清單工具那一份）",
+   "rules": "A5",
+   "state": "已安裝未啟用",
+   "verified": ""
+  },
+  {
+   "name": "風險分級工具（合併前依檔案算風險級別、印出複審與掃描分級表那一列，只算不擋）",
+   "rules": "D4",
+   "state": "已安裝未啟用",
+   "verified": ""
+  },
+  {
+   "name": "舊文字掃描（列出這支刪掉或改掉的字串還出現在哪，只列不擋）",
+   "rules": "K5",
+   "state": "已安裝未啟用",
+   "verified": ""
+  },
+  {
+   "name": "開工印待辦（列出待辦清單裡提到這支改到的檔的那幾條，只列不擋）",
+   "rules": "F6",
+   "state": "已安裝未啟用",
+   "verified": ""
+  },
+  {
+   "name": "進度摘要檢查（摘要每則的形狀、兩個時間、沒動的線、附件條號、已合併對不對得上平台，只列不擋）",
+   "rules": "J5",
+   "state": "已安裝未啟用",
+   "verified": ""
+  },
+  {
+   "name": "本週成果產生器（最近七天合併進主幹的 PR 照日期列成摘要那一節，--write 才換掉那一節）",
+   "rules": "J5",
+   "state": "已安裝未啟用",
+   "verified": ""
+  },
+  {
+   "name": "下游落後（套件這一邊印出登記的使用專案落後幾支、哪些共用檔不同、設定少哪些欄位與機器列，只列不擋）",
+   "rules": "K1",
    "state": "已安裝未啟用",
    "verified": ""
   }

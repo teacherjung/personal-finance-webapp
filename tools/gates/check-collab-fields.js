@@ -86,7 +86,7 @@ function problemsOf(body, roles) {
   const got = {};
   for (const f of REQUIRED_FIELDS) {
     got[f] = fieldValue(body, f);
-    if (!got[f]) problems.push(`缺「${f}」`);
+    if (!got[f]) problems.push(`缺「${f}」（欄名與值要在同一行：「- **${f}**：<值>」；另起清單寫在下一行會被當成沒填）`);
   }
   if (problems.length && stopNote(body)) problems.push(stopNote(body));
   const implRaw = got['實作者'];
