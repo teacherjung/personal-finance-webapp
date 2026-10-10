@@ -218,6 +218,8 @@ function launch(changeArg, reviewerArg, { settings = readSettings(), platform = 
   if (rulings.unsure) throw new LaunchError(`相關裁示算不出來（${rulings.unsure}）`);
   const risk = riskRun(id, { settings, platform });
   if (risk.code !== 0) throw new LaunchError(`風險級別算不出來：${risk.lines.join(' ')}`);
+  // 風險級別要是受審那一版的：產生提示的這幾秒裡有人推了新版本，算出來的級別與範圍就屬於另一版——拒絕、要求重跑（理財 #672 r3）
+  if (risk.result.head !== head) throw new LaunchError(`產生送審提示期間這一支換了版本（受審 ${String(head).slice(0, 12)}，算風險時是 ${String(risk.result.head).slice(0, 12)}）：審查樹與風險範圍會對不上，重跑一次`);
   const tier = risk.result.level;
   const { round, previous } = roundsOf(comments, reviewer, entry.source, usable);
   // 上一輪算不算「通過」照結論閘的判斷，不另寫一套：缺固定小標的通過不算（F7；#49 r1 R3），同一輪相反結論或對不同版本各給結論＝衝突、算阻擋（#49 r2 R1）。

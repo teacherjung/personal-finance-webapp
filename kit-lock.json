@@ -1,6 +1,6 @@
 {
   "repo": "teacherjung/ai-collab-kit",
-  "version": "ed8ce5c6a7f044ada526edc25dab00dbcf11544b",
+  "version": "e91d0c3455835d8b2f4d572a41aacfa9b8911add",
   "syncedAt": "2026-10-11",
   "entries": [
     {
@@ -10,12 +10,12 @@
     },
     {
       "mode": "100644",
-      "blob": "8be92f8801e79b88bd782baa873fb8e923284f5a",
+      "blob": "a4d1e39bf80367590b6e7c590aa0f3574d7f3727",
       "path": "MACHINES.md"
     },
     {
       "mode": "100644",
-      "blob": "7193b4da5b4f3d3e3623e0024b939192d30f9d84",
+      "blob": "350b70462fa6223bfe382b5051fe1d30cd7c565c",
       "path": "RULES.md"
     },
     {
@@ -30,7 +30,7 @@
     },
     {
       "mode": "100644",
-      "blob": "7fbcb42dcd23900cfa1a6391ef3bf9d71444baf7",
+      "blob": "da328908b7ce5b52eb48cc772a785a527f4b7558",
       "path": "rules.json"
     },
     {
@@ -140,7 +140,7 @@
     },
     {
       "mode": "100644",
-      "blob": "1f3c465b11b3e04753946abb08cb10e04ac8a621",
+      "blob": "ad5cb3bd2394280b979321368130caa4f347f8a0",
       "path": "tests/acceptance-tier.test.js"
     },
     {
@@ -265,7 +265,7 @@
     },
     {
       "mode": "100644",
-      "blob": "5e71fd3fcaacc124bcf163da4de677c775e2ee77",
+      "blob": "7beab6ad6b57191cd52a06c7b4ae4212ae2dade6",
       "path": "tests/helpers/unfilled-settings.json"
     },
     {
@@ -280,7 +280,7 @@
     },
     {
       "mode": "100644",
-      "blob": "12ecab048fe2f7b0174605783b5c27aefadd87ec",
+      "blob": "4ec18a499ee5efb1884d0bde3c2d7f9ef7c9782e",
       "path": "tests/manifest.json"
     },
     {
@@ -320,12 +320,12 @@
     },
     {
       "mode": "100644",
-      "blob": "5b290f197c620dae7402186ec08756da17ab1f7a",
+      "blob": "6533790fda37eecb64f0fba79271220282c08272",
       "path": "tests/review-launch.test.js"
     },
     {
       "mode": "100644",
-      "blob": "4a7c63ac0873f81eadd28497dff2b9c281143df9",
+      "blob": "a1d22d5258d9fb3093330c17c98cf38fb5797a17",
       "path": "tests/risk-tier.test.js"
     },
     {
@@ -365,6 +365,11 @@
     },
     {
       "mode": "100644",
+      "blob": "98d7dddd34bf37dea979633eb9c6d92f8897007c",
+      "path": "tests/tidy-list.test.js"
+    },
+    {
+      "mode": "100644",
       "blob": "49fd1e996c99b16d740a5cbc575c47987d3fdebc",
       "path": "tests/time-point.test.js"
     },
@@ -375,7 +380,7 @@
     },
     {
       "mode": "100644",
-      "blob": "6efccfedba1ee8a166f756115738cfa6aaccfc73",
+      "blob": "e93baaa481013776d10daffab182ee7a95ae123f",
       "path": "tools/acceptance-tier.js"
     },
     {
@@ -495,12 +500,12 @@
     },
     {
       "mode": "100644",
-      "blob": "06866802ae422944d8bd8b596155449b66e95a9b",
+      "blob": "43a2aaa75404e40dc65cd7a831882b3fb257e194",
       "path": "tools/review-launch.js"
     },
     {
       "mode": "100644",
-      "blob": "dc847f161920382044888804d9075e94a0372b6d",
+      "blob": "c7dad9989dcf6e2c052059c5a27ca3e7b7dfea32",
       "path": "tools/risk-tier.js"
     },
     {
@@ -527,6 +532,11 @@
       "mode": "100644",
       "blob": "b3469125e11de52886dc542954c030cdd3e788a1",
       "path": "tools/stale-text.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "30b5464e618bfa954ce6529a79d03db923b60247",
+      "path": "tools/tidy-list.js"
     },
     {
       "mode": "100644",

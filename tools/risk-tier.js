@@ -71,7 +71,7 @@ function run(changeId, { settings = readSettings(), platform = { ask } } = {}) {
   lines.push(table.raise.length
     ? `  內容碰到任一條升級條件，整支就算高（${table.raise.join('；')}）；實作者只能往重調，往下只有裁示者能改；每次送審重算、只升不降，這支工具不記前幾輪的級別（D4）。`
     : '  ⚠️ 專案設定沒填升級條件：內容要不要往重調，只能靠實作者與複審者自己判斷（D4）。');
-  return { code: 0, lines, result: r };
+  return { code: 0, lines, result: { ...r, head: got.headSha } };   // head：算的是哪一個版本（送審產生器拿去跟受審版本對）
 }
 
 if (require.main === module) {

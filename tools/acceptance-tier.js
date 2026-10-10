@@ -57,13 +57,17 @@ function classify(paths, table) {
 function changedPaths(changeId, { settings, platform, what }) {
   let files;
   let change;
+  let after;
   try {
     change = platform.ask('change', { change: String(changeId) }, { settings });
     files = platform.ask('changedFiles', { change: String(changeId) }, { settings });
+    // 檔案清單要屬於同一個版本：讀清單前後各問一次這一支的版本，中途有人推了新版本（清單可能是新版的、總數是舊版的）就不算（理財 #672 r3）
+    after = platform.ask('change', { change: String(changeId) }, { settings });
   } catch (e) {
     if (e instanceof PlatformError || (e && e.name === 'PlatformError')) return { error: [`${what}：問不到平台（${e.message}）——算不出來。`] };
     throw e;
   }
+  if (change.headSha !== after.headSha) return { error: [`${what}：讀檔案清單期間這一支換了版本（${String(change.headSha).slice(0, 12)} → ${String(after.headSha).slice(0, 12)}）：清單不知道屬於哪一版，算不出來；重跑一次。`] };
   // 改名或複製的檔沒帶舊路徑＝清單不合契約（r1 Medium⑦）：舊路徑驗不到就不能只算輕的那一半
   const halfRenamed = files.find((f) => /^(renamed|copied)$/u.test(String(f.status)) && !f.previousPath);
   if (halfRenamed) return { error: [`檔案清單裡「${halfRenamed.path}」標成 ${halfRenamed.status} 卻沒帶舊路徑：舊路徑驗不到，算不出來。`] };
@@ -76,7 +80,7 @@ function changedPaths(changeId, { settings, platform, what }) {
   }
   const paths = [...new Set(files.flatMap((f) => [f.path, f.previousPath].filter(Boolean)))];
   if (!paths.length) return { error: ['這一支變更沒有動到任何檔案：算不出來（不猜）。'] };
-  return { paths, countNote };
+  return { paths, countNote, headSha: change.headSha };
 }
 
 function run(changeId, { settings = readSettings(), platform = { ask } } = {}) {

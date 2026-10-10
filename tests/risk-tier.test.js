@@ -110,3 +110,14 @@ test('⑨一個檔對上幾個家族取最重的、跟表的順序無關', () =>
   assert.deepEqual(classifyRisk(['src/ui/x.js'], t).hits.map((h) => h.tier), ['中']);
   assert.equal(classifyRisk(['other/y.js'], t).level, '高');
 });
+
+test('⑨算的是哪一個版本照實回（送審產生器拿去跟受審版本對；理財 #672 r3）；讀清單期間換版＝退 2', () => {
+  const heads = (seq) => { let n = 0; return { ask: (op) => (op === 'change' ? { changedFileCount: '1', headSha: seq[Math.min(n++, seq.length - 1)] } : [{ path: 'docs/a.md', status: 'modified', previousPath: null }]) }; };
+  const s = { risk: { families: [{ pattern: '^docs/', tier: '低' }], raise: [] }, reviewTiers: {} };
+  const ok = run('7', { settings: s, platform: heads(['d'.repeat(40)]) });
+  assert.equal(ok.code, 0, ok.lines.join('\n'));
+  assert.equal(ok.result.head, 'd'.repeat(40));
+  const moved = run('7', { settings: s, platform: heads(['d'.repeat(40), 'e'.repeat(40)]) });
+  assert.equal(moved.code, 2);
+  assert.match(moved.lines.join('\n'), /換了版本/u);
+});

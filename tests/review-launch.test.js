@@ -281,6 +281,9 @@ test('⑤設定沒填或不對、PR說明指定的不是這一位、平台問不
       ['風險級別算不出', { answers: { changedFiles: new PlatformError('x') } }],
       ['分級表讀不懂', { settings: settingsFor({ reviewTiers: { ...TIERS, 高: { ...TIERS.高, full: '看情況' } } }) }],
       ['本機沒有受審版本', { answers: { change: { ...answersFor(r).change, headSha: 'f'.repeat(40) } } }],
+      // 產生提示期間這一支換了版本（理財 #672 r3）：算風險時已經是另一版、或讀檔案清單前後版本不同
+      ['算風險時已經換版', { answers: { change: (() => { let n = 0; return () => ({ ...answersFor(r).change, headSha: n++ === 0 ? r.head : r.base }); })() } }],
+      ['讀檔案清單前後換版', { answers: { change: (() => { let n = 0; return () => ({ ...answersFor(r).change, headSha: n++ < 2 ? r.head : r.base }); })() } }],
       ['路徑有空白', { dir: spaced }],
       ['放樹的資料夾不在', { dir: path.join(spaced, '沒有這一層') }],
     ];
@@ -528,4 +531,18 @@ test('③改級的提醒：印出來的那一行說風險級別與本輪範圍�
     spawnSync('git', ['worktree', 'prune'], { cwd: r.dir, env: gitEnv() });
     fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(r.dir, { recursive: true, force: true });
   }
+});
+
+test('⑤b產生送審提示期間換版：訊息說清楚是哪兩版、要重跑，一棵樹都沒開（理財 #672 r3）', () => {
+  const r = repo();
+  const dir = tmp('review-launch-out-');
+  try {
+    let n = 0;
+    const platform = fakePlatform({ ...answersFor(r), change: () => ({ ...answersFor(r).change, headSha: n++ === 0 ? r.head : r.base }) });
+    const res = main(['7', '--reviewer', 'Beta'], { settings: settingsFor(), platform, cwd: r.dir, dir, template: TEMPLATE });
+    assert.equal(res.code, 2, res.lines.join('\n'));
+    assert.match(res.lines.join('\n'), new RegExp(`產生送審提示期間這一支換了版本（受審 ${r.head.slice(0, 12)}，算風險時是 ${r.base.slice(0, 12)}）`, 'u'));
+    assert.deepEqual(fs.readdirSync(dir), []);
+    assert.ok(!/review-acme-kit/u.test(sh(r.dir, 'worktree', 'list')), '不可以開樹');
+  } finally { for (const d of [r.dir, dir]) fs.rmSync(d, { recursive: true, force: true }); }
 });
