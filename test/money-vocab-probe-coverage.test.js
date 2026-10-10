@@ -47,6 +47,14 @@ function projectForbidden() {
 const FIELDS = /** @type {const} */ (['verbs', 'nouns']);
 
 /**
+ * 點名例外（2026-10-10 整批同步；R2 照 a 先做、等 William 本人裁）：這幾個詞沒有任何探針扣得住，因為它們整條被遮住——
+ * 帶底線的寫法被「唯讀開頭也不脫罪」那一張樣式（forbidden.patternsReadSafe；套件 #55，William 10/08 裁 a）先接走，
+ * 連寫的寫法被比它短的詞先接走（withdrawal 裡有 withdraw）。它們照樣擋，只是量不到承重。
+ * 下面那一題證明確實被遮；哪一天它又扣得住了（例如那條樣式拿掉），例外就要拿掉——那時「例外清單的詞要量得出沒有承重」那一句會紅。
+ */
+const SHADOWED = /** @type {Record<'verbs' | 'nouns', string[]>} */ ({ verbs: ['withdrawal'], nouns: [] });
+
+/**
  * 量承重：回傳漏擋的探針、每一欄沒有任何探針扣著的詞，以及查某個詞的承重探針。
  * @param {any} forbidden 正本
  * @param {readonly string[]} probes 探針名字
@@ -81,6 +89,17 @@ test('涵蓋：正本 verbs／nouns 的每一個詞都有探針扣著，沒有�
   const forbidden = projectForbidden();
   const { uncarried } = measure(forbidden, FORBIDDEN_FAMILY);
   for (const field of FIELDS) {
+    // 點名例外（見 SHADOWED）：只准是這幾個、而且它們要真的沒有承重（又扣得住了＝例外要拿掉）
+    for (const w of SHADOWED[field]) {
+      assert.ok(forbidden[field].includes(w), `點名例外的「${w}」已經不在正本 forbidden.${field}——例外要拿掉`);
+      assert.ok(uncarried[field].includes(w), `點名例外的「${w}」現在有探針扣得住了——把它從 SHADOWED 拿掉`);
+      const delimited = `${FAKE_UUID}request_${w}`;
+      const lessWord = familyNetFixture({ ...forbidden, [field]: forbidden[field].filter((/** @type {string} */ x) => x !== w) }, [delimited]);
+      assert.ok(decide(delimited, lessWord).deny, `點名例外的「${w}」：拿掉這個詞，帶底線的寫法 ${delimited} 照樣要擋（被樣式遮住的證明）`);
+      const noReadSafe = familyNetFixture({ ...forbidden, [field]: forbidden[field].filter((/** @type {string} */ x) => x !== w), patternsReadSafe: [] , patterns: [] }, [delimited]);
+      assert.ok(!decide(delimited, noReadSafe).deny, `點名例外的「${w}」：連詞帶兩張樣式都拿掉，${delimited} 要放行——不然遮住它的不是樣式`);
+    }
+    uncarried[field] = uncarried[field].filter((w) => !SHADOWED[field].includes(w));
     assert.deepEqual(uncarried[field], [],
       `正本 forbidden.${field} 的這幾個詞沒有任何探針扣著：${JSON.stringify(uncarried[field])}\n`
       + `  （這一欄共 ${forbidden[field].length} 個詞）\n`
