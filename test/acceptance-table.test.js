@@ -185,9 +185,11 @@ test('⭐ 待裁清單與驗收分級都不是閘：CI 設定、pre-push、packa
   assert.notEqual(pendingGate.state, '已啟用', '待裁閘登記成已啟用了：要啟用請連這一題的例外一起改（Fable 代裁 R4 的條件）');
   assert.notEqual(settings.machines.find((m) => m.name.startsWith('待裁閘'))?.state, '已啟用', '機器表的待裁閘是已啟用：要啟用請連這一題一起改');
   assert.ok(gateFiles.length >= 5, `tools/gates 只列到 ${gateFiles.length} 支——掃不到閘本體，這題變空包彈`);
-  for (const f of [...workflows, 'scripts/git-hooks/pre-push', 'tools/merge.js', 'tools/run-checks.js', ...gateFiles.filter((g) => g !== PENDING_GATE)]) {
+  for (const f of [...workflows, 'scripts/git-hooks/pre-push', 'tools/merge.js', 'tools/run-checks.js', ...gateFiles]) {
     const txt = read(f);
-    assert.doesNotMatch(txt, /pending-rulings|acceptance-tier/, `${f} 叫了待裁清單或分級工具＝它變成一道會因為沒有網路或沒有權杖而擋人的閘`);
+    // 例外只免「叫待裁清單」那一條；舊閘那一條對待裁閘照樣守（例外的理由只講到它本來就要讀待裁清單，跟舊閘無關）
+    if (f !== PENDING_GATE) assert.doesNotMatch(txt, /pending-rulings|acceptance-tier/, `${f} 叫了待裁清單或分級工具＝它變成一道會因為沒有網路或沒有權杖而擋人的閘`);
+    else assert.doesNotMatch(txt, /acceptance-tier/, `${f} 叫了分級工具——待裁閘的例外只免待裁清單`);
     assert.doesNotMatch(txt, RETIRED_GATES, `${f} 還在叫 2026-09-18 第 7 步刪掉的舊閘腳本（切換日起合併路徑只有 tools/gates）`);
   }
   const pkg = JSON.parse(read('package.json'));
@@ -195,8 +197,8 @@ test('⭐ 待裁清單與驗收分級都不是閘：CI 設定、pre-push、packa
   assert.doesNotMatch(JSON.stringify(pkg.scripts ?? {}), RETIRED_GATES, 'package.json 的 script 還在叫第 7 步刪掉的舊閘');
   for (const g of settings.gates) {
     const line = [g.command, ...(g.args ?? [])].join(' ');
-    if (g === pendingGate) continue;   // 上面的點名例外（沒啟用才成立）
-    assert.doesNotMatch(line, /pending-rulings|acceptance-tier/, `settings.json 登記的閘「${g.name}」叫了它＝合併指令會跑它、退出碼 2 變成擋人`);
+    // 上面的點名例外（沒啟用才成立）：只免「叫待裁清單」，分級工具與舊閘照樣守
+    assert.doesNotMatch(line, g === pendingGate ? /acceptance-tier/ : /pending-rulings|acceptance-tier/, `settings.json 登記的閘「${g.name}」叫了它＝合併指令會跑它、退出碼 2 變成擋人`);
     assert.doesNotMatch(line, RETIRED_GATES, `settings.json 登記的閘「${g.name}」指到第 7 步刪掉的舊閘＝合併指令會起不了它`);
   }
   // 三關真正執行的是 settings.json 的 checks.commands（鉤子與 CI 都只呼叫 tools/run-checks.js，字面上永遠掃不到）——

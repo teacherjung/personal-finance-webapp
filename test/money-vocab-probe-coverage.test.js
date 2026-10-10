@@ -47,10 +47,12 @@ function projectForbidden() {
 const FIELDS = /** @type {const} */ (['verbs', 'nouns']);
 
 /**
- * 點名例外（2026-10-10 整批同步；R2 照 a 先做、等 William 本人裁）：這幾個詞沒有任何探針扣得住，因為它們整條被遮住——
+ * 點名例外（2026-10-10 整批同步；William 裁 R2＝a：點名例外，並由考題證明確實被遮）：這幾個詞沒有任何探針扣得住，因為它們整條被遮住——
  * 帶底線的寫法被「唯讀開頭也不脫罪」那一張樣式（forbidden.patternsReadSafe；套件 #55，William 10/08 裁 a）先接走，
  * 連寫的寫法被比它短的詞先接走（withdrawal 裡有 withdraw）。它們照樣擋，只是量不到承重。
- * 下面那一題證明確實被遮；哪一天它又扣得住了（例如那條樣式拿掉），例外就要拿掉——那時「例外清單的詞要量得出沒有承重」那一句會紅。
+ * 下面那一題用倒裝的寫法（{名詞}_{詞}，例如 order_withdrawal）證明確實被遮：拿掉這個詞照樣擋（樣式接走）、只拿掉兩張樣式也照樣擋
+ * （這個詞自己接得住）、兩樣都拿掉才放行。request_{詞} 那種寫法不能用：只拿掉樣式它就放行了，代表這個詞本來就不扣它，證不出「遮住」。
+ * 哪一天它又扣得住了（例如那條樣式拿掉），例外就要拿掉——那時「例外清單的詞要量得出沒有承重」那一句會紅。
  */
 const SHADOWED = /** @type {Record<'verbs' | 'nouns', string[]>} */ ({ verbs: ['withdrawal'], nouns: [] });
 
@@ -85,7 +87,7 @@ test('基準：整批探針在夾具下一個都沒漏擋（漏擋的話下面�
     + '——涵蓋題靠「拿掉一個詞就從擋翻成放行」量承重，基準先漏擋就量不出東西');
 });
 
-test('涵蓋：正本 verbs／nouns 的每一個詞都有探針扣著，沒有例外', () => {
+test('涵蓋：正本 verbs／nouns 的每一個詞都有探針扣著（點名例外只准 SHADOWED 那幾個，而且要證明確實被樣式遮住）', () => {
   const forbidden = projectForbidden();
   const { uncarried } = measure(forbidden, FORBIDDEN_FAMILY);
   for (const field of FIELDS) {
@@ -93,11 +95,13 @@ test('涵蓋：正本 verbs／nouns 的每一個詞都有探針扣著，沒有�
     for (const w of SHADOWED[field]) {
       assert.ok(forbidden[field].includes(w), `點名例外的「${w}」已經不在正本 forbidden.${field}——例外要拿掉`);
       assert.ok(uncarried[field].includes(w), `點名例外的「${w}」現在有探針扣得住了——把它從 SHADOWED 拿掉`);
-      const delimited = `${FAKE_UUID}request_${w}`;
+      const delimited = `${FAKE_UUID}order_${w}`;
       const lessWord = familyNetFixture({ ...forbidden, [field]: forbidden[field].filter((/** @type {string} */ x) => x !== w) }, [delimited]);
       assert.ok(decide(delimited, lessWord).deny, `點名例外的「${w}」：拿掉這個詞，帶底線的寫法 ${delimited} 照樣要擋（被樣式遮住的證明）`);
-      const noReadSafe = familyNetFixture({ ...forbidden, [field]: forbidden[field].filter((/** @type {string} */ x) => x !== w), patternsReadSafe: [] , patterns: [] }, [delimited]);
-      assert.ok(!decide(delimited, noReadSafe).deny, `點名例外的「${w}」：連詞帶兩張樣式都拿掉，${delimited} 要放行——不然遮住它的不是樣式`);
+      const noPatterns = familyNetFixture({ ...forbidden, patternsReadSafe: [], patterns: [] }, [delimited]);
+      assert.ok(decide(delimited, noPatterns).deny, `點名例外的「${w}」：只拿掉兩張樣式、留著這個詞，${delimited} 要照樣擋——不然這個詞本來就不扣這種寫法，證不出「被遮住」`);
+      const neither = familyNetFixture({ ...forbidden, [field]: forbidden[field].filter((/** @type {string} */ x) => x !== w), patternsReadSafe: [], patterns: [] }, [delimited]);
+      assert.ok(!decide(delimited, neither).deny, `點名例外的「${w}」：連詞帶兩張樣式都拿掉，${delimited} 要放行——不然遮住它的不是樣式`);
     }
     uncarried[field] = uncarried[field].filter((w) => !SHADOWED[field].includes(w));
     assert.deepEqual(uncarried[field], [],

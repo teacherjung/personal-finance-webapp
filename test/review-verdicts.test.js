@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 
-/** RULES.md 的【F5】那一段（從【F5】起、到下一條【 之前）：套件 #54（2026-10-08）起「阻擋只有同一位能解除、同一位是誰、放行只認誰」從範本搬到這裡。用段落當錨、不用行號。 */
+/** RULES.md 的【F5】那一段（從【F5】起、到下一條【 之前）：「阻擋只有同一位能解除、同一位是誰、放行只認誰」F5 本來就逐字有；套件 #54（2026-10-09 合併）把範本裡的那幾句改成一句指到 F5，所以這幾題改綁這一段。用段落當錨、不用行號。 */
 const f5Block = (/** @type {string} */ rules) => { const m = /^【F5】[\s\S]*?(?=^【)/mu.exec(rules); return m ? m[0] : ''; };
 
 test('合併程序真的把聯集閘登記成一道（settings.json 的 gates；順序由執行器保證）', () => {
@@ -60,8 +60,8 @@ test('套件範本與規矩本文要寫下「只有同一位能解除」與自�
 
 test('範本與規矩｜「放行只認指定的那一位」在兩處要一致、不可自相矛盾（切換日起改綁 templates/verdict-header.md 與 RULES F5；#54 起規則本身住 F5、範本指過去）', () => {
   // 切換前這一題讀規則書裡講委任關係的那段（同一條規則的兩半曾經一句「放行只認指定那一位」、
-  // 一句「也不構成放行」互相打架）；那一節 2026-09-17 已隨切換日拿掉。現在同一條規則住兩處：範本第 9 行與 RULES F5，
-  // 兩處都要有「放行只認…指定的那一位」，而且不可以再冒出反句。
+  // 一句「也不構成放行」互相打架）；那一節 2026-09-17 已隨切換日拿掉。套件 #54 之後規則本身只住 RULES F5、範本只留一句指過去：
+  // F5 要有「放行只認…指定的那一位」、範本要指到 F5，兩處都不可以再冒出反句。
   const strip = (/** @type {string} */ s) => s.replace(/<!--[\s\S]*?-->/g, '');
   const tmpl = strip(readFileSync(join(ROOT, 'templates/verdict-header.md'), 'utf8'));
   const rules = strip(readFileSync(join(ROOT, 'RULES.md'), 'utf8'));
@@ -82,7 +82,7 @@ test('標準來源字串表（settings.json 的 sources 五筆）與標頭範本
   // 切換前這一題讀舊程序文件的「發審查提示」節（標頭格式行、角色名單指路、來源字串表、「補發、不可編輯舊留言」
   // 的補救程序）與 AGENTS 的「來源是機械身分」指路句；那份文件與那一節 2026-09-17 隨切換日拿掉。
   // 現在的家：機器讀的來源清單＝根目錄 settings.json 的 sources；人讀的同一張表＝PROJECT-SETTINGS.md
-  // 「來源字串標準表」；標頭格式、來源欄的寫作義務、只有同一位能解除、壞標頭的救法＝templates/verdict-header.md。
+  // 「來源字串標準表」；標頭格式、來源欄的寫作義務、壞標頭的救法＝templates/verdict-header.md；只有同一位能解除＝RULES F5（範本指過去）。
   const settings = JSON.parse(readFileSync(join(ROOT, 'settings.json'), 'utf8'));
   const sources = Array.isArray(settings.sources) ? settings.sources : [];
   // ⚠️ **斷言整筆（工具＋字串），不是只斷言那個字串**：切換前第一版只寫 `doc.includes('`codex CLI`')`，
@@ -111,12 +111,13 @@ test('標準來源字串表（settings.json 的 sources 五筆）與標頭範本
   assert.ok(tmpl.includes('來源字串是機械身分'), '範本少了「來源字串是機械身分」那句——打字漂掉的人不會知道自己變成了另一位審查者');
   assert.ok(tmpl.includes('PROJECT-SETTINGS.md'), '範本沒有指到 PROJECT-SETTINGS.md 的標準表——來源字串沒有建議值，每個人就會自己編一個');
   assert.ok(tmpl.includes('跨輪次一字不改'), '範本少了「同一個工具跨輪次不可改寫法」那條');
-  // 壞標頭的救法：套件把舊閘的三級救濟收成「作廢上一則」一行（範本第 8 行）——普通補發救不了壞標頭，這句要在
+  // 壞標頭的救法：套件把舊閘的三級救濟收成「作廢上一則」一行（範本裡的那一行，不綁行號）——普通補發救不了壞標頭，這句要在
   assert.ok(tmpl.includes('作廢上一則：<那則留言的編號>'), '範本少了「作廢上一則」那行的逐字格式——標頭寫壞的人不知道怎麼自救');
   assert.ok(tmpl.includes('壞留言原地保留'), '範本少了「壞留言原地保留」——會有人照舊例去刪留言、洗掉稽核軌跡');
   // 只有同一位能解除：同一身分、更後面的輪次、對目前版本——這正是「照原輪次補發撤銷不掉」與「每個身分各自算」的規矩版
-  // #54 起這句搬到 RULES F5（Fable 代裁 R3）：三個片段逐字都要在 F5 那一段，少一個就紅
-  const f5 = f5Block(readFileSync(join(ROOT, 'RULES.md'), 'utf8'));
+  // #54 起範本只指到 RULES F5（F5 本來就有這句；Fable 代裁 R3）：三個片段逐字都要在 F5 那一段，少一個就紅。
+  // 先剝 HTML 註解（跟前兩題一樣）：包進註解的字讀的人看不到，不能算數
+  const f5 = f5Block(readFileSync(join(ROOT, 'RULES.md'), 'utf8').replace(/<!--[\s\S]*?-->/g, ''));
   for (const piece of ['只有同一位能解除', '用更後面的輪次', '同一位＝角色和來源字串都一樣']) {
     assert.ok(f5.includes(piece), `RULES F5 那一段少了「${piece}」——照原輪次補發撤銷不掉，而規則是每個身分各自算`);
   }
