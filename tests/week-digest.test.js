@@ -112,15 +112,22 @@ test('④--write 只換那一節：前後的節一個字不動、分隔線留著
     assert.ok(out.includes('  - 套件：新的——已合併（#1）') && !out.includes('套件：舊的'), '那一節確實換新');
     assert.equal(out.slice(out.indexOf(`${pad}# 已結束`)), higher.slice(higher.indexOf(`${pad}# 已結束`)), '一級標題與後面全部逐字留著（含專屬那一行）');
   }
-  // 長得像標題、格式不對＝分不出結尾，整個不寫（回第幾行與那一行）
-  for (const badHead of ['##已結束（留 30 天）', '    ## 已結束（留 30 天）', '\t## 已結束（留 30 天）', '#已結束']) {
+  // 那一節裡有不是產生器寫的行＝分不出結尾，整個不寫（回第幾行與那一行）：標題寫歪的各種樣子都算——
+  // 沒空格、四個空白、定位字元、# 後面是全形空白或不斷行空白（理財 #672 r2）、全形的＃、前面有全形空白
+  for (const badHead of ['##已結束（留 30 天）', '    ## 已結束（留 30 天）', '\t## 已結束（留 30 天）', '#已結束', '##\u3000已結束（留 30 天）', '##\u00a0已結束（留 30 天）', '＃＃ 已結束（留 30 天）', '\u3000## 已結束（留 30 天）']) {
     const shifted = before.replace('## 已結束（留 30 天）', badHead);
     const out = replaceSection(shifted, ['- 10/09']);
     assert.equal(typeof out, 'object', `「${badHead}」要拒寫：${typeof out}`);
     assert.ok(out && out.line === badHead && shifted.split('\n')[out.suspect - 1] === badHead, `回的行號要指到那一行：${JSON.stringify(out)}`);
   }
-  // PR 編號開頭、三個 # 的小標不算可疑（照樣是那一節的內容）
-  assert.equal(typeof replaceSection(doc(['- 10/01', '#73 那一支', '### 小標']), ['- 10/09']), 'string');
+  // 產生器自己寫的四種行照寫：空行（含只有空白）、分隔線、「- 月/日」、「  - …」（子項目裡寫什麼都行，例如「#73」）
+  assert.equal(typeof replaceSection(doc(['- 10/01', '  - 套件：#73 那一支——已合併（#73）', '   ', '- 09/30', '  - 最近 7 天沒有合併進主幹的 PR']), ['- 10/09']), 'string');
+  // 別的行一律拒寫，不管像不像標題：有人手改（「#73 那一支」頂格、三個 # 的小標、一段話）
+  for (const hand of ['#73 那一支', '### 小標', '這一週大家辛苦了', '- 10/1', '-  10/01']) {
+    const out = replaceSection(doc(['- 10/01', hand]), ['- 10/09']);
+    assert.equal(typeof out, 'object', `「${hand}」不是產生器寫的形狀，要拒寫`);
+    assert.equal(out && out.line, hand);
+  }
 });
 
 const SETTINGS = { participants: [{ role: '裁示者（人）', id: 'William', account: 'owner-acct' }, { role: 'AI 甲', id: 'Claude', account: 'owner-acct' }] };
@@ -241,9 +248,20 @@ process.stderr.write("unexpected " + url); process.exit(3);
   fs.writeFileSync(badFile, badOriginal);
   const bad = cli([...base, '--file', badFile, '--write', '--no-acceptance']);
   assert.equal(bad.status, 2, bad.stdout + bad.stderr);
-  assert.match(bad.stderr, /長得像標題、格式卻不對/u);
+  assert.match(bad.stderr, /不是產生器寫的形狀/u);
   assert.doesNotMatch(bad.stdout, /其餘的節沒動/u);
   assert.equal(fs.readFileSync(badFile, 'utf8'), badOriginal, '拒寫時整份檔一個位元組不動');
+  // # 後面是全形空白、不斷行空白（理財 #672 r2）：一樣退 2、原檔逐位元組不動、不印成功
+  for (const [label, head] of [['全形空白', '##\u3000已結束（留 30 天）'], ['不斷行空白', '##\u00a0已結束（留 30 天）']]) {
+    const f = path.join(dir, `bad-${label}.md`);
+    const before = original.replace('## 已結束（留 30 天）', head).replace('### 套件｜舊事｜已結束 10/01｜無永久決定', `### 套件｜舊事｜已結束 10/01｜無永久決定\nsentinel-${label}`);
+    fs.writeFileSync(f, before);
+    const res = cli([...base, '--file', f, '--write', '--no-acceptance']);
+    assert.equal(res.status, 2, `${label}：${res.stdout}${res.stderr}`);
+    assert.match(res.stderr, /不是產生器寫的形狀/u);
+    assert.doesNotMatch(res.stdout, /其餘的節沒動/u);
+    assert.equal(fs.readFileSync(f, 'utf8'), before, `${label}：整份檔一個位元組不動（含專屬那一行）`);
+  }
   // 前面多一個空白的標題是合格的：照寫，已結束那一節（含專屬那一行）原樣留著
   const padFile = path.join(dir, 'pad-heading.md');
   const padOriginal = badOriginal.replace('##已結束（留 30 天）', ' ## 已結束（留 30 天）');

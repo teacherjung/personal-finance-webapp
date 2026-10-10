@@ -1,7 +1,7 @@
 {
   "repo": "teacherjung/ai-collab-kit",
-  "version": "658c0e20b2e54669f9702e6484fbdc2deaf374f6",
-  "syncedAt": "2026-10-10",
+  "version": "ed8ce5c6a7f044ada526edc25dab00dbcf11544b",
+  "syncedAt": "2026-10-11",
   "entries": [
     {
       "mode": "100644",
@@ -10,7 +10,7 @@
     },
     {
       "mode": "100644",
-      "blob": "91db1c6668390fc3ea8d318482da90d2d7217022",
+      "blob": "8be92f8801e79b88bd782baa873fb8e923284f5a",
       "path": "MACHINES.md"
     },
     {
@@ -370,7 +370,7 @@
     },
     {
       "mode": "100644",
-      "blob": "2d6734be39c883ebc88041097a2b86ca865bd31d",
+      "blob": "aec503eeaca95224a712aad3a979b33f076e1127",
       "path": "tests/week-digest.test.js"
     },
     {
@@ -535,7 +535,7 @@
     },
     {
       "mode": "100755",
-      "blob": "78e0d9237f667d00b72318df10aacde96fc992c8",
+      "blob": "b1dd228a0eeb605f3175c31272e4477525ee4dac",
       "path": "tools/week-digest.js"
     }
   ],
