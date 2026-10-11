@@ -39,14 +39,16 @@ test('信用卡費接線（字面釘：只掃原始碼字串；分堆結果的�
     '本月筆數必須直接使用含退款的 rows.length');
   assert.match(source, /退款歸屬暫時讀不到/);
   assert.match(source, /unmatchedRefundsForMonth/);
-  for (const id of ['uploadStmt', 'stmtBatches', 'monthSel', 'lensInfo', 'unmatchedInfo']) {
+  for (const id of ['uploadStmt', 'stmtBatches', 'monthSel']) {
     assert.match(source, new RegExp(`id="${id}"`));
   }
+  assert.match(source, /id="lensInfo\$\{suffix\}"/);
+  assert.match(source, /id="unmatchedInfo\$\{suffix\}"/);
   for (const attr of ['data-edit', 'data-del', 'data-store']) {
     assert.match(source, new RegExp(attr));
   }
   assert.match(source, /bindSortClicks\(view\(\), listSort, renderTransactions\)/);
-  assert.match(source, /if \(seq !== currentRouteSeq\(\)\) return/);
+  assert.match(source, /if \(seq !== currentRouteSeq\(\) \|\| generation !== renderGeneration\) return/);
   assert.match(source, /class="credit-workspace"/);
   assert.match(source, /本月尚無信用卡消費/);
   assert.match(source, /src="assets\/guide-return-neutral\.webp"/);
@@ -81,7 +83,9 @@ test('信用卡桌機樣式：年月沿用銀行收支選單，色條在摘要�
   assert.match(source, /class="credit-ledger-head credit-mobile-only"/);
   assert.match(desktop, /\.credit-workspace \.credit-mobile-only \{ display: none; \}/);
   assert.match(desktop, /\.credit-stat::before \{ inset: 0 0 auto; width: auto; height: 6px; \}/);
-  assert.match(desktop, /\.credit-ledger-section \{ order: 1; \}/);
-  assert.match(desktop, /\.credit-category-panel \{\s*order: 2;/);
+  assert.match(source, /categoryPanelHtml\('credit-mobile-only', ''\)/);
+  assert.match(source, /categoryPanelHtml\('credit-desktop-only', 'Desktop'\)/);
+  assert.doesNotMatch(desktop, /\.credit-ledger-section \{ order:/);
+  assert.doesNotMatch(desktop, /\.credit-category-panel \{\s*order:/);
   assert.match(desktop, /\.credit-ledger th \{ border-bottom: 2px solid var\(--frame\); \}/);
 });

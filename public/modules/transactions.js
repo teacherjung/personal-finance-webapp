@@ -29,6 +29,8 @@ const subOptions = (parent, cur = '') =>
   subcategoryOptionsHtml(['', ...((Object.hasOwn(expTree, parent) && expTree[parent]) || [])], cur);
 
 let monthFilter = monthKey();
+let renderGeneration = 0;
+let renderedMonth = '';
 // 匯入後跳到「筆數最多」的月份要改這個頁面狀態——匯入工作流搬走後由這個接縫代寫
 //（import 綁定唯讀、不能直接賦值；階段二①）
 /** @param {string} m */
@@ -38,13 +40,30 @@ const listSort = { key: 'date', dir: 'desc' };
 
 export async function renderTransactions() {
   const seq = currentRouteSeq();
+  const generation = ++renderGeneration;
   // 退款配對表（唯讀）：分類統計與「本月消費」改用**消費歸屬**口徑（使用者定 2026-07-27，與月度回顧一致）。
   // 抓不到就退回帳面口徑並在畫面明說——靜默降級會讓兩種口徑長得一模一樣、看不出數字換過。
-  const [allRaw, accounts, cards, tree, refundData] = await Promise.all([
-    api('/transactions'), api('/accounts'), api('/cards'), api('/categories'),
-    api('/refund-pairs').then(r => (r && Array.isArray(r.pairs)) ? r : null).catch(() => null),
-  ]);
-  if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別覆蓋新頁面（Codex r10#6）
+  let responses;
+  try {
+    responses = await Promise.all([
+      api('/transactions'), api('/accounts'), api('/cards'), api('/categories'),
+      api('/refund-pairs').then(r => (r && Array.isArray(r.pairs)) ? r : null).catch(() => null),
+    ]);
+  } catch (e) {
+    if (seq === currentRouteSeq() && generation === renderGeneration) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (view().querySelector('.credit-workspace') && renderedMonth) {
+        monthFilter = renderedMonth;
+        byId('monthSel').value = renderedMonth;
+        byId('creditYearSel').value = renderedMonth.slice(0, 4);
+        byId('creditMonthSel').value = renderedMonth.slice(5, 7);
+        toast(`載入失敗：${message}`, true);
+      } else view().innerHTML = `<div class="hint" role="alert">載入失敗：${esc(message)}</div>`;
+    }
+    return;
+  }
+  if (seq !== currentRouteSeq() || generation !== renderGeneration) return;   // 期間切走了頁就別覆蓋新頁面（Codex r10#6）
+  const [allRaw, accounts, cards, tree, refundData] = responses;
   expTree = tree && typeof tree === 'object' ? tree : {};
   // 只吃信用卡帳本（三層重構）：下游月加總、店家檔案、byCat 全部因此天然只算卡消費、不會混入現金流。
   const all = allRaw.filter(isCardTx);
@@ -73,6 +92,22 @@ export async function renderTransactions() {
   const active = document.activeElement;
   const focusedPeriodId = active instanceof HTMLElement && view().contains(active)
     && active.matches('#creditYearSel, #creditMonthSel') ? active.id : '';
+  // 兩種版面的閱讀順序各自跟畫面一致；隱藏的一份不進鍵盤順序。
+  const categoryPanelHtml = (/** @type {string} */ visibility, /** @type {string} */ suffix) => `
+    <div class="chart-card credit-category-panel ${visibility}">
+      <div class="credit-category-head">
+        <div><h2>本月消費分類</h2><p>依淨額由高到低，最多六類</p></div>
+        <button type="button" class="info-link" id="lensInfo${suffix}">退款算在哪個月？</button>
+      </div>
+      ${topCats.length ? topCats.map(([c, v]) => `
+        <div class="credit-category-row">
+          <div class="credit-category-label"><span>${esc(c)}</span><span class="muted">${money(v)}</span></div>
+          <div class="pill-bar credit-category-bar"><div style="width:${(Math.abs(v) / maxCat * 100).toFixed(0)}%;background:${v < 0 ? CHART.green : CHART.red}"></div></div>
+        </div>`).join('') : '<p class="empty credit-category-empty">本月尚無消費。</p>'}
+      ${!refundData ? '<p class="credit-category-note">退款歸屬暫時讀不到，這裡先用帳面口徑（退款與點數折抵都算在發生當月）。重新整理可再試一次。</p>' : ''}
+      ${unmatchedThisMonth.length ? `<p class="credit-category-note">本月另有 ${unmatchedThisMonth.length} 筆退款（共 ${money(unmatchedTotal)}）找不到對應消費，未計入上面的統計。 <button type="button" class="info-link" id="unmatchedInfo${suffix}">為什麼？</button></p>` : ''}
+      ${rewardsThisMonth.length ? `<p class="credit-category-note">本月另有 ${rewardsThisMonth.length} 筆回饋（共 ${money(rewardTotal)}）是點數折抵帳單，未計入上面的統計。 <button type="button" class="info-link" id="rewardInfo${suffix}">為什麼？</button></p>` : ''}
+    </div>`;
 
   view().innerHTML = `
     <div class="credit-workspace">
@@ -107,20 +142,7 @@ export async function renderTransactions() {
           <div class="stat sm">${rows.length}</div>
           <p>帳單原貌，包含退款</p>
         </div>
-        <div class="chart-card credit-category-panel">
-          <div class="credit-category-head">
-            <div><h2>本月消費分類</h2><p>依淨額由高到低，最多六類</p></div>
-            <button type="button" class="info-link" id="lensInfo">退款算在哪個月？</button>
-          </div>
-          ${topCats.length ? topCats.map(([c, v]) => `
-            <div class="credit-category-row">
-              <div class="credit-category-label"><span>${esc(c)}</span><span class="muted">${money(v)}</span></div>
-              <div class="pill-bar credit-category-bar"><div style="width:${(Math.abs(v) / maxCat * 100).toFixed(0)}%;background:${v < 0 ? CHART.green : CHART.red}"></div></div>
-            </div>`).join('') : '<p class="empty credit-category-empty">本月尚無消費。</p>'}
-          ${!refundData ? '<p class="credit-category-note">退款歸屬暫時讀不到，這裡先用帳面口徑（退款與點數折抵都算在發生當月）。重新整理可再試一次。</p>' : ''}
-          ${unmatchedThisMonth.length ? `<p class="credit-category-note">本月另有 ${unmatchedThisMonth.length} 筆退款（共 ${money(unmatchedTotal)}）找不到對應消費，未計入上面的統計。 <button type="button" class="info-link" id="unmatchedInfo">為什麼？</button></p>` : ''}
-          ${rewardsThisMonth.length ? `<p class="credit-category-note">本月另有 ${rewardsThisMonth.length} 筆回饋（共 ${money(rewardTotal)}）是點數折抵帳單，未計入上面的統計。 <button type="button" class="info-link" id="rewardInfo">為什麼？</button></p>` : ''}
-        </div>
+        ${categoryPanelHtml('credit-mobile-only', '')}
       </section>
 
       <section class="credit-ledger-section" aria-label="帳單明細">
@@ -132,8 +154,10 @@ export async function renderTransactions() {
           <tbody>${rows.map(t => rowHtml(t, { purchaseDateOf, refundDateOf })).join('') || `<tr><td colspan="7" class="empty"><div class="credit-empty-state"><img src="assets/guide-return-neutral.webp" alt=""><div><strong>本月尚無信用卡消費</strong><span>可用右上角「上傳信用卡帳單」匯入本月明細。</span></div></div></td></tr>`}</tbody></table>
         </div>
       </section>
+      ${categoryPanelHtml('credit-desktop-only', 'Desktop')}
     </div>
   `;
+  renderedMonth = monthFilter;
 
   byId('uploadStmt').onclick = () => openStatementUpload();
   const batchBtn = byId('stmtBatches');
@@ -153,7 +177,7 @@ export async function renderTransactions() {
   };
   if (focusedPeriodId) byId(focusedPeriodId).focus({ preventScroll: true });
   // 文案＝使用者 2026-07-27 親自改寫的版本（逐字採用，勿順手潤飾）：條列式、關鍵詞標色。
-  byId('lensInfo').onclick = () => openInfo('退款算在哪個月？', `
+  const showLensInfo = () => openInfo('退款算在哪個月？', `
     <ul>
       <li>本月收到的<b class="hl">「退款」</b>不會計算到「本月消費」及「本月消費分類」。</li>
       <li><b class="hl">「退款」</b>收到的金額會回去抵掉「當初刷卡月」的消費支出。
@@ -164,8 +188,8 @@ export async function renderTransactions() {
       <li>退款要「同一張卡＋同一家店＋同一個金額＋消費日比退款日早」才配得起來。</li>
       <li>配不到的一律不計入（寧可少抵，也不亂抵到別家店），並列在分類統計下方。</li>
     </ul>`, { size: 'md' });
-  const unmatchedBtn = byId('unmatchedInfo');
-  if (unmatchedBtn) unmatchedBtn.onclick = () => openInfo('這些退款為什麼沒被計入？', `
+  for (const id of ['lensInfo', 'lensInfoDesktop']) byId(id).onclick = showLensInfo;
+  const showUnmatchedInfo = () => openInfo('這些退款為什麼沒被計入？', `
     <p>它們找不到能證明是「同一筆消費被退回」的對象，常見原因：</p>
     <ul>
       <li><b>原始消費那個月的帳單還沒匯入</b>——補匯之後會自動接上，不用手動修。</li>
@@ -176,8 +200,11 @@ export async function renderTransactions() {
     <div class="table-wrap"><table class="summary-table"><thead><tr><th>退款日</th><th>店家</th><th class="num">金額</th></tr></thead>
       <tbody>${unmatchedThisMonth.map((/** @type {any} */ u) =>
     `<tr><td>${esc(u.date)}</td><td>${esc(u.store)}</td><td class="num">${money(Math.abs(Number(u.amount) || 0))}</td></tr>`).join('')}</tbody></table></div>`, { size: 'md' });
-  const rewardBtn = byId('rewardInfo');
-  if (rewardBtn) rewardBtn.onclick = () => openInfo('回饋為什麼不算進消費？', `
+  for (const id of ['unmatchedInfo', 'unmatchedInfoDesktop']) {
+    const btn = byId(id);
+    if (btn) btn.onclick = showUnmatchedInfo;
+  }
+  const showRewardInfo = () => openInfo('回饋為什麼不算進消費？', `
     <p>這幾筆是<b>用點數折抵帳單</b>：帳單上印成負數，長得很像退款，但它不是把某一筆消費的錢退還給你。</p>
     <ul>
       <li>退款＝那筆東西你沒買成，錢退回來 ⇒ 要回頭把<b>當初那個月</b>的花費減掉。</li>
@@ -187,6 +214,10 @@ export async function renderTransactions() {
     <div class="table-wrap"><table class="summary-table"><thead><tr><th>折抵日</th><th>帳單說明</th><th class="num">金額</th></tr></thead>
       <tbody>${rewardsThisMonth.map((/** @type {any} */ u) =>
     `<tr><td>${esc(u.date)}</td><td>${esc(u.store)}</td><td class="num">${money(Math.abs(Number(u.amount) || 0))}</td></tr>`).join('')}</tbody></table></div>`, { size: 'md' });
+  for (const id of ['rewardInfo', 'rewardInfoDesktop']) {
+    const btn = byId(id);
+    if (btn) btn.onclick = showRewardInfo;
+  }
   bindSortClicks(view(), listSort, renderTransactions);   // 共用排序 infra（tx-sort.js）
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openTxForm(all.find(t => t.id === b.dataset.edit), accounts, cards, all));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
