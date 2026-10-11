@@ -964,16 +964,21 @@ export async function runScan(args, deps = {}) {
   log(`掃描開始：${startedAt}（在通過之後才掃＝條款；時序要自己記進 PR）`);
   // --always-approve：盒內跑指令不需人工確認（William 2026-08-20 裁示准跑指令；盒子裡沒有它不該碰的東西）。
   //   第四次正式掃描才發現：r6 拿掉 config.toml（裡面有 permission_mode = "always-approve"）後，grok 回到預設「跑指令要問」，
-  //   -p 模式沒人能答 → permission_cancelled → 整輪取消、退 0、只印旁白——一個「成功但空的」掃描。用旗標，不重建 config 檔。
+  //   單輪模式（當時用 -p，現在用 --prompt-file）沒人能答 → permission_cancelled → 整輪取消、退 0、只印旁白——一個「成功但空的」掃描。用旗標，不重建 config 檔。
   const GROK_FLAGS = ['--disable-web-search', '--no-subagents', '--always-approve'];
-  const grokArgv = [grokBin, ...GROK_FLAGS, '-p', '<materials>'];
+  // 材料寫成盒內的一個檔、用 --prompt-file 交給 grok，不放進指令參數：macOS 單一指令的參數上限約 1MB（ARG_MAX），
+  //   原本用 -p 把整份材料當參數，差異 1.1MB 的那一支（整批同步）在起 grok 那一步就 spawn E2BIG、一個字都沒掃到。
+  //   檔放在盒子根（不在 src 裡，不混進受掃的樹）；盒子在所有出口都會清，它跟著走。
+  const materialsFile = join(box, 'materials.md');
+  writeFileSync(materialsFile, materials, { mode: 0o600 });
+  const grokArgv = [grokBin, ...GROK_FLAGS, '--prompt-file', materialsFile];
   const env = { ...sandboxEnv(box), GROK_CLI_CHAT_PROXY_BASE_URL: `http://127.0.0.1:${relayPort}/v1` };
   // r6 #3：ulimit 包著整個沙箱（sh 設完 exec sandbox-exec；限制隨 fork 繼承）：
   //   -f 單檔 64MB（1024-byte 單位）／-u 程序數＝同 uid 現有數＋256（macOS 的 -u 是 per-uid 計數，設太低連 fork 都不行）／-t CPU 1800 秒。
   //   -v（虛擬記憶體）在 macOS 設不了（EINVAL），沒放。
   const procNow = (spawnSync('/bin/ps', ['-u', String(process.getuid?.() ?? 0), '-o', 'pid='], { encoding: 'utf8' }).stdout || '').split('\n').filter(Boolean).length;
   const ulimits = `ulimit -f ${64 * 1024} -u ${procNow + 256} -t 1800 || exit 97`;
-  const shArgv = ['-c', `${ulimits}; exec /usr/bin/sandbox-exec "$@"`, 'grok-scan-sh', ...sbArgv, grokBin, ...GROK_FLAGS, '-p', materials];
+  const shArgv = ['-c', `${ulimits}; exec /usr/bin/sandbox-exec "$@"`, 'grok-scan-sh', ...sbArgv, ...grokArgv];
   // 發射紀錄留檔（#495 那次事後分不出「旗標失效」還是「根本沒帶旗標」——claude-bd 2026-08-22 建議）：
   // 完整指令、env 白名單、版本、沙箱設定檔的雜湊。之後驗屍或重裁都有憑據，不靠回憶。
   writeFileSync(join(resultsDir, 'launch.json'), JSON.stringify({
@@ -990,6 +995,9 @@ export async function runScan(args, deps = {}) {
     const child = spawn('/bin/sh', shArgv, { cwd: src, stdio: ['ignore', 'pipe', 'pipe'], env, detached: true });
     grokPgid = child.pid ?? null;
     let stdout = '', stderr = '', truncated = false;
+    // 先設編碼再收：管子一段一段送，一個中文字三個位元組可能被切在兩段之間；逐段 `+= Buffer` 會各自解碼、切開的字變成亂碼（U+FFFD），
+    //   回覆是要逐字貼進 PR 說明的（掃描紀錄範本）。setEncoding 用的解碼器會把切開的字接回去。
+    child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', (d) => { if (stdout.length < OUT_CAP) stdout += d; else truncated = true; });
     child.stderr.on('data', (d) => { if (stderr.length < OUT_CAP) stderr += d; else truncated = true; });
     const t = setTimeout(() => { if (grokPgid) try { process.kill(-grokPgid, 'SIGKILL'); } catch { /* 已死 */ } }, 30 * 60_000);
