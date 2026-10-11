@@ -37,9 +37,12 @@
 工具與流程的待辦（不排優先序；開工印待辦 `tools/backlog-touch.js` 只讀 `- ` 開頭的條目；每條＝一句話／放在哪裡／什麼情況下值得做）：
 
 - （掃描工具，2026-10-11 #673 掃描第 2 題前半，屬實·進待辦）掃描收輸出的上限算的是字元、失敗訊息卻寫 bytes，跨線那一段整段收下（最多多一次讀取），stderr 共用同一個旗標／`scripts/grok-scan.js` 收輸出那一段（訊息單位改成「字元」；要的話改成先收進陣列最後一次接起來）／下一支動到收輸出那一段時 — **未分配**
-- （掃描工具，2026-10-11 #675 r1）建盒子時 `git archive` 會照本機 git 設定執行受審版本 `.gitattributes` 挑的過濾器（smudge），沒有旗標關得掉（diff 那一半 #675 已關）／`scripts/grok-scan.js` 建盒那一段（可能的做法：改用 ls-tree＋cat-file 逐檔寫出、不經過濾）／這台機器裝了 git-lfs 或任何自訂過濾器時，或下一支動到建盒那一段時 — **未分配**
+- （掃描工具，2026-10-11 #675 r1；複審後掃第 4 題補全）建盒子時 `git archive` 會照屬性檔挑過濾器（smudge）並執行本機 git 設定裡定義的程式，沒有旗標關得掉（diff 那一半 #675 已關）；屬性來源不只受審版本的 `.gitattributes`，還有全域（core.attributesFile、$XDG_CONFIG_HOME/git/attributes、~/.config/git/attributes）、系統層、$GIT_DIR/info/attributes；export-ignore、export-subst 不需要過濾器定義，也會讓盒子跟受審版本不一致（少檔或改字）／`scripts/grok-scan.js` 建盒那一段（可能的做法：改用 ls-tree＋cat-file 逐檔寫出、不經過濾與屬性）／這台機器裝了 git-lfs 或任何自訂過濾器、或本機任一層出現屬性檔時，或下一支動到建盒那一段時 — **未分配**
 - （掃描工具考題，2026-10-11 #675 r2 Codex 測試待辦）掃描那一族考題只驗 git 呼叫的答案與原始碼形狀，沒有直接觀測子行程收到的 `GIT_*`／`test/grok-scan-flow-repo.test.js`、`test/helpers/grok-scan-flow-fixtures.js`／下次變更 Git 呼叫或抽換環境清理方式時 — **未分配**
-- （掃描工具，2026-10-11 #675 r4 換做法後的對抗審查，主幹原本就有）建盒時版本釘（`grok --version`，盒內第一次跑程式）先跑、之後父程序才往盒子裡寫 src.tar、解開原始碼、複製 node_modules，盒內程式若在那之前先放好捷徑，父程序的寫入會跟著走；之後的檢查抓不到／`scripts/grok-scan.js` 建盒那一段（可能的做法：原始碼與 node_modules 都備好、檢查完，再跑任何沙箱內的程式；或版本釘的程序群組先收掉）／下一支動到建盒順序或版本釘時 — **未分配**
+- （掃描工具，2026-10-11 #675 r4 換做法後的對抗審查，主幹原本就有）建盒時版本釘（`grok --version`，盒內第一次跑程式）先跑、之後父程序才往盒子裡寫 src.tar、解開原始碼、複製 node_modules，盒內程式若在那之前先放好捷徑，父程序的寫入會跟著走；之後的檢查抓不到／`scripts/grok-scan.js` 建盒那一段（可能的做法：原始碼與 node_modules 都備好、檢查完，再跑任何沙箱內的程式；或版本釘的程序群組先收掉）／下一支動到建盒順序或版本釘時；另外 `under()` 把 realpath(src) 也當成盒內，src 本身若被換成指到盒外的捷徑會被當成盒內（複審後掃第 2 題）。觸發要那支釘了雜湊的 grok 自己在 --version 時作怪（受審內容那時還沒解進盒子） — **未分配**
+- （掃描工具，2026-10-11 #675 複審後掃第 3 題）配方聲明與 launch.json 的「受掃倉庫」取自 `git remote get-url origin`，會被本機或全域 git 設定的 url.*.insteadOf 改寫成另一個 owner/name；只是紀錄、不是閘，內容的身分以 base..head 版本碼為準／`scripts/grok-scan.js` 算 repoLabel 那一段（可能的做法：讀未改寫的 remote.origin.url，並在說明寫明標籤由操作者的設定決定）／下一支動到紀錄欄位時 — **未分配**
+- （掃描工具，2026-10-11 #675 複審後掃第 3 題）「掃描程式 sha256」是建盒前的 git 檢查之後再讀一次磁碟算的，不是已載入的那份，也不含同一輪會執行的其他檔（lib/git-env.js、轉送器 scripts/grok-relay.js 是之後才從磁碟起的）／`scripts/grok-scan.js` 算 scanScriptSha 那一段（可能的做法：載入時就算，並把載入的本機模組與實際起的轉送器各記一個雜湊，像沙箱設定檔的 profileSha256）／下一支動到紀錄欄位或轉送器時 — **未分配**
+- （掃描工具，2026-10-11 #675 複審後掃反駁審查順帶）受審版本或本機屬性檔寫 `-diff`（例如 `* -diff`）時，材料那段 `git diff --no-ext-diff --no-textconv` 會把檔案都印成「Binary files … differ」，送給 Grok 的 diff 等於被遮掉；不執行程式、不外洩，但材料不實／`scripts/grok-scan.js` 組材料那一段（可能的做法：加 --text，同時處理真正的二進位檔別把位元組灌進材料）／要掃的倉庫出現 .gitattributes 或本機任一層屬性檔時 — **未分配**
 - （掃描工具考題，2026-10-11 #675 推送前鉤子實際紅一次）`test/grok-scan-flow-credentials.test.js`「假 grok 留一個背景 writer…整個程序群組已死」用 `kill(-群組, 0)` 驗群組死了，整套考題一起跑時回 EPERM（群組編號被別的程序重用）而判失敗；單獨跑三次都過／那一題的判死（EPERM 也要能分辨是不是同一群組，例如先記下群組成員再逐一確認）／下一次再偶發，或下一支動到那一題時 — **未分配**
 
 ## 重要決定（已拍板，勿重議）

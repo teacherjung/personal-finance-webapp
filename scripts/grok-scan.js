@@ -336,7 +336,7 @@ export const stripLineMarkers = (text) => text.replace(/(^|\n|(?<!\\)\\{1,4}n)\d
 export function knownShapeHitsFromTree(repo, head, maxBlobBytes = SESSION_CAPS.fileBytes) {
   // -z：git 預設會把非 ASCII 路徑輸出成八進位轉義並加引號，拿去查就 fatal 而掃描器**靜靜跳過**
   //     ——本專案踩過的「掃描器跳過中文檔名」同一個坑。
-  const ls = spawnSync('git', ['-C', repo, 'ls-tree', '-r', '-z', head], { encoding: 'utf8', maxBuffer: 1 << 28, env: gitEnv() });
+  const ls = spawnSync('git', ['--no-replace-objects', '-C', repo, 'ls-tree', '-r', '-z', head], { encoding: 'utf8', maxBuffer: 1 << 28, env: gitEnv() });
   if (ls.status !== 0) throw new Error(`git ls-tree 失敗（status ${ls.status}）`);
   /** @type {{ oid: string, path: string }[]} */ const blobs = [];
   for (const rec of (ls.stdout || '').split('\0')) {
@@ -346,7 +346,7 @@ export function knownShapeHitsFromTree(repo, head, maxBlobBytes = SESSION_CAPS.f
     const [, type, oid] = rec.slice(0, tab).split(' ');
     if (type === 'blob') blobs.push({ oid, path: rec.slice(tab + 1) });   // 只收 blob：submodule（gitlink）與子樹跳過
   }
-  const cat = spawnSync('git', ['-C', repo, 'cat-file', '--batch'], { input: blobs.map((b) => b.oid).join('\n') + '\n', maxBuffer: 1 << 29, env: gitEnv() });
+  const cat = spawnSync('git', ['--no-replace-objects', '-C', repo, 'cat-file', '--batch'], { input: blobs.map((b) => b.oid).join('\n') + '\n', maxBuffer: 1 << 29, env: gitEnv() });
   if (cat.status !== 0) throw new Error(`git cat-file 失敗（status ${cat.status}）`);
   const out = /** @type {Buffer} */ (cat.stdout);
   /** @type {Set<string>} */ const hits = new Set();
@@ -801,7 +801,7 @@ export async function runScan(args, deps = {}) {
     /** @type {string} */ let real;
     try { real = realpathSync(repo); } catch (e) { return fail(`要掃的倉庫找不到（${errCode(e)}）`); }
     try { if (!lstatSync(real).isDirectory()) return fail('要掃的倉庫不是資料夾'); } catch (e) { return fail(`要掃的倉庫判斷不了（${errCode(e)}）`); }
-    const top = spawnSync('git', ['-C', real, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env: gitEnv() });
+    const top = spawnSync('git', ['--no-replace-objects', '-C', real, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env: gitEnv() });
     if (top.status !== 0) return fail('要掃的路徑不是 git 倉庫');
     /** @type {string} */ let topReal;
     try { topReal = realpathSync(top.stdout.replace(/\n$/, '')); } catch (e) { return fail(`要掃的倉庫的根目錄判斷不了（${errCode(e)}）`); }
@@ -811,15 +811,29 @@ export async function runScan(args, deps = {}) {
     repo = real;
   }
   for (const [name, sha] of /** @type {const} */ ([['base', base], ['head', head]])) {
-    const c = spawnSync('git', ['-C', repo, 'cat-file', '-e', `${sha}^{commit}`], { encoding: 'utf8', env: gitEnv() });
+    const c = spawnSync('git', ['--no-replace-objects', '-C', repo, 'cat-file', '-e', `${sha}^{commit}`], { encoding: 'utf8', env: gitEnv() });
     if (c.status !== 0) return fail(`${name}（${sha.slice(0, 12)}）不在要掃的倉庫裡`);
   }
   // 受審版本把 node_modules 提交進去了（不論是捷徑或資料夾）＝不掃：git archive 解開後它就在盒子裡，
   // 父程序再往同一個名字複製時會跟著捷徑寫到盒外（#674 之後的設計檢查實測重現）。
   {
-    const ls = spawnSync('git', ['-C', repo, 'ls-tree', '-z', '--full-tree', head, '--', 'node_modules'], { encoding: 'utf8', env: gitEnv() });
+    const ls = spawnSync('git', ['--no-replace-objects', '-C', repo, 'ls-tree', '-z', '--full-tree', head, '--', 'node_modules'], { encoding: 'utf8', env: gitEnv() });
     if (ls.status !== 0) return fail('讀不出受審版本有沒有提交 node_modules');
     if (ls.stdout !== '') return fail('受審版本把 node_modules 提交進去了（捷徑或資料夾）——不掃');
+    // 只比名字擋不住不分大小寫的磁碟：受審版本提交 NODE_MODULES（或別種寫法、再用 export-ignore 讓打包略過它），
+    // 切到這一版時它會蓋掉工作樹的 node_modules，於是複製進盒子的是那一版挑的資料夾（#675 複審後掃的反駁審查實測）。
+    // 所以再比一次「在這台機器上是不是同一個東西」：根目錄每一項跟 node_modules 的裝置與編號都不准相同。
+    /** @type {import('node:fs').Stats | null} */ let nmSt = null;
+    try { nmSt = lstatSync(join(repo, 'node_modules')); } catch (e) { if (errCode(e) !== 'ENOENT') return fail(`node_modules 判斷不了（${errCode(e)}）`); }
+    if (nmSt) {
+      const root = spawnSync('git', ['--no-replace-objects', '-C', repo, 'ls-tree', '-z', '--full-tree', '--name-only', head], { encoding: 'utf8', env: gitEnv() });
+      if (root.status !== 0) return fail('讀不出受審版本根目錄有哪些項目');
+      for (const name of root.stdout.split('\0').filter(Boolean)) {
+        /** @type {import('node:fs').Stats} */ let st;
+        try { st = lstatSync(join(repo, name)); } catch { continue; }
+        if (st.dev === nmSt.dev && st.ino === nmSt.ino) return fail('受審版本的根目錄有一項在這台機器上跟 node_modules 是同一個東西（大小寫或寫法不同的同名）——不掃');
+      }
+    }
   }
   // 沒有相依的倉庫（例如套件倉庫）跳過 node_modules；有宣告相依卻沒有 node_modules＝不掃（盒子裡的考題會因為少套件亂紅）。
   // 宣告看的是受審版本的 package.json（git 物件庫），不是工作樹、也不是盒子；有沒有 node_modules 都讀，壞掉都退。
@@ -832,12 +846,12 @@ export async function runScan(args, deps = {}) {
   /** @type {boolean} */ let declared;
   {
     /** @type {Record<string, unknown> | null} */ let pkg = null;
-    const ls = spawnSync('git', ['-C', repo, 'ls-tree', '-z', '--full-tree', head, '--', 'package.json'], { encoding: 'utf8', env: gitEnv() });
+    const ls = spawnSync('git', ['--no-replace-objects', '-C', repo, 'ls-tree', '-z', '--full-tree', head, '--', 'package.json'], { encoding: 'utf8', env: gitEnv() });
     if (ls.status !== 0) return fail('讀不出受審版本的 package.json 在不在');
     if (ls.stdout !== '') {
       const m = /^(100644|100755) blob ([0-9a-f]{40,64})\tpackage\.json\0$/.exec(ls.stdout);
       if (!m) return fail('受審版本的 package.json 不是一般檔案');
-      const blob = spawnSync('git', ['-C', repo, 'cat-file', 'blob', m[2]], { encoding: 'utf8', env: gitEnv(), maxBuffer: 8 * 1024 * 1024 });
+      const blob = spawnSync('git', ['--no-replace-objects', '-C', repo, 'cat-file', 'blob', m[2]], { encoding: 'utf8', env: gitEnv(), maxBuffer: 8 * 1024 * 1024 });
       if (blob.status !== 0) return fail('讀不出受審版本的 package.json');
       /** @type {unknown} */ let parsed;
       try { parsed = JSON.parse(blob.stdout); } catch { return fail('受審版本的 package.json 不是合法的 JSON'); }
@@ -866,7 +880,7 @@ export async function runScan(args, deps = {}) {
     if (typeof effort !== 'string' || !/^[a-z]+$/.test(effort)) return fail('settings.json 掃描那一節的 maxEffort（最高推理）沒填或形狀不對');
   }
   // 紀錄：掃的是哪一個倉庫、用的是哪一版掃描程式（倉庫寫 owner/name、不寫路徑；程式寫內容雜湊、不靠 git）
-  const origin = spawnSync('git', ['-C', repo, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnv() });
+  const origin = spawnSync('git', ['--no-replace-objects', '-C', repo, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnv() });
   const repoLabel = (origin.status === 0 && repoLabelFrom(origin.stdout.trim())) || '（沒有可辨認的 GitHub 遠端）';
   /** @type {string} */ let scriptSha;
   try { scriptSha = createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'); } catch (e) { return fail(`讀不出掃描程式本身（${errCode(e)}）`); }
@@ -972,7 +986,7 @@ export async function runScan(args, deps = {}) {
   //   'wx'（獨占建立）是第二道：檔名已經在＝有人先放了東西，不跟隨、不覆寫、不掃。
   // --no-ext-diff --no-textconv：受審版本的 .gitattributes 可以替檔案挑 diff 驅動，git 就會在盒子**外面**照設定執行那支轉檔程式
   //   （#675 r1 Codex 實測重現）；材料要的是原始差異，兩個都關掉。git archive 那邊的 filter 沒有旗標關得掉，記在待辦。
-  const diff = spawnSync('git', ['-C', repo, 'diff', '--no-ext-diff', '--no-textconv', `${base}..${head}`], { encoding: 'utf8', env: gitEnv(), maxBuffer: 64 * 1024 * 1024 });
+  const diff = spawnSync('git', ['--no-replace-objects', '-C', repo, 'diff', '--no-ext-diff', '--no-textconv', `${base}..${head}`], { encoding: 'utf8', env: gitEnv(), maxBuffer: 64 * 1024 * 1024 });
   if (diff.status !== 0) return failAndClean(`git diff 失敗：${diff.stderr}`);
   const materials = readFileSync(promptFile, 'utf8')
     + `\n\n【受掃版本】base ${base} → head ${head}；你現在所在的目錄 ./src 是 head 的完整原始碼（已 commit 的部分），可以在裡面跑 node --test。`
@@ -991,9 +1005,10 @@ export async function runScan(args, deps = {}) {
     if (ver.status !== 0 || parsed !== EXPECTED_GROK_VERSION) return failAndClean(`grok 版本不符：要 ${EXPECTED_GROK_VERSION}，實際「${verText || ver.error?.message || ver.status}」（${(ver.stderr || '').slice(-200)}）`);
   }
   {
-    // 不用 shell pipeline 組路徑；git 一律帶 gitEnv()（鐵則 11：GIT_DIR 等會讓 -C 失效、指去別棵 repo）
+    // 不用 shell pipeline 組路徑；git 一律帶 gitEnv()（鐵則 11：GIT_DIR 等會讓 -C 失效、指去別棵 repo）；
+    // 也一律帶 --no-replace-objects：gitEnv() 連 GIT_NO_REPLACE_OBJECTS 一起清掉，倉庫裡的 refs/replace 會把 head 換成別的內容、紀錄卻還寫 head（#675 複審後掃的反駁審查實測）
     const tarPath = join(box, 'src.tar');
-    const ar = spawnSync('git', ['-C', repo, 'archive', '--format=tar', '-o', tarPath, head], { encoding: 'utf8', env: gitEnv() });
+    const ar = spawnSync('git', ['--no-replace-objects', '-C', repo, 'archive', '--format=tar', '-o', tarPath, head], { encoding: 'utf8', env: gitEnv() });
     if (ar.status !== 0) return failAndClean(`git archive 失敗：${ar.stderr}`);
     const tx = spawnSync('/usr/bin/tar', ['-x', '-f', tarPath, '-C', src], { encoding: 'utf8' });
     if (tx.status !== 0) return failAndClean(`tar 解開失敗：${tx.stderr}`);
@@ -1088,7 +1103,7 @@ export async function runScan(args, deps = {}) {
       const pf = join(authDir, `needle.${process.pid}`);
       try {
         writeFileSync(pf, needle + '\n', { mode: 0o600 });
-        const g = spawnSync('git', ['-C', repo, 'grep', '-q', '-F', '-f', pf, head, '--'], { encoding: 'utf8', env: gitEnv() });
+        const g = spawnSync('git', ['--no-replace-objects', '-C', repo, 'grep', '-q', '-F', '-f', pf, head, '--'], { encoding: 'utf8', env: gitEnv() });
         if (g.status !== 0 && g.status !== 1) throw new Error(`git grep 失敗（status ${g.status}）：${g.stderr}`);
         return g.status === 0;
       } finally { rmSync(pf, { force: true }); }

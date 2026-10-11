@@ -13,6 +13,7 @@
 //   結構題：沙箱參數只有那三組（要掃的倉庫進不去）、每一個 git 呼叫都清環境、指令列把 repo 傳進 runScan、不傳 deps；
 //   GIT_DIR 指到別的倉庫時：建盒前的檢查仍查 --repo 那一個、考題自己設 diff 驅動寫進要寫的倉庫而別的倉庫設定不變；
 //   結構題：這一族考題與夾具的每一個 git 呼叫都帶乾淨環境（#675 r1 Codex：考題的 git 呼叫跟著 GIT_DIR 寫到別的倉庫）。
+//   refs/replace 把受審版本換成別的內容時照樣讀受審版本本身；不分大小寫的磁碟上，根目錄有一項跟 node_modules 是同一個東西＝退 2（#675 複審後掃的反駁審查）。
 // ・套得上沙箱的 macOS 才跑：沒有相依的倉庫整條走到退 0；假 grok 收到的參數有 --model <設定的最強模型> --reasoning-effort <設定的最高推理>；
 //   配方聲明與 launch.json 寫了受掃倉庫、指定模型、推理、掃描程式的雜湊；沙箱參數裡沒有要掃的倉庫路徑；
 //   node_modules 捷徑指到不叫 node_modules 的資料夾＝退 2、結果包不留；相依已備齊、沒有 ESLint 的倉庫建得出盒子（不在 node_modules 那步退）；
@@ -26,7 +27,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename, dirname } from 'node:path';
 import { GROK_WALL_MS, needsInstall, repoLabelFrom, runScan } from '../scripts/grok-scan.js';
@@ -138,6 +139,40 @@ test('沒有 node_modules：沒有 package.json、相依全空、只有 peer／o
   }
 });
 
+test('倉庫裡有 refs/replace 把受審版本換成別的內容時，掃描照樣讀受審版本本身（每一個 git 呼叫帶 --no-replace-objects）', async () => {
+  const git = (/** @type {string} */ dir, /** @type {string[]} */ a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', env: CLEAN_ENV }).trim();
+  const repo = tinyRepo({ nodeModules: false, packageJson: '{"name":"k"}' });
+  // 另一顆沒有關係的提交：宣告了相依（受審版本本身沒有）。用 replace 把受審版本換成它
+  writeFileSync(join(repo.dir, 'package.json'), '{"devDependencies":{"x":"1"}}');
+  git(repo.dir, ['add', 'package.json']);
+  const other = git(repo.dir, ['commit-tree', git(repo.dir, ['write-tree']), '-m', 'other']);
+  git(repo.dir, ['checkout', '-q', '--', 'package.json']);
+  git(repo.dir, ['reset', '-q']);
+  git(repo.dir, ['replace', repo.head, other]);
+  assert.match(git(repo.dir, ['show', `${repo.head}:package.json`]), /devDependencies/, '考題前提：replace 沒生效');
+  const r = await run({ base: repo.base, head: repo.head, repo: repo.dir });
+  assert.ok(passedPreBox(r), `讀到被替換的內容了（宣告相依、沒有 node_modules 而退）：${r.text}`);
+});
+
+test('不分大小寫的磁碟上，受審版本根目錄有一項跟工作樹的 node_modules 是同一個東西（例如提交 NODE_MODULES 捷徑）＝建盒前退 2', async (t) => {
+  const git = (/** @type {string} */ dir, /** @type {string[]} */ a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', env: CLEAN_ENV }).trim();
+  const repo = tinyRepo({ nodeModules: false });
+  const elsewhere = join(keep(mkdtempSync(join(tmpdir(), 'steer-'))), 'node_modules');
+  mkdirSync(elsewhere);
+  execFileSync('ln', ['-s', elsewhere, join(repo.dir, 'NODE_MODULES')]);
+  let folded = false;
+  try { lstatSync(join(repo.dir, 'node_modules')); folded = true; } catch { /* 分大小寫的磁碟 */ }
+  if (!folded) { t.skip('這台磁碟分大小寫：NODE_MODULES 跟 node_modules 是兩個東西，這一題的前提不成立'); return; }
+  writeFileSync(join(repo.dir, '.gitattributes'), 'NODE_MODULES export-ignore\n');
+  git(repo.dir, ['add', '.gitattributes', 'NODE_MODULES']);
+  git(repo.dir, ['commit', '-q', '-m', 'steer']);
+  const head = git(repo.dir, ['rev-parse', 'HEAD']);
+  const r = await run({ base: repo.head, head, repo: repo.dir });
+  assert.equal(r.code, 2, r.text);
+  assert.match(r.text, /跟 node_modules 是同一個東西/);
+  assert.ok(!passedPreBox(r));
+});
+
 test('needsInstall：dependencies 扣掉 optional 同名、加上 devDependencies；peer、optional、打包欄不算；形狀怪的不當成沒有', () => {
   assert.equal(needsInstall({}), false);
   assert.equal(needsInstall({ dependencies: {}, devDependencies: {}, bundleDependencies: ['a'] }), false);
@@ -230,7 +265,7 @@ test('指令列：--repo=… 與 --repo 給兩次＝退 2（不默默掃回本�
   }
 });
 
-test('結構題：沙箱參數只有那三組（要掃的倉庫、設定、參數一個都進不去）；每一個 git 呼叫都清環境；指令列把 repo 傳進 runScan、不傳 deps', () => {
+test('結構題：沙箱參數只有那三組（要掃的倉庫、設定、參數一個都進不去）；每一個 git 呼叫都清環境、都帶 --no-replace-objects；指令列把 repo 傳進 runScan、不傳 deps', () => {
   const src = readFileSync(join(ROOT, 'scripts', 'grok-scan.js'), 'utf8');
   const sb = src.match(/const sbArgv = \[([^\]]*)\];/g) ?? [];
   assert.equal(sb.length, 1, '應該剛好一行 sbArgv');
@@ -238,6 +273,7 @@ test('結構題：沙箱參數只有那三組（要掃的倉庫、設定、參�
   const gits = src.split('\n').filter((l) => /spawnSync\('git'/.test(l));
   assert.ok(gits.length >= 10, `只找到 ${gits.length} 個 git 呼叫——掃描範圍不對`);
   for (const l of gits) assert.match(l, /env: gitEnv\(\)/, `這個 git 呼叫沒清環境（鐵則 11）：${l.trim().slice(0, 120)}`);
+  for (const l of gits) assert.match(l, /spawnSync\('git', \['--no-replace-objects', /, `這個 git 呼叫沒帶 --no-replace-objects（refs/replace 會把 head 換成別的內容）：${l.trim().slice(0, 120)}`);
   const cli = src.slice(src.lastIndexOf('if (isMainModule(import.meta.url))'));
   assert.match(cli, /await runScan\(\{ base, head, promptFile, outFile, repo \}\);/, '指令列要把 repo 傳進 runScan、而且只傳一個參數（不傳 deps）');
 });
