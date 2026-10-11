@@ -231,6 +231,7 @@
 - `test/store-rules.test.js`
 - `test/taishin-debit-card.test.js`（Stage 5a：A 區刷卡消費明細讀出＋對到 D 區）
 - `test/taishin-debit.test.js`（第二個內建範本＝簽帳金融卡明細）
+- `test/tcb-transfer-statement.test.js`（合庫電子化轉帳：合成 PDF 與隔離匯入）
 - `test/upload-progress.test.js`（進度串流的機密/誠實/序列三鐵則與 NDJSON 契約）
 
 ### 投資與 SEC

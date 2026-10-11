@@ -5,6 +5,8 @@
 
 帳單格式的合成輸入、手寫答案、重跑方式與驗證限制，見[既有帳單格式回歸基準](statement-format-baseline.md)。
 
+合庫電子化轉帳由 `test/tcb-transfer-statement.test.js` 覆蓋正式 PDF 抽字、座標分欄／分行、拒收、隔離庫預覽唯讀／套用／重匯與舊值保存；範圍與限制見[合庫施工計畫](tcb-transfer-statement-plan.md)。合成多筆跨頁不是銀行全版型驗證，亦未替缺逐筆餘額的帳單補造驗算依據。
+
 ## 怎麼執行
 
 ```bash

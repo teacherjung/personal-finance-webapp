@@ -835,6 +835,7 @@ const MANIFEST = {
       'test/store-rules.test.js',
       'test/taishin-debit-card.test.js',   // Stage 5a：A 區刷卡消費明細的讀出與對照
       'test/taishin-debit.test.js',
+      'test/tcb-transfer-statement.test.js',
       'test/upload-progress.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
     ],
   },
