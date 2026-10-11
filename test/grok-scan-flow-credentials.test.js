@@ -171,6 +171,8 @@ test('runScan｜r6 #6：DLP 針按欄位取、不按內容形狀——email／�
     const inst = fakeGrok({ reply: 'owner is fake-owner@example.test' });
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
     assert.equal(r.code, 1, `email 外流沒被當事故：${r.summary.join('\n')}`);
+    assert.match(r.summary.join('\n'), /（欄位：email）/, '事故訊息沒寫出是 email 那一欄');
+    assert.ok(!r.summary.join('\n').includes('fake-owner@example.test'), '事故訊息帶出了值本身');
   }
   // ② 以 ISO 日期開頭的 credential（r5 會被「時間戳形狀」排除）→ 現在按欄位取，照抓
   {
@@ -194,6 +196,7 @@ test('runScan｜r6 #6：DLP 針按欄位取、不按內容形狀——email／�
     const inst = fakeGrok({ reply: 'team 7777aaaa-5d15-4f01-9a1e-2d9cb2f1f222' });
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
     assert.equal(r.code, 1, `team_id 外流沒被當事故：${r.summary.join('\n')}`);
+    assert.match(r.summary.join('\n'), /（欄位：team_id）/, '事故訊息沒寫出是 team_id 那一欄');
   }
   // ⑥ 針不在材料（diff）裡、但在 head 樹裡（例：名字在 AGENTS.md）→ 也剔除；回覆含它 → 0（空 diff 煙霧測試實際踩到）
   {

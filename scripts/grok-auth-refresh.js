@@ -88,6 +88,36 @@ export function authNeedles(authJson) {
 }
 
 /**
+ * 每一根 DLP 針來自哪個**欄位名**（只回鍵名、不回值）：事故時寫進訊息與指紋包，讓人知道外流的是哪一欄
+ * （例如 email 跟 refresh_token 的嚴重度差很多）。鍵名是真檔的結構、不是機密；巢狀的用「外層.內層」、陣列用 [序號]。
+ * 跟 authNeedles 用同一套取法（給了盒子的值不算、枚舉欄位不算），所以兩邊的針集合一樣（#83 借用掃描事故後擁有者裁：先改程式再重掃）。
+ * @param {Record<string, Record<string, unknown>>} authJson
+ * @returns {Map<string, string[]>} 針的值 → 它出現過的欄位名（排序、去重）
+ */
+export function authNeedleFields(authJson) {
+  /** @type {Map<string, Set<string>>} */ const where = new Map();
+  /** @type {Set<string>} */ const givenToBox = new Set();
+  const walk = (/** @type {unknown} */ v, /** @type {string} */ path, /** @type {boolean} */ toBox) => {
+    if (typeof v === 'string') {
+      if (!v) return;
+      if (toBox) givenToBox.add(v);
+      else { if (!where.has(v)) where.set(v, new Set()); /** @type {Set<string>} */ (where.get(v)).add(path); }
+    } else if (Array.isArray(v)) v.forEach((x, i) => walk(x, `${path}[${i}]`, toBox));
+    else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walk(x, `${path}.${k}`, toBox);
+  };
+  for (const cred of Object.values(authJson)) {
+    if (!cred || typeof cred !== 'object') continue;
+    for (const [k, v] of Object.entries(cred)) {
+      if (Object.hasOwn(BOX_FIELDS, k)) walk(v, k, true);
+      else if (!ENUM_FIELDS.includes(k)) walk(v, k, false);
+    }
+  }
+  /** @type {Map<string, string[]>} */ const out = new Map();
+  for (const [v, paths] of where) if (!givenToBox.has(v)) out.set(v, [...paths].sort());
+  return out;
+}
+
+/**
  * 讀沙箱專用 auth.json，若快到期就 refresh 並原子寫回；回傳**給盒子用的版本**（白名單重建＋假 key）。
  * @param {string} authDir
  * @param {{ fetchImpl?: typeof fetch, now?: () => number, earlySecs?: number, log?: (m: string) => void, pins?: { issuer: string, clientId: string }, dummyBearer?: string }} [opt]

@@ -114,7 +114,10 @@ test('incident.json｜三族的欄位是**白名單**：DLP 與暗號族連雜�
   const { json, raw } = readIncident(iso.resultsRoot);
   const dlp = json.hits.filter((/** @type {{family: string}} */ h) => h.family === 'dlp');
   assert.ok(dlp.length >= 1, '沒有 dlp 族的命中——這一題量不到東西');
-  for (const h of dlp) assert.deepEqual(Object.keys(h).sort(), ['family', 'len', 'where'], 'DLP 族多了不該有的欄位（雜湊／上下文都算）');
+  // 「fields」只有登入檔的鍵名（#83 借用掃描事故後擁有者裁：事故要寫得出是哪一欄），不是值、也不是值的衍生物
+  for (const h of dlp) assert.deepEqual(Object.keys(h).sort(), ['family', 'fields', 'len', 'where'], 'DLP 族多了不該有的欄位（雜湊／上下文都算）');
+  for (const h of dlp) assert.deepEqual(h.fields, ['key'], '命中的欄位名不對');
+  assert.match(r.summary.join('\n'), /去機密：grok 的回覆裡出現真 auth\.json 裡沒給盒子的值（欄位：key）/, '事故訊息沒寫出欄位名');
   assert.equal(raw.includes(REAL), false, '指紋包裡有真 token 原文');
 });
 
@@ -158,7 +161,7 @@ test('incident.json｜同一次掃描兩族都中刀時，族別不可以被標�
   const { json } = readIncident(iso.resultsRoot);
   const fams = new Set(json.hits.map((/** @type {{family: string}} */ h) => h.family));
   assert.ok(fams.has('dlp') && fams.has('shape'), `兩族沒有各自標到：${[...fams].join('、')}`);
-  for (const h of json.hits.filter((/** @type {{family: string}} */ x) => x.family === 'dlp')) assert.deepEqual(Object.keys(h).sort(), ['family', 'len', 'where']);
+  for (const h of json.hits.filter((/** @type {{family: string}} */ x) => x.family === 'dlp')) assert.deepEqual(Object.keys(h).sort(), ['family', 'fields', 'len', 'where']);
   for (const h of json.hits.filter((/** @type {{family: string}} */ x) => x.family === 'shape')) assert.ok(h.sha256 && h.context, '形狀族少了判定要用的欄位');
 });
 

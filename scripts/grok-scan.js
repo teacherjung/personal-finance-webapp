@@ -56,7 +56,7 @@ import { fileURLToPath } from 'node:url';
 import { runCanary, sandboxEnv, PROFILE, RELAY_PORT, BOX_ROOT } from './grok-sandbox-canary.js';
 import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
 import { gitEnv } from '../lib/git-env.js';
-import { refreshSandboxAuth, authNeedles } from './grok-auth-refresh.js';
+import { refreshSandboxAuth, authNeedles, authNeedleFields } from './grok-auth-refresh.js';
 import { REFUSED_PREFIX, isToleratedRefusal } from './grok-relay.js';
 import { isMainModule } from '../lib/is-main.js';
 
@@ -714,6 +714,8 @@ export async function runScan(args, deps = {}) {
   let scrubSecrets = [];
   /** DLP 針的**各種序列化表示**；偵測（`leaksIn`）與清洗共用這一份。組法見下面 needles 定稿處。 @type {string[]} */
   let needleForms = [];
+  /** 每個表示對應的欄位名（只有鍵名、沒有值）：事故時寫出命中的是哪一欄。組法見 needles 定稿處。 @type {{ form: string, fields: string[] }[]} */
+  let needleFormFields = [];
   /**
    * ⚠️ **算區間再合併，不是逐個替換**。逐個替換擋不住自我重疊的機密：
    *   機密是 16 個 A、文字裡有 24 個 A 時，換掉第一個起點之後**剩下的 8 個 A 本身不構成完整機密**，
@@ -1083,10 +1085,13 @@ export async function runScan(args, deps = {}) {
 
   // ── DLP 針：真 auth.json 裡沒給盒子的值（r6 #6：讀不到＝退 2，不是空集合放行；按欄位排除、不按內容形狀）──
   /** @type {string[]} */ let needles;
+  /** @type {Map<string, string[]>} */ let needleFieldsOf = new Map();
   try {
     const p = join(authDir, 'auth.json');
     if (!lstatSync(p).isFile()) throw new Error('不是 regular file');
-    needles = authNeedles(JSON.parse(readFileSync(p, 'utf8')));
+    const authObj = JSON.parse(readFileSync(p, 'utf8'));
+    needles = authNeedles(authObj);
+    needleFieldsOf = authNeedleFields(authObj);
   // ⚠️ 這一格也在字典就緒**之前**（針就是這裡讀出來的）：不可以把 `e.message` 原樣往外送——
   //   JSON 解析失敗時它會帶出檔案內容的前綴。只回錯誤的**類別**（SyntaxError／檔案系統錯誤碼）。
   //   ⚠️ 這不是「走不到」（我一度那樣記，錯的）：`refreshSandboxAuth` 讀一次、這裡再讀一次，
@@ -1127,6 +1132,7 @@ export async function runScan(args, deps = {}) {
       needleForms = needles.flatMap((n) => escapeForms(n)).filter((v) => !materials.includes(v) && !inTree(v));
     } catch (e) { return failAndClean(`DLP：查表示是否已在公開材料裡時失敗：${/** @type {Error} */ (e).message}`); }
     scrubSecrets = [...scrubSecrets, ...needleForms];
+    needleFormFields = needles.flatMap((n) => escapeForms(n).filter((v) => needleForms.includes(v)).map((v) => ({ form: v, fields: needleFieldsOf.get(n) ?? [] })));
     if (!needles.length) return failAndClean('DLP：沒有任何可用的針——不掃');
   }
 
@@ -1228,6 +1234,9 @@ export async function runScan(args, deps = {}) {
   try { snap = readSessionsOnce(sessionsRoot); }
   catch (e) { return failAndClean(`驗屍：sessions 讀不完（${/** @type {Error} */ (e).message}）——超過上限＝不保存`); }
   const leaksIn = (/** @type {string} */ text) => needleForms.some((v) => text.includes(v));
+  /** 命中的是登入檔裡哪幾個欄位名（只有鍵名、沒有值；#83 借用掃描事故後擁有者裁「先改程式再重掃」）。 */
+  const leakFields = (/** @type {string} */ text) => [...new Set(needleFormFields.filter((f) => text.includes(f.form)).flatMap((f) => f.fields))].sort();
+  const fieldNote = (/** @type {string[]} */ f) => (f.length ? `（欄位：${f.join('、')}）` : '');
   /**
    * Grok 可控的字串（session 相對路徑、odd 的項目名）要先過濾再放進 summary／指紋包：
    * 它可以用「檔名就是暗號」的方式，靠一個回聲把內容送進**公開的** PR 描述。
@@ -1286,7 +1295,7 @@ export async function runScan(args, deps = {}) {
   /**
    * 事故命中清單（取代舊的 `let worst = 0`）。留著結構是為了在 `return` 之前寫出指紋包——
    * 舊寫法只留一個布林，於是「哪一族、在哪個檔、長什麼樣」全部隨函式返回一起蒸發。
-   * @type {{ family: 'live'|'shape'|'dlp'|'odd', where: string, len: number, charOffset?: number,
+   * @type {{ family: 'live'|'shape'|'dlp'|'odd', where: string, len: number, fields?: string[], charOffset?: number,
    *          profile?: ReturnType<typeof hitProfile>, nearest?: ReturnType<typeof nearestKnown>,
    *          sha256?: string, context?: string }[]}
    */
@@ -1411,7 +1420,7 @@ export async function runScan(args, deps = {}) {
   // ⚠️ 誠實劃界：這擋的是「明文出現在輸出裡」；編碼／拆段過的擋不住。broker 之後真 token 從未進盒子，這一段是 defense-in-depth。
   // ⚠️ DLP 與暗號兩族**只記族別與位置，不記雜湊、不記上下文**：它們的命中值由構造已知
   //    （就是 needles[i]／liveSecret），寫衍生物不增加任何判斷力，卻等於把它們的可查表表示留上磁碟。
-  if (leaksIn(reply)) { const m = '⚠️ 去機密：grok 的回覆裡出現真 auth.json 裡沒給盒子的值——不寫 --out、不留日誌；這是事故'; say(m); incidentHits.push({ family: 'dlp', where: 'reply', len: 0 }); }
+  if (leaksIn(reply)) { const f = leakFields(reply); const m = `⚠️ 去機密：grok 的回覆裡出現真 auth.json 裡沒給盒子的值${fieldNote(f)}——不寫 --out、不留日誌；這是事故`; say(m); incidentHits.push({ family: 'dlp', where: 'reply', len: 0, fields: f }); }
   // 回覆也跑破口線索（Grok 第一次正式掃描抓到：原本只掃 session 檔，盒外內容只寫進最終回覆就退 0 並寫 --out）
   {
     const b = breachHits(reply);
@@ -1423,13 +1432,13 @@ export async function runScan(args, deps = {}) {
     {
       const nb = breachHits(rp);
       if (nb.live.length || nb.shape.length) { say(`⚠️ 驗屍：session 檔名 ${redactPath(rp)} 帶著盒子外才有的內容——沙箱破了，這是事故${brief(nb)}`); collectBreach(nb, redactPath(rp)); }
-      if (leaksIn(rp)) { say(`⚠️ 去機密：session 檔名 ${redactPath(rp)} 裡出現真 auth.json 裡沒給盒子的值——不留日誌；這是事故`); incidentHits.push({ family: 'dlp', where: redactPath(rp), len: 0 }); }
+      if (leaksIn(rp)) { const f = leakFields(rp); say(`⚠️ 去機密：session 檔名 ${redactPath(rp)} 裡出現真 auth.json 裡沒給盒子的值${fieldNote(f)}——不留日誌；這是事故`); incidentHits.push({ family: 'dlp', where: redactPath(rp), len: 0, fields: f }); }
     }
     let text; try { text = dec.decode(buf); } catch { binaries.push(rp); continue; }   // 非 UTF-8＝驗不了＝**不保存**，不是事故
     const b = breachHits(text);
     // ⚠️ 路徑是 Grok 取的，兩條訊息都會被抄進**公開的** PR 描述 ⇒ 回聲之前一律過同一把尺
     if (b.live.length || b.shape.length) { const m = `⚠️ 驗屍：session 檔 ${redactPath(rp)} 出現盒子外才有的內容——沙箱破了，這是事故${brief(b)}`; say(m); collectBreach(b, redactPath(rp)); }
-    if (leaksIn(text)) { const m = `⚠️ 去機密：session 檔 ${redactPath(rp)} 裡出現真 auth.json 裡沒給盒子的值——不留日誌；這是事故`; say(m); incidentHits.push({ family: 'dlp', where: redactPath(rp), len: 0 }); }
+    if (leaksIn(text)) { const f = leakFields(text); const m = `⚠️ 去機密：session 檔 ${redactPath(rp)} 裡出現真 auth.json 裡沒給盒子的值${fieldNote(f)}——不留日誌；這是事故`; say(m); incidentHits.push({ family: 'dlp', where: redactPath(rp), len: 0, fields: f }); }
   }
   if (binaries.length) log(`（結果包略過 ${binaries.length} 個非 UTF-8 檔——驗不了就不保存：${binaries.slice(0, 3).map((f) => redactPath(f.split('/').pop() ?? f)).join('、')}）`);
   if (incidentHits.length) return writeIncidentAndStop();
