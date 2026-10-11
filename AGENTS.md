@@ -22,7 +22,7 @@
 | 動 Notion | [Notion 操作手冊](docs/notion-spec-playbook.md) |
 | 查協作機器與專案登記 | [MACHINES.md](MACHINES.md)、[PROJECT-SETTINGS.md](PROJECT-SETTINGS.md)；設定正本 `settings.json` |
 
-- 回報與進度摘要依 RULES J1、J2、J5 與 `templates/progress-report.md`；本專案多的與沿革在協作附則「回報」節；適用實作者、複審者與發審者。
+- 回報依 RULES J1、J2 與 `templates/progress-report.md`，進度摘要依 J5；本專案多的與沿革在協作附則「回報」節；適用實作者、複審者與發審者。
 - 複審後掃依 RULES G1–G4 與協作附則；沒有合併閘檢查是否完成，掃描發射者須自行確認並留紀錄。
 - 發現另一位實作者留下未提交的改動，先審查再提交，提交訊息以 `Co-Authored-By` 標明原作者。
 - 不要在工作樹裡刪除或重裝 `node_modules` 的內容；正式審查的 symlink 一律由實作者備樹時處理。細節與收樹步驟依協作附則。
