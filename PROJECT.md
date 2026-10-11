@@ -34,6 +34,9 @@
 4. D5 第二批剩餘：①股息換算 ②大盤基準（皆比③重，②需新增大盤資料源） — **未分配**
 5. （遠期）電子發票載具 API 即時預算系統（財政部 API，需申請；見「重要決定」） — **未分配**
 
+- **銀行收支窄桌機明細捲動**：`public/styles.css` 的桌機 `.cashflow-ledger table` 最小寬度會讓約 1300px 視窗出現表格內水平捲動；若 William 驗收時覺得妨礙查帳，再調整最小寬度。
+- **信用卡費桌機現金流說明**：`public/modules/transactions.js` 的桌機副標依指定文案不再就地說明信用卡費不計入現金流；若 William 後續要求此頁保留概念說明，再設計獨立說明入口。
+
 ## 重要決定（已拍板，勿重議）
 
 - **銀行收支文案裁示（2026-10-05）**：#655 r3 第 6 項所指的 `「收支說明」是什麼？` 跳窗已由 #657 移除；William 回「A」，同意結清該文案審改項（[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/655#issuecomment-5987417002)）。第 7 項選擇保留面向使用者的「帳單原文」用詞（[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/655#issuecomment-5987477663)）。**以下為 Codex 的操作化與技術劃界**：這不代表逐字保留空白；部分解析路徑會整理空白，技術文件與型別註解已改以「保存解析結果」及實際用途說明，完成紀錄見[後續補強 #664](https://github.com/teacherjung/personal-finance-webapp/pull/664)。銀行收支另依 William 回報記錄[使用者驗收完成](https://github.com/teacherjung/personal-finance-webapp/pull/657#issuecomment-5987477941)，該驗收對應原畫面變更；r3 前五項技術待辦另由上述後續補強處理，未將其自動算成使用者驗收。
