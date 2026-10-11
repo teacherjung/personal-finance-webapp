@@ -403,6 +403,7 @@ test('node_modules 的捷徑連到盒子外＝退 2、結果包不留：頂層�
     ['盒內 @範圍 捷徑底下的項目連到盒子外', (nm) => { mkdirSync(join(nm, '.store', '@scope'), { recursive: true }); execFileSync('ln', ['-s', outside, join(nm, '.store', '@scope', 'pkg')]); execFileSync('ln', ['-s', join('.store', '@scope'), join(nm, '@scope')]); }],
     ['解不開的絕對路徑', (nm) => execFileSync('ln', ['-s', join(outside, 'does-not-exist'), join(nm, 'eslint')])],
     ['字面在盒子裡、經過更深一層的捷徑繞到盒子外', (nm) => { mkdirSync(join(nm, '.store')); execFileSync('ln', ['-s', outside, join(nm, '.store', 'x')]); execFileSync('ln', ['-s', join('.store', 'x'), join(nm, 'eslint')]); }],
+    ['@範圍 是盒內捷徑、子捷徑的相對路徑接在真實位置後落到盒子外（#675 r5 鏡像那一題）', (nm) => { mkdirSync(join(nm, '.store', 'deep', '@scope'), { recursive: true }); execFileSync('ln', ['-s', join('..', '..', '..', '..', '..', 'eslint'), join(nm, '.store', 'deep', '@scope', 'pkg')]); execFileSync('ln', ['-s', join('.store', 'deep', '@scope'), join(nm, '@scope')]); }],
   ])) {
     const repo = tinyRepo({ nodeModules: false, packageJson: '{"devDependencies":{"eslint":"1.0.0"}}' });
     const nm = join(repo.dir, 'node_modules'); mkdirSync(nm);
@@ -435,6 +436,7 @@ test('不擋的：盒內的相對捷徑、點開頭的 @範圍、optional 同名
   for (const [label, pkg, build, missingLine] of /** @type {[string, string, (nm: string) => void, boolean][]} */ ([
     ['盒內的相對捷徑（pnpm 那種形狀）', '{"devDependencies":{"eslint":"1.0.0"}}', (nm) => { real(join(nm, '.pnpm', 'eslint')); execFileSync('ln', ['-s', join('.pnpm', 'eslint'), join(nm, 'eslint')]); }, false],
     ['盒內的 @範圍 捷徑、底下是真目錄', '{"devDependencies":{"@scope/pkg":"1.0.0"}}', (nm) => { real(join(nm, '.store', '@scope', 'pkg')); execFileSync('ln', ['-s', join('.store', '@scope'), join(nm, '@scope')]); }, false],
+    ['@範圍 是盒內捷徑、子捷徑用相對路徑指回盒內套件（#675 r5 Codex）', '{"devDependencies":{"@scope/pkg":"1.0.0","eslint":"1.0.0"}}', (nm) => { real(join(nm, 'eslint')); mkdirSync(join(nm, '.store', 'deep', '@scope'), { recursive: true }); execFileSync('ln', ['-s', join('..', '..', '..', 'eslint'), join(nm, '.store', 'deep', '@scope', 'pkg')]); execFileSync('ln', ['-s', join('.store', 'deep', '@scope'), join(nm, '@scope')]); }, false],
     ['點開頭的 @範圍（npm 接受，#675 r4 Codex）', '{"devDependencies":{"@.scope/pkg":"npm:x@1","eslint":"1.0.0"}}', (nm) => { real(join(nm, '@.scope', 'pkg')); real(join(nm, 'eslint')); }, false],
     ['optional 同名覆寫而沒裝', '{"dependencies":{"addon":"1"},"optionalDependencies":{"addon":"1"},"devDependencies":{"eslint":"1.0.0"}}', (nm) => real(join(nm, 'eslint')), false],
     ['劃界：少了宣告的 eslint、有別的套件', '{"devDependencies":{"eslint":"1.0.0","other":"1.0.0"}}', (nm) => real(join(nm, 'other')), false],

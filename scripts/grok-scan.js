@@ -1030,7 +1030,11 @@ export async function runScan(args, deps = {}) {
       /** @returns {'ok' | 'missing' | 'outside'} */
       const classify = (/** @type {string} */ p) => {
         if (!lstatSync(p).isSymbolicLink()) return 'ok';
-        if (!under(resolve(dirname(p), readlinkSync(p)))) return 'outside';
+        // 相對目標接在「放這個捷徑的目錄的真實位置」上算（@範圍 本身是盒內捷徑時，它底下的子捷徑才不會被接到虛擬的父路徑上——#675 r5 Codex）；
+        // 那個目錄的真實位置解不開＝跟「盒內解不開的捷徑」同一條，不另加分支
+        /** @type {string} */ let parent;
+        try { parent = realpathSync(dirname(p)); } catch { return 'missing'; }
+        if (!under(resolve(parent, readlinkSync(p)))) return 'outside';
         try { return under(realpathSync(p)) ? 'ok' : 'outside'; } catch { return 'missing'; }
       };
       let outside = 0; let missing = 0;
