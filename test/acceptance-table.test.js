@@ -183,7 +183,10 @@ test('⭐ 待裁清單與驗收分級都不是閘：CI 設定、pre-push、packa
   const pendingGate = settings.gates.find((g) => [g.command, ...(g.args ?? [])].join(' ').includes(PENDING_GATE));
   assert.ok(pendingGate, `${PENDING_GATE} 在磁碟上卻沒有登記——套件的閘登記對帳題會紅，這裡的例外也找不到對象`);
   assert.notEqual(pendingGate.state, '已啟用', '待裁閘登記成已啟用了：要啟用請連這一題的例外一起改（Fable 代裁 R4 的條件）');
-  assert.notEqual(settings.machines.find((m) => m.name.startsWith('待裁閘'))?.state, '已啟用', '機器表的待裁閘是已啟用：要啟用請連這一題一起改');
+  // 先確定那一列在、而且只有一列（#672 Grok 掃描第 4 題：改名或拿掉時下一行比的是 undefined、永遠綠）
+  const pendingRows = settings.machines.filter((m) => m.name.startsWith('待裁閘'));
+  assert.equal(pendingRows.length, 1, '機器表要剛好一列以「待裁閘」開頭——改名或拿掉了就連這一題一起改，不然下一行比的是 undefined、永遠綠');
+  assert.notEqual(pendingRows[0].state, '已啟用', '機器表的待裁閘是已啟用：要啟用請連這一題一起改');
   assert.ok(gateFiles.length >= 5, `tools/gates 只列到 ${gateFiles.length} 支——掃不到閘本體，這題變空包彈`);
   for (const f of [...workflows, 'scripts/git-hooks/pre-push', 'tools/merge.js', 'tools/run-checks.js', ...gateFiles]) {
     const txt = read(f);
