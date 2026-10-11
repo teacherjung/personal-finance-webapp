@@ -51,7 +51,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, mkdirSync, chmodSync, openSync, fstatSync, readSync, closeSync, constants as fsConst } from 'node:fs';
 import { createServer } from 'node:net';
 import { homedir } from 'node:os';
-import { join, resolve, dirname, basename } from 'node:path';
+import { join, resolve, dirname, basename, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runCanary, sandboxEnv, PROFILE, RELAY_PORT, BOX_ROOT } from './grok-sandbox-canary.js';
 import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
@@ -126,15 +126,18 @@ export function declaresDeps(pkg) {
 
 /**
  * 盒子裡一定要有的套件：dependencies 與 devDependencies 列的名字（考題要用到的那兩種）。
- * optional／peer 不算（沒裝也可能是正常的）；欄位不是物件就不列（有沒有 node_modules 那一道另外由 declaresDeps 管）。
+ * optional／peer 不算（沒裝也可能是正常的）；optionalDependencies 也列了的同名項不算（npm：同名的 optional 覆寫 dependencies、可以不裝——#675 r3 Codex）；
+ * 欄位不是物件就不列（有沒有 node_modules 那一道另外由 declaresDeps 管）。
  * @param {Record<string, unknown>} pkg
  * @returns {string[]}
  */
 export function requiredDeps(pkg) {
+  const opt = pkg.optionalDependencies;
+  const optional = new Set(opt && typeof opt === 'object' && !Array.isArray(opt) ? Object.keys(opt) : []);
   /** @type {string[]} */ const out = [];
   for (const k of ['dependencies', 'devDependencies']) {
     const v = pkg[k];
-    if (v && typeof v === 'object' && !Array.isArray(v)) out.push(...Object.keys(v));
+    if (v && typeof v === 'object' && !Array.isArray(v)) out.push(...Object.keys(v).filter((n) => !optional.has(n)));
   }
   return [...new Set(out)];
 }
@@ -1035,9 +1038,19 @@ export async function runScan(args, deps = {}) {
       try { want = readdirSync(nmReal).sort(); got = readdirSync(join(src, 'node_modules')).sort(); }
       catch (e) { return failAndClean(`盒子裡的 node_modules 判斷不了（${errCode(e)}）`); }
       if (want.length !== got.length || want.some((n, i) => n !== got[i])) return failAndClean('盒子裡的 node_modules 跟來源不一樣（clone 沒複製完整？）');
-      // 宣告的套件都要在（只看這一層有沒有這個名字、不跟隨捷徑；名字建盒前已驗過形狀）
-      const missing = mustHave.filter((n) => { try { lstatSync(join(src, 'node_modules', n)); return false; } catch { return true; } });
-      if (missing.length) return failAndClean(`盒子裡的 node_modules 少了受審版本 package.json 宣告的 ${missing.length} 個套件（安裝沒完成？）——先裝好再掃`);
+      // 宣告的套件都要在盒子裡解析得到（名字建盒前已驗過形狀）：真目錄＝在；捷徑要解得開、而且解完還在盒子裡
+      // （失效的捷徑＝沒裝好，#675 r3 Codex；指到盒子外＝沙箱裡讀不到）。只解路徑、不讀捷徑目標的內容。
+      /** @type {string} */ let srcReal;
+      try { srcReal = realpathSync(src); } catch (e) { return failAndClean(`盒子判斷不了（${errCode(e)}）`); }
+      const missing = mustHave.filter((n) => {
+        const p = join(src, 'node_modules', n);
+        try {
+          if (!lstatSync(p).isSymbolicLink()) return false;
+          const r = realpathSync(p);
+          return !(r === srcReal || r.startsWith(srcReal + sep));
+        } catch { return true; }
+      });
+      if (missing.length) return failAndClean(`盒子裡的 node_modules 少了受審版本 package.json 宣告的 ${missing.length} 個套件（沒裝、失效的捷徑或指到盒子外；安裝沒完成？）——先裝好再掃`);
     } else log('（要掃的倉庫沒有宣告相依套件、也沒有 node_modules：盒子裡不放 node_modules）');
     for (const forbidden of ['data/store.db', 'data/store.json', '.env', '.env.local']) {
       if (existsSync(join(src, forbidden))) return failAndClean(`盒子裡出現不該有的檔：${forbidden}——git archive 不該帶出它，先查 .gitignore`);

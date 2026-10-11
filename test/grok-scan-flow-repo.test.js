@@ -15,7 +15,8 @@
 // ・套得上沙箱的 macOS 才跑：沒有相依的倉庫整條走到退 0；假 grok 收到的參數有 --model <設定的最強模型> --reasoning-effort <設定的最高推理>；
 //   配方聲明與 launch.json 寫了受掃倉庫、指定模型、推理、掃描程式的雜湊；沙箱參數裡沒有要掃的倉庫路徑；
 //   node_modules 捷徑指到不叫 node_modules 的資料夾＝退 2、結果包不留；相依已備齊、沒有 ESLint 的倉庫建得出盒子（不在 node_modules 那步退）；
-//   node_modules 是空的而 package.json 宣告了相依＝退 2、結果包不留，零相依的空 node_modules 不擋（#675 r2 Codex）。
+//   node_modules 是空的而 package.json 宣告了相依＝退 2、結果包不留，零相依的空 node_modules 不擋（#675 r2 Codex）；
+//   宣告的套件是失效的捷徑或指到盒子外＝退 2，盒內的相對捷徑、optional 同名覆寫而沒裝＝不擋（#675 r3 Codex）。
 // ⚠️ 守不到的：真的 grok 收到 --model／--reasoning-effort 之後實際用了哪一個（假 grok 只回聲參數；真的那一半看正式掃描的配方聲明「指定模型」與「模型」兩格）。
 // ⚠️ 守不到的：盒子裡 node_modules 第一層跟來源對不上那一道——cp 退 0 卻少複製的情形造不出來，沒有考題（cp 退非 0 那一道有）。
 import { test, after } from 'node:test';
@@ -145,9 +146,11 @@ test('declaresDeps：空物件、空陣列不算；有內容就算', () => {
   assert.equal(declaresDeps({ dependencies: false }), true, '不是打包那兩欄的布林照舊不當成沒有');
 });
 
-test('requiredDeps：dependencies 與 devDependencies 的名字（去重）；optional、peer、打包欄、形狀怪的不列', () => {
+test('requiredDeps：dependencies 與 devDependencies 的名字（去重）；optional、peer、打包欄、形狀怪的不列；optional 同名覆寫的不列', () => {
   assert.deepEqual(requiredDeps({ dependencies: { a: '1', '@s/b': '1' }, devDependencies: { a: '2', c: '1' }, optionalDependencies: { o: '1' }, peerDependencies: { p: '1' }, bundleDependencies: ['a'] }), ['a', '@s/b', 'c']);
   assert.deepEqual(requiredDeps({ dependencies: ['a'], devDependencies: 'weird' }), []);
+  assert.deepEqual(requiredDeps({ dependencies: { addon: '1', a: '1' }, devDependencies: { eslint: '1' }, optionalDependencies: { addon: '1' } }), ['a', 'eslint'], 'optional 同名覆寫的不算必備');
+  assert.deepEqual(requiredDeps({ dependencies: { a: '1' }, optionalDependencies: ['a'] }), ['a'], 'optional 欄位形狀怪的不拿來排除');
   assert.deepEqual(requiredDeps({}), []);
 });
 
@@ -373,5 +376,36 @@ test('node_modules 是空的（安裝沒完成）而受審版本宣告了相依�
   const ok = await runScan({ base: none.base, head: none.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: none.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('die-before-ready') });
   assert.doesNotMatch(ok.summary.join('\n'), /node_modules/, `零相依的空 node_modules 被擋：${ok.summary.join(' / ')}`);
   assert.match(ok.summary.join('\n'), /轉送器/);
+});
+
+test('宣告的套件要在盒子裡解析得到：失效的捷徑、指到盒子外的捷徑＝退 2、結果包不留；盒內的相對捷徑、optional 同名覆寫而沒裝＝不擋', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const outside = keep(mkdtempSync(join(tmpdir(), 'outside-pkg-')));
+  for (const [label, target] of /** @type {[string, string][]} */ ([['失效的捷徑', 'does-not-exist'], ['指到盒子外', outside]])) {
+    const repo = tinyRepo({ nodeModules: false, packageJson: '{"devDependencies":{"eslint":"1.0.0"}}' });
+    mkdirSync(join(repo.dir, 'node_modules'));
+    execFileSync('ln', ['-s', target, join(repo.dir, 'node_modules', 'eslint')]);
+    const iso = isolated();
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 2, `${label}：${r.summary.join(' / ')}`);
+    assert.match(r.summary.join('\n'), /少了受審版本 package\.json 宣告的 1 個套件/, label);
+    assert.deepEqual(readdirSync(iso.resultsRoot), [], `${label}：退 2 時結果包要整個不留`);
+  }
+  for (const [label, pkg, build] of /** @type {[string, string, (nm: string) => void][]} */ ([
+    ['盒內的相對捷徑（pnpm 那種形狀）', '{"devDependencies":{"eslint":"1.0.0"}}', (nm) => {
+      mkdirSync(join(nm, '.pnpm', 'eslint'), { recursive: true }); writeFileSync(join(nm, '.pnpm', 'eslint', 'package.json'), '{}');
+      execFileSync('ln', ['-s', join('.pnpm', 'eslint'), join(nm, 'eslint')]);
+    }],
+    ['optional 同名覆寫而沒裝', '{"dependencies":{"addon":"1"},"optionalDependencies":{"addon":"1"},"devDependencies":{"eslint":"1.0.0"}}', (nm) => {
+      mkdirSync(join(nm, 'eslint'), { recursive: true }); writeFileSync(join(nm, 'eslint', 'package.json'), '{}');
+    }],
+  ])) {
+    const repo = tinyRepo({ nodeModules: false, packageJson: pkg });
+    const nm = join(repo.dir, 'node_modules'); mkdirSync(nm);
+    build(nm);
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('die-before-ready') });
+    assert.doesNotMatch(r.summary.join('\n'), /node_modules/, `${label}被擋：${r.summary.join(' / ')}`);
+    assert.match(r.summary.join('\n'), /轉送器/, label);
+  }
 });
 
