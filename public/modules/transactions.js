@@ -8,7 +8,7 @@ import { CHART } from './theme.js';
 import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
-import { deriveMonths, fallbackMonth, monthOptionsHtml } from './month-select.js';
+import { deriveMonths, deriveYears, fallbackMonth, monthOptionsHtml, monthNumbersForYear, monthNumberOptionsHtml, yearOptionsHtml } from './month-select.js';
 import { refundLookups, consumptionCategoryTotals, topSpendCategories, unmatchedRefundsForMonth, rewardsForMonth } from './refund-attribution.js';
 import { subcategoryOptionsHtml } from './form-options.js';
 import { openStatementUpload, openBatchManager } from './transactions-import.js';
@@ -50,6 +50,10 @@ export async function renderTransactions() {
   const all = allRaw.filter(isCardTx);
   const months = deriveMonths(all);
   monthFilter = fallbackMonth(monthFilter, months);
+  const selectedYear = monthFilter.slice(0, 4);
+  const selectedMonth = monthFilter.slice(5, 7);
+  const years = deriveYears(months);
+  const monthsInYear = monthNumbersForYear(months, selectedYear);
 
   const th = thBuilder(listSort);
   const rows = sortRows(all.filter(t => t.date?.slice(0, 7) === monthFilter), listSort);
@@ -66,11 +70,14 @@ export async function renderTransactions() {
   const rewardTotal = rewardsThisMonth.reduce((s, /** @type {any} */ u) => s + Math.abs(Number(u.amount) || 0), 0);
   const topCats = topSpendCategories(byCat, 6);   // 淨額 0 的分類不畫（Codex 複審 2026-07-27，與月度回顧同口徑）
   const maxCat = Math.max(...topCats.map(([, v]) => Math.abs(v)), 1);
+  const active = document.activeElement;
+  const focusedPeriodId = active instanceof HTMLElement && view().contains(active)
+    && active.matches('#creditYearSel, #creditMonthSel') ? active.id : '';
 
   view().innerHTML = `
     <div class="credit-workspace">
       <div class="page-head credit-head">
-        <div><h1>信用卡費</h1><p>信用卡帳單的每一筆消費，做分類統計與查帳（不計入現金流，收支見「銀行收支」）</p></div>
+        <div><h1>信用卡費</h1><p class="credit-desktop-only">列出信用卡帳單的每一筆消費並做分類統計</p><p class="credit-mobile-only">信用卡帳單的每一筆消費，做分類統計與查帳（不計入現金流，收支見「銀行收支」）</p></div>
         <div class="page-actions">
           ${all.some(t => t.importBatch) ? `<button class="btn-ghost btn-eq" id="stmtBatches">${icon('history', 16)}匯入紀錄</button>` : ''}
           <button class="btn btn-upload" id="uploadStmt">${icon('upload', 16)}上傳信用卡帳單</button>
@@ -78,9 +85,13 @@ export async function renderTransactions() {
       </div>
 
       <section class="credit-controls" aria-label="信用卡帳單月份">
-        <div class="credit-control">
+        <div class="credit-control credit-mobile-only">
           <label for="monthSel">月份</label>
           <select id="monthSel">${monthOptionsHtml(months, monthFilter, esc)}</select>
+        </div>
+        <div class="credit-period-desktop cashflow-period-selects" role="group" aria-label="信用卡帳單月份">
+          <div class="cashflow-select cashflow-period-year"><select id="creditYearSel" aria-label="年份">${yearOptionsHtml(years, selectedYear, esc)}</select><span class="cashflow-select-arrow" aria-hidden="true">${icon('chevron-down', 14)}</span></div>
+          <div class="cashflow-select cashflow-period-month"><select id="creditMonthSel" aria-label="月份">${monthNumberOptionsHtml(monthsInYear, selectedMonth, esc)}</select><span class="cashflow-select-arrow" aria-hidden="true">${icon('chevron-down', 14)}</span></div>
         </div>
         <p>消費統計依消費發生月歸屬；下方明細保留帳單上的原始日期。</p>
       </section>
@@ -112,8 +123,8 @@ export async function renderTransactions() {
         </div>
       </section>
 
-      <section class="credit-ledger-section" aria-labelledby="credit-ledger-title">
-        <div class="credit-ledger-head">
+      <section class="credit-ledger-section" aria-label="帳單明細">
+        <div class="credit-ledger-head credit-mobile-only">
           <div><h2 id="credit-ledger-title">帳單明細</h2><p>目前顯示 ${rows.length} 筆，包含退款</p></div>
         </div>
         <div class="tbl-wrap credit-ledger">
@@ -128,6 +139,19 @@ export async function renderTransactions() {
   const batchBtn = byId('stmtBatches');
   if (batchBtn) batchBtn.onclick = () => openBatchManager();
   byId('monthSel').onchange = (e) => { monthFilter = e.target.value; renderTransactions(); };
+  byId('creditYearSel').onchange = (e) => {
+    const year = e.target.value;
+    const availableMonths = monthNumbersForYear(months, year);
+    const month = availableMonths.includes(selectedMonth) ? selectedMonth : availableMonths[0];
+    if (!month) return;
+    monthFilter = `${year}-${month}`;
+    renderTransactions();
+  };
+  byId('creditMonthSel').onchange = (e) => {
+    monthFilter = `${selectedYear}-${e.target.value}`;
+    renderTransactions();
+  };
+  if (focusedPeriodId) byId(focusedPeriodId).focus({ preventScroll: true });
   // 文案＝使用者 2026-07-27 親自改寫的版本（逐字採用，勿順手潤飾）：條列式、關鍵詞標色。
   byId('lensInfo').onclick = () => openInfo('退款算在哪個月？', `
     <ul>

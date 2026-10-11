@@ -664,6 +664,58 @@ test('信用卡費頁：本月消費只算信用卡帳本（含缺 ledger 的舊
   assert.deepEqual(cats, ['購物3,000元', '飲食2,500元', '交通2,000元']);
 });
 
+test('信用卡年月選單：只列卡帳月份，跨年保留同月或回退該年最新月，與手機選單同步', async () => {
+  await boot();
+  const { renderTransactions, setMonthFilter } = await import('../public/modules/transactions.js');
+  const original = API['/api/transactions'];
+  const card = (id, date, amount) => ({ ...FIXTURE[0], id, date, amount });
+  API['/api/transactions'] = [
+    card('a', '2026-08-01', 80), card('b', '2026-03-01', 30),
+    card('c', '2025-12-01', 120), card('d', '2025-03-01', 31),
+    { ...FIXTURE[5], id: 'not-card', date: '2027-01-01', amount: 999999 },
+  ];
+  const select = async (id, value) => {
+    const el = document.getElementById(id);
+    el.focus();
+    el.value = value;
+    el.dispatchEvent(new globalThis.Event('change', { bubbles: true }));
+    await settleRender();
+  };
+  try {
+    setMonthFilter('2026-08');
+    await renderTransactions();
+    assert.equal(text('.credit-head .credit-desktop-only'), '列出信用卡帳單的每一筆消費並做分類統計');
+    assert.deepEqual([...document.querySelectorAll('#creditYearSel option')].map(el => el.value), ['2026', '2025']);
+    await select('creditYearSel', '2025');
+    assert.equal(document.getElementById('creditMonthSel').value, '12');
+    assert.equal(document.getElementById('monthSel').value, '2025-12');
+    assert.equal(document.activeElement.id, 'creditYearSel');
+    assert.deepEqual(rowIds(), ['c']);
+    assert.equal(text('[data-kind="spend"] .stat'), '120 元');
+    await select('creditMonthSel', '03');
+    assert.equal(document.getElementById('monthSel').value, '2025-03');
+    assert.equal(document.activeElement.id, 'creditMonthSel');
+    assert.deepEqual(rowIds(), ['d']);
+    await select('creditYearSel', '2026');
+    assert.equal(document.getElementById('monthSel').value, '2026-03', '目標年份也有三月時保留三月');
+    assert.deepEqual(rowIds(), ['b']);
+    await select('monthSel', '2025-12');
+    assert.equal(document.getElementById('creditYearSel').value, '2025');
+    assert.equal(document.getElementById('creditMonthSel').value, '12');
+    assert.deepEqual(rowIds(), ['c']);
+    API['/api/transactions'] = [];
+    await renderTransactions();
+    assert.equal(text('[data-kind="spend"] .stat'), '0 元');
+    assert.equal(text('[data-kind="count"] .stat'), '0');
+    assert.deepEqual([...document.querySelectorAll('#creditYearSel option')].map(el => el.value), ['2025']);
+    assert.deepEqual([...document.querySelectorAll('#creditMonthSel option')].map(el => el.value), ['12']);
+  } finally {
+    API['/api/transactions'] = original;
+    setMonthFilter(MONTH);
+    await renderTransactions();
+  }
+});
+
 test('編輯收支：桌機欄位成對排列，摘要與備註分開寫，舊說明只讀相容', async () => {
   await boot();
   const { renderCashflow } = await import('../public/modules/cashflow.js');

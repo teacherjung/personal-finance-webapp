@@ -52,7 +52,7 @@ test('信用卡費接線（字面釘：只掃原始碼字串；分堆結果的�
   assert.match(source, /src="assets\/guide-return-neutral\.webp"/);
 });
 
-test('信用卡費樣式：篩選卡沿用銀行收支版型，寬桌機加寬分類、窄桌機換列且長金額不裁切', () => {
+test('信用卡費基礎樣式：保留手機篩選、摘要與分類排列，長金額不裁切', () => {
   const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8');
   const controlRules = [...css.matchAll(/\.credit-controls \{([^}]+)\}/g)].map(match => match[1]);
   const desktopControls = controlRules[0] || '';
@@ -70,4 +70,18 @@ test('信用卡費樣式：篩選卡沿用銀行收支版型，寬桌機加寬�
   assert.match(css, /@media \(max-width: 640px\) \{[\s\S]*\.credit-overview-grid \{ grid-template-columns: 1fr; gap: 7px; \}/);
   assert.match(css, /\.credit-stat \{[\s\S]*grid-template-columns: minmax\(0, 1fr\) auto/);
   assert.match(css, /\.credit-empty-state img/);
+});
+
+test('信用卡桌機樣式：年月沿用銀行收支選單，色條在摘要上緣，分類排到明細之後', () => {
+  const source = readFileSync(join(ROOT, 'public/modules/transactions.js'), 'utf8');
+  const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8');
+  const desktop = css.slice(css.indexOf('@media (min-width: 821px)', css.indexOf('/* ---------- 信用卡費')),
+    css.indexOf('@media (max-width: 640px)', css.indexOf('/* ---------- 信用卡費')));
+  assert.match(source, /class="credit-period-desktop cashflow-period-selects"/);
+  assert.match(source, /class="credit-ledger-head credit-mobile-only"/);
+  assert.match(desktop, /\.credit-workspace \.credit-mobile-only \{ display: none; \}/);
+  assert.match(desktop, /\.credit-stat::before \{ inset: 0 0 auto; width: auto; height: 6px; \}/);
+  assert.match(desktop, /\.credit-ledger-section \{ order: 1; \}/);
+  assert.match(desktop, /\.credit-category-panel \{\s*order: 2;/);
+  assert.match(desktop, /\.credit-ledger th \{ border-bottom: 2px solid var\(--frame\); \}/);
 });
