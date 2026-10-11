@@ -5,7 +5,7 @@
 // 同族的其他幾支：`grok-scan-flow-preflight.test.js`、`grok-scan-flow-credentials.test.js`、`grok-scan-flow-incident.test.js`、`grok-scan-flow-redaction.test.js`。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { authNeedles, boxEntryKey } from '../scripts/grok-auth-refresh.js';
+import { NEEDLE_FIELD_LABELS, UNLISTED_FIELD, authNeedleFields, authNeedles, boxEntryKey } from '../scripts/grok-auth-refresh.js';
 import { escapeForms, knownShapeHitsFromTree, runScan, shapeHitsIn, stripLineMarkers } from '../scripts/grok-scan.js';
 import { REFUSAL_BLOCKING, REFUSAL_TOLERATED, REFUSE_CODES, TOLERATED_REFUSALS, isTolerated, isToleratedRefusal, rejectReason, safeLine } from '../scripts/grok-relay.js';
 import { execFileSync } from 'node:child_process';
@@ -95,6 +95,24 @@ test('憑證｜DLP 針收集：toString／constructor 這類原型繼承名不�
   const needles = authNeedles(auth);
   assert.ok(needles.includes('TOSTRING-SHOULD-BE-A-DLP-NEEDLE'), 'toString 被當成盒內白名單欄位，沒有進 DLP 針');
   assert.ok(needles.includes('CONSTRUCTOR-SHOULD-BE-A-DLP-NEEDLE'), 'constructor 被當成盒內白名單欄位，沒有進 DLP 針');
+});
+
+test('憑證｜DLP 針的欄位標籤（authNeedleFields）：跟 authNeedles 同一組針；只寫白名單裡的欄位名，其餘（含巢狀的鍵）寫「未列名欄位」、不帶原文；給了盒子的值與枚舉不算', () => {
+  const PRIVATE_KEY_NAME = 'private-owner@example.test';
+  const auth = JSON.parse(fakeAuth({ extra: { principal_id: '0ed1fd13-5d15-4f01-9a1e-2d9cb2f1f111', principal_type: 'User', team_id: 'SAME-VALUE-IN-TWO', org: { id: 'SAME-VALUE-IN-TWO', names: ['ORG-NAME-X'] }, [PRIVATE_KEY_NAME]: 'VALUE-UNDER-PRIVATE-KEY', team_extra: { [PRIVATE_KEY_NAME]: 'NESTED-UNDER-PRIVATE-KEY' } } }));
+  const fields = authNeedleFields(auth);
+  assert.deepEqual([...fields.keys()].sort(), authNeedles(auth).sort(), '欄位對照的針集合跟 authNeedles 不一樣');
+  assert.deepEqual(fields.get('fake-owner@example.test'), ['email']);
+  assert.deepEqual(fields.get('REFRESH-TOKEN-VALUE-0123456789abcdef'), ['refresh_token']);
+  assert.deepEqual(fields.get('SAME-VALUE-IN-TWO'), ['team_id', UNLISTED_FIELD].sort(), '同值多欄要都列；不在白名單的 org 寫成未列名欄位');
+  assert.deepEqual(fields.get('ORG-NAME-X'), [UNLISTED_FIELD]);
+  assert.deepEqual(fields.get('VALUE-UNDER-PRIVATE-KEY'), [UNLISTED_FIELD], '私人鍵名不准原樣當標籤');
+  assert.deepEqual(fields.get('NESTED-UNDER-PRIVATE-KEY'), [UNLISTED_FIELD], '巢狀的私人鍵名不准原樣當標籤');
+  assert.equal(fields.has('0ed1fd13-5d15-4f01-9a1e-2d9cb2f1f111'), false, '給了盒子的值（user_id＝principal_id）不算針');
+  assert.equal(fields.has('User'), false, '枚舉欄位不算針');
+  const allowed = new Set([...NEEDLE_FIELD_LABELS, ...NEEDLE_FIELD_LABELS.map((n) => `${n}（巢狀）`), UNLISTED_FIELD]);
+  for (const labels of fields.values()) for (const l of labels) assert.ok(allowed.has(l), `標籤不在白名單裡：${l}`);
+  assert.deepEqual(authNeedleFields(JSON.parse(fakeAuth({ extra: { email: { primary: 'NESTED-EMAIL' } } }))).get('NESTED-EMAIL'), ['email（巢狀）'], '白名單欄位底下的巢狀值寫成「<欄位>（巢狀）」');
 });
 
 test('runScan｜r7（Codex #2）：轉送器拒絕了不在白名單的請求 → 掃描退 2（吵），不靠 grok 的退出碼；刻意擋的 bundle/archive → 容許、只記錄', async (t) => {
