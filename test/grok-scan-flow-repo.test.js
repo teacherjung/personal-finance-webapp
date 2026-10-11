@@ -8,11 +8,14 @@
 //   沒有 node_modules 而 package.json 宣告了任何一種相依＝退 2、沒宣告或沒有 package.json＝過；package.json 壞掉、是陣列＝退 2；
 //   設定 strongest／maxEffort 缺、形狀不對、以 - 開頭＝退 2；相對路徑照目前資料夾解析；
 //   遠端網址只留 owner/name（夾在網址裡的權杖、本機路徑都不出現）；指令列 --repo=… 與給兩次＝退 2；
-//   結構題：沙箱參數只有那三組（要掃的倉庫進不去）、每一個 git 呼叫都清環境、指令列把 repo 傳進 runScan、不傳 deps。
+//   結構題：沙箱參數只有那三組（要掃的倉庫進不去）、每一個 git 呼叫都清環境、指令列把 repo 傳進 runScan、不傳 deps；
+//   GIT_DIR 指到別的倉庫時：建盒前的檢查仍查 --repo 那一個、考題自己設 diff 驅動寫進要寫的倉庫而別的倉庫設定不變；
+//   結構題：這一族考題與夾具的每一個 git 呼叫都帶乾淨環境（#675 r1 Codex：考題的 git 呼叫跟著 GIT_DIR 寫到別的倉庫）。
 // ・套得上沙箱的 macOS 才跑：沒有相依的倉庫整條走到退 0；假 grok 收到的參數有 --model <設定的最強模型> --reasoning-effort <設定的最高推理>；
 //   配方聲明與 launch.json 寫了受掃倉庫、指定模型、推理、掃描程式的雜湊；沙箱參數裡沒有要掃的倉庫路徑；
-//   node_modules 捷徑指到不叫 node_modules 的資料夾＝退 2、結果包不留。
+//   node_modules 捷徑指到不叫 node_modules 的資料夾＝退 2、結果包不留；相依已備齊、沒有 ESLint 的倉庫建得出盒子（不在 node_modules 那步退）。
 // ⚠️ 守不到的：真的 grok 收到 --model／--reasoning-effort 之後實際用了哪一個（假 grok 只回聲參數；真的那一半看正式掃描的配方聲明「指定模型」與「模型」兩格）。
+// ⚠️ 守不到的：盒子裡 node_modules 第一層跟來源對不上那一道——cp 退 0 卻少複製的情形造不出來，沒有考題（cp 退非 0 那一道有）。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -21,7 +24,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, w
 import { tmpdir } from 'node:os';
 import { join, basename, dirname } from 'node:path';
 import { GROK_WALL_MS, declaresDeps, repoLabelFrom, runScan } from '../scripts/grok-scan.js';
-import { ROOT, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeGrok, fakeRelay, isolated, keep, promptFile, quiet, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
+import { CLEAN_ENV, ROOT, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeGrok, fakeRelay, isolated, keep, promptFile, quiet, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
 
 after(cleanupTempRoots);
 
@@ -34,6 +37,16 @@ const run = async (/** @type {Record<string, unknown>} */ args, /** @type {Recor
   return { ...r, logs, text: r.summary.join('\n') };
 };
 const passedPreBox = (/** @type {{ logs: string[] }} */ r) => r.logs.some((l) => l.startsWith('（受掃倉庫：'));
+/** 在倉庫裡設一個 diff 驅動（textconv 與外部 diff 都指到 tool）；git 帶夾具從零組的環境（鐵則 11：GIT_DIR 會讓 -C 失效、寫到別的倉庫——#675 r1 Codex 實測） */
+const plantDiffDriver = (/** @type {string} */ dir, /** @type {string} */ tool) => {
+  for (const k of ['textconv', 'command']) execFileSync('git', ['-C', dir, 'config', `diff.probe.${k}`, tool], { env: CLEAN_ENV });
+};
+/** 暫時把 GIT_DIR 指到別的倉庫（模擬從連結工作樹推送時 pre-push 的環境），做完一定還原 */
+const withGitDirPointingAt = async (/** @type {string} */ gitDir, /** @type {() => unknown} */ fn) => {
+  const saved = process.env.GIT_DIR;
+  process.env.GIT_DIR = gitDir;
+  try { return await fn(); } finally { if (saved === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved; }
+};
 
 test('--repo：空的、以 - 開頭＝退 2、⛔，訊息裡沒有路徑', async () => {
   const repo = tinyRepo();
@@ -260,13 +273,54 @@ test('材料的 git diff 不執行受審版本挑的 diff 驅動（.gitattribute
   const tool = join(keep(mkdtempSync(join(tmpdir(), 'textconv-tool-'))), 'conv.sh');
   writeFileSync(tool, `#!/bin/sh\ntouch '${marker}'\ncat "$1"\n`); chmodSync(tool, 0o755);
   const repo = tinyRepo({ firstCommitFiles: { '.gitattributes': 'a.txt diff=probe\n' } });
-  execFileSync('git', ['-C', repo.dir, 'config', 'diff.probe.textconv', tool]);
-  execFileSync('git', ['-C', repo.dir, 'config', 'diff.probe.command', tool]);
+  plantDiffDriver(repo.dir, tool);
   // 對照組：不關的話這個倉庫的 git diff 真的會執行它（考題自己的前提）
-  execFileSync('git', ['-C', repo.dir, 'diff', `${repo.base}..${repo.head}`], { encoding: 'utf8' });
+  execFileSync('git', ['-C', repo.dir, 'diff', `${repo.base}..${repo.head}`], { encoding: 'utf8', env: CLEAN_ENV });
   assert.ok(readdirSync(dirname(marker)).includes('ran'), '對照組沒執行驅動——考題前提不成立');
   rmSync(marker);
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('die-before-ready') });
   assert.equal(r.code, 2, r.summary.join('\n'));
   assert.ok(!readdirSync(dirname(marker)).includes('ran'), '掃描程式的 git diff 在盒子外執行了受審版本挑的 diff 驅動');
+});
+
+test('借掃：相依已備齊、沒有 ESLint 的倉庫照樣建得出盒子（不拿本專案的套件當必備哨兵）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo({ nodeModules: false, packageJson: '{"dependencies":{"only-dependency":"1.0.0"}}' });
+  mkdirSync(join(repo.dir, 'node_modules', 'only-dependency'), { recursive: true });
+  writeFileSync(join(repo.dir, 'node_modules', 'only-dependency', 'package.json'), '{}');
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('die-before-ready') });
+  // 會在轉送器那步退 2（假轉送器故意死）——但不是在 node_modules 那步退
+  assert.equal(r.code, 2);
+  assert.doesNotMatch(r.summary.join('\n'), /node_modules/, `相依已備齊的倉庫在 node_modules 那步被擋：${r.summary.join(' / ')}`);
+  assert.match(r.summary.join('\n'), /轉送器/);
+});
+
+test('GIT_DIR 指到別的倉庫時（從連結工作樹推送的 pre-push 環境）：考題設 diff 驅動寫進要寫的倉庫、別的倉庫設定不變；掃描仍查 --repo 指的那一個', async () => {
+  const repo = tinyRepo({ nodeModules: false });
+  // 另一個倉庫的內容要不同：同一秒建的兩個 tinyRepo 提交編號一樣，查錯倉庫也查得到 base／head、分不出來
+  const other = tinyRepo({ nodeModules: false, firstCommitFiles: { 'other.txt': 'other\n' } });
+  assert.notEqual(other.base, repo.base, '兩個倉庫的提交編號一樣——考題前提不成立');
+  const otherConfig = join(other.dir, '.git', 'config');
+  const before = readFileSync(otherConfig, 'utf8');
+  const r = await withGitDirPointingAt(join(other.dir, '.git'), async () => {
+    plantDiffDriver(repo.dir, '/usr/bin/true');
+    return run({ base: repo.base, head: repo.head, repo: repo.dir });
+  });
+  assert.equal(readFileSync(otherConfig, 'utf8'), before, '考題的 git 呼叫跟著 GIT_DIR 寫到別的倉庫了');
+  assert.equal(execFileSync('git', ['-C', repo.dir, 'config', 'diff.probe.textconv'], { encoding: 'utf8', env: CLEAN_ENV }).trim(), '/usr/bin/true', '設定沒寫進要寫的倉庫');
+  assert.ok(passedPreBox(r), `GIT_DIR 指到別處時掃描沒過建盒前的檢查（git 呼叫沒清環境＝去別的倉庫找 base／head）：${r.text}`);
+});
+
+test('結構題：掃描那一族考題與夾具裡每一個 git 呼叫都帶乾淨環境（CLEAN_ENV 或 gitEnv()）', () => {
+  const dir = join(ROOT, 'test');
+  const files = [...readdirSync(dir).filter((f) => /^grok-scan-flow-.*\.test\.js$/.test(f)).map((f) => join(dir, f)), join(dir, 'helpers', 'grok-scan-flow-fixtures.js')];
+  let n = 0;
+  for (const f of files) {
+    for (const l of readFileSync(f, 'utf8').split('\n')) {
+      if (!/(?:execFileSync|spawnSync|spawn|execFile)\('git'/.test(l)) continue;
+      n++;
+      assert.match(l, /env: (?:CLEAN_ENV|gitEnv\(\))/, `${basename(f)} 這個 git 呼叫沒帶乾淨環境（鐵則 11）：${l.trim().slice(0, 120)}`);
+    }
+  }
+  assert.ok(n >= 7, `只找到 ${n} 個 git 呼叫——掃描範圍不對`);
 });

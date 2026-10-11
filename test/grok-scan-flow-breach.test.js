@@ -306,7 +306,7 @@ test('runScan｜已知來源（head 樹）建不出來 → 退 2 並指名是它
   const repo = tinyRepo();
   // head 這顆 commit 在、但它樹裡一個檔的內容物件被刪掉：commit 與樹都讀得到（建盒前的倉庫檢查都過），
   // 逐一讀樹裡的內容時才讀不到。（原本用「不存在的 head」；2026-10-11 起那一種在更前面的倉庫檢查就被擋下、訊息不同）
-  const oid = execFileSync('git', ['-C', repo.dir, 'rev-parse', `${repo.head}:tree-only.txt`], { encoding: 'utf8' }).trim();
+  const oid = execFileSync('git', ['-C', repo.dir, 'rev-parse', `${repo.head}:tree-only.txt`], { encoding: 'utf8', env: CLEAN_ENV }).trim();
   rmSync(join(repo.dir, '.git', 'objects', oid.slice(0, 2), oid.slice(2)));
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()) });
   assert.equal(r.code, 2);

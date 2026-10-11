@@ -996,7 +996,13 @@ export async function runScan(args, deps = {}) {
       if (c.status !== 0) return failAndClean(`node_modules clone 失敗（cp 退 ${c.status}）`);   // 不印 cp 的錯誤輸出：裡面有本機路徑
       const st = lstatSync(join(src, 'node_modules'));
       if (!st.isDirectory() || st.isSymbolicLink()) return failAndClean('盒子裡的 node_modules 不是真目錄（symlink 指回家目錄＝沙箱裡讀不到）');
-      if (!existsSync(join(src, 'node_modules', 'eslint'))) return failAndClean('盒子裡的 node_modules 少了套件（clone 沒跟隨 symlink？）');
+      // 複製完整：盒子裡第一層的名字要跟來源一模一樣。原本拿本專案才有的 eslint 當哨兵；借掃別的倉庫時它不一定有
+      // （相依備齊卻退 2——#675 r1 Codex 實測），所以改成拿來源本身對照，不假設要掃的倉庫裝了哪個套件
+      /** @type {string[]} */ let want;
+      /** @type {string[]} */ let got;
+      try { want = readdirSync(nmReal).sort(); got = readdirSync(join(src, 'node_modules')).sort(); }
+      catch (e) { return failAndClean(`盒子裡的 node_modules 判斷不了（${errCode(e)}）`); }
+      if (want.length !== got.length || want.some((n, i) => n !== got[i])) return failAndClean('盒子裡的 node_modules 跟來源不一樣（clone 沒複製完整？）');
     } else log('（要掃的倉庫沒有宣告相依套件、也沒有 node_modules：盒子裡不放 node_modules）');
     for (const forbidden of ['data/store.db', 'data/store.json', '.env', '.env.local']) {
       if (existsSync(join(src, forbidden))) return failAndClean(`盒子裡出現不該有的檔：${forbidden}——git archive 不該帶出它，先查 .gitignore`);
