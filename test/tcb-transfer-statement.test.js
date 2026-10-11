@@ -188,3 +188,25 @@ test('合庫備註中的空白標記不能截掉交易', async () => {
   const r = await parseBankStatement(pdf(p));
   assert.deepEqual(r.transactions, [expected, { ...expected, note: '09:12:34 006-9002000***003301 【以下空白】 續行文字' }]);
 });
+
+for (const [label, tail] of [
+  ['同頁仍有交易', () => [[...headers(), ...row(), end(), ...row(689, '09:12:34')]]],
+  ['續頁仍有交易', () => [[...headers(), ...row(), end()], [...headers(), ...row()]]],
+]) test(`合庫結尾後${label}：拒收且套用保留本題舊值`, async () => {
+  const db = emptyDb();
+  db.accounts = [{ id: 'tcb-tail-keep', name: '結尾歧義保存值', bank: '合作金庫銀行', type: 'cash', class: '現金', currency: 'TWD', accountNo: source, balance: 456 }];
+  await saveDb(db); const before = await getDb();
+  const encoded = b64([summary(), ...tail()]);
+  await assert.rejects(() => previewBankStatement(encoded), { code: 'bank_unrecognized' });
+  await assert.rejects(() => applyBankStatement(encoded), { code: 'bank_unrecognized' });
+  assert.deepEqual(await getDb(), before);
+});
+test('合庫結尾後的說明文字不成交易', async () => {
+  const p = pages(); p[1].push(cell(38, 700, 200, '合成服務說明，請核對帳單。'));
+  const r = await parseBankStatement(pdf(p));
+  assert.deepEqual(r.transactions, [expected]);
+});
+test('合庫外幣概要標題附字仍拒收，不只認獨立標題格', async () => {
+  const p = change(pages(), '【黃金存摺】', { s: '【外幣類】合成說明' });
+  await assert.rejects(() => parseBankStatement(pdf(p)), { code: 'bank_unrecognized' });
+});
