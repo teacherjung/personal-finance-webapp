@@ -138,8 +138,10 @@ test('理財中心總覽接線：月份以後端現金流月份為單一來源�
   assert.doesNotMatch(source, /src="\/assets\//, 'HOSTED 掛在 /finance/，森林素材不可指向網站根目錄');
   assert.doesNotMatch(source, /src="assets\/forest-return-positive\.webp"/);
   assert.match(source, /<section class="forest-overview" aria-label="理財中心總覽">/);
+  assert.match(source, /<h1 class="forest-overview-heading">總覽<\/h1>/);
   assert.doesNotMatch(source, /forest-message-stage|forestDashboardMessage|forestDashboardTitle/);
   assert.doesNotMatch(styles, /\.forest-message-stage|\.forest-quote-mark/);
+  assert.match(styles, /\.forest-overview-heading \{[^}]*position: absolute;[^}]*clip-path: inset\(50%\)/);
   assert.match(shell, /<title>榮祥森｜個人理財中心<\/title>/);
   assert.match(shell, /<div class="brand-title">理財中心<\/div>/);
   assert.match(shell, /<div class="brand-subtitle">榮祥森<\/div>/);

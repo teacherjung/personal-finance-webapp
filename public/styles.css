@@ -414,6 +414,10 @@ input:focus, select:focus, textarea:focus {
 .forest-overview {
   margin-bottom: 16px;
 }
+.forest-overview-heading {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
 .forest-scene-summary {
   display: grid; grid-template-columns: .9fr 1.15fr .95fr; min-height: 166px;
   overflow: hidden; background: var(--card); border: 2px solid var(--frame); border-radius: var(--radius); box-shadow: var(--shadow-lg);

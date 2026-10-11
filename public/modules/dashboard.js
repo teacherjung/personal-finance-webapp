@@ -311,6 +311,7 @@ export async function renderDashboard() {
 
   view().innerHTML = `
     <section class="forest-overview" aria-label="理財中心總覽">
+      <h1 class="forest-overview-heading">總覽</h1>
       <div class="forest-scene-summary">
         <div class="forest-networth">
           <span>淨資產</span>
