@@ -5,8 +5,9 @@
 // 守得到的：
 // ・建盒子之前的檢查（CI 也跑得到）：--repo 空的／以 - 開頭／找不到／不是資料夾／不是 git 倉庫／是倉庫的子資料夾＝退 2、⛔、訊息裡沒有路徑；
 //   --repo 與考題注入的倉庫同時給＝退 2；base／head 不在要掃的倉庫＝退 2；受審版本提交了 node_modules（捷徑）＝退 2；
-//   沒有 node_modules 而 package.json 宣告了任何一種相依＝退 2、沒宣告或沒有 package.json＝過（打包選項的布林不算宣告）；package.json 壞掉、是陣列＝退 2；
-//   有 node_modules 時也讀 package.json：壞掉、是陣列、相依名稱形狀認不得（往上走、多一層斜線）＝退 2；requiredDeps、isSafeDepName 的單元題；
+//   沒有 node_modules 而 needsInstall（dependencies 扣掉 optional 同名、加 devDependencies）有名字＝退 2，只有 peer／optional／打包欄或沒有 package.json＝過；
+//   package.json 壞掉、是陣列＝退 2；package.json 讀的是受審版本（不是基底、也不是工作樹）；needsInstall 的單元題；
+//   有 node_modules 時也讀 package.json：壞掉、是陣列＝退 2；相依的名字不拿來組路徑、怎麼寫都不擋（#675 r4 換做法後）；
 //   設定 strongest／maxEffort 缺、形狀不對、以 - 開頭＝退 2；相對路徑照目前資料夾解析；
 //   遠端網址只留 owner/name（夾在網址裡的權杖、本機路徑都不出現）；指令列 --repo=… 與給兩次＝退 2；
 //   結構題：沙箱參數只有那三組（要掃的倉庫進不去）、每一個 git 呼叫都清環境、指令列把 repo 傳進 runScan、不傳 deps；
@@ -15,10 +16,12 @@
 // ・套得上沙箱的 macOS 才跑：沒有相依的倉庫整條走到退 0；假 grok 收到的參數有 --model <設定的最強模型> --reasoning-effort <設定的最高推理>；
 //   配方聲明與 launch.json 寫了受掃倉庫、指定模型、推理、掃描程式的雜湊；沙箱參數裡沒有要掃的倉庫路徑；
 //   node_modules 捷徑指到不叫 node_modules 的資料夾＝退 2、結果包不留；相依已備齊、沒有 ESLint 的倉庫建得出盒子（不在 node_modules 那步退）；
-//   node_modules 是空的而 package.json 宣告了相依＝退 2、結果包不留，零相依的空 node_modules 不擋（#675 r2 Codex）；
-//   宣告的套件是失效的捷徑或指到盒子外＝退 2，盒內的相對捷徑、optional 同名覆寫而沒裝＝不擋（#675 r3 Codex）。
+//   需要安裝的相依有名字、node_modules 卻是空的（點開頭的不算）＝退 2、結果包不留（#675 r2、r4 Codex）；只有 peer／optional 的不擋；
+//   node_modules 頂層與 @範圍 底下的捷徑連到盒子外（絕對路徑、相對路徑往上走出去、@範圍 本身、盒內 @範圍 捷徑底下的項目）＝退 2（#675 r3、r4）；
+//   盒子裡第一層跟來源對不上（來源有 socket、cp 不複製）＝退 2；盒內的相對捷徑、點開頭的 @範圍、optional 同名覆寫而沒裝＝不擋。
+// ⚠️ 劃界（#675 r4 連三輪自問表）：不判斷「每一個宣告的套件都裝了」——少了某一個（例如 eslint）而 node_modules 不是空的、
+//   或捷徑在盒子裡解不開（沒裝、受審版本拿掉了那個 workspace）＝不擋，只記一行；掃描照跑、盒子裡的考題會紅。有一題把這個劃界寫死。
 // ⚠️ 守不到的：真的 grok 收到 --model／--reasoning-effort 之後實際用了哪一個（假 grok 只回聲參數；真的那一半看正式掃描的配方聲明「指定模型」與「模型」兩格）。
-// ⚠️ 守不到的：盒子裡 node_modules 第一層跟來源對不上那一道——cp 退 0 卻少複製的情形造不出來，沒有考題（cp 退非 0 那一道有）。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -26,7 +29,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename, dirname } from 'node:path';
-import { GROK_WALL_MS, declaresDeps, isSafeDepName, repoLabelFrom, requiredDeps, runScan } from '../scripts/grok-scan.js';
+import { GROK_WALL_MS, needsInstall, repoLabelFrom, runScan } from '../scripts/grok-scan.js';
 import { CLEAN_ENV, ROOT, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeGrok, fakeRelay, isolated, keep, promptFile, quiet, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
 
 after(cleanupTempRoots);
@@ -113,18 +116,20 @@ test('受審版本把 node_modules（捷徑）提交進去＝退 2（建盒前�
   assert.ok(!passedPreBox(r));
 });
 
-test('沒有 node_modules：沒有 package.json、相依全空＝過；宣告了任何一種相依、package.json 壞掉或是陣列＝退 2', async () => {
+test('沒有 node_modules：沒有 package.json、相依全空、只有 peer／optional／打包欄＝過；dependencies 或 devDependencies 有名字、形狀怪、package.json 壞掉或是陣列＝退 2', async () => {
   for (const [label, pkg] of /** @type {[string, string | undefined][]} */ ([['沒有 package.json', undefined], ['相依全空', '{"name":"k","dependencies":{},"devDependencies":{},"bundledDependencies":[]}'],
-    ['打包選項 false（bundleDependencies）', '{"bundleDependencies":false}'], ['打包選項 false（別名 bundledDependencies）', '{"bundledDependencies":false}'], ['打包選項 true、沒有相依', '{"bundleDependencies":true}']])) {
+    ['打包選項 false（bundleDependencies）', '{"bundleDependencies":false}'], ['打包選項 false（別名 bundledDependencies）', '{"bundledDependencies":false}'], ['打包選項 true、沒有相依', '{"bundleDependencies":true}'],
+    ['只有 peer', '{"peerDependencies":{"x":"1"}}'], ['只有 optional', '{"optionalDependencies":{"x":"1"}}'], ['dependencies 全被 optional 同名覆寫', '{"dependencies":{"x":"1"},"optionalDependencies":{"x":"1"}}']])) {
     const repo = tinyRepo({ nodeModules: false, packageJson: pkg });
     const r = await run({ base: repo.base, head: repo.head, repo: repo.dir });
     assert.ok(passedPreBox(r), `${label}：沒過建盒前的檢查：${r.text}`);
     assert.match(r.text, /sha256 不符/, label);
   }
-  for (const k of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {
-    const repo = tinyRepo({ nodeModules: false, packageJson: JSON.stringify({ [k]: { x: '1' }, bundleDependencies: false }) });
+  for (const [label, pkg] of /** @type {[string, string][]} */ ([['dependencies', '{"dependencies":{"x":"1"},"bundleDependencies":false}'], ['devDependencies', '{"devDependencies":{"x":"1"}}'],
+    ['devDependencies 與 optional 同名（仍算）', '{"devDependencies":{"x":"1"},"optionalDependencies":{"x":"1"}}'], ['形狀怪', '{"devDependencies":"weird"}']])) {
+    const repo = tinyRepo({ nodeModules: false, packageJson: pkg });
     const r = await run({ base: repo.base, head: repo.head, repo: repo.dir });
-    assert.equal(r.code, 2, k); assert.match(r.text, /宣告了相依套件、卻沒有 node_modules/, k);
+    assert.equal(r.code, 2, label); assert.match(r.text, /宣告了相依套件、卻沒有 node_modules/, label);
   }
   for (const [label, body, re] of /** @type {[string, string, RegExp][]} */ ([['壞掉', '{', /不是合法的 JSON/], ['陣列', '[]', /不是一個物件/]])) {
     const repo = tinyRepo({ nodeModules: false, packageJson: body });
@@ -133,43 +138,44 @@ test('沒有 node_modules：沒有 package.json、相依全空＝過；宣告了
   }
 });
 
-test('declaresDeps：空物件、空陣列不算；有內容就算', () => {
-  assert.equal(declaresDeps({}), false);
-  assert.equal(declaresDeps({ dependencies: {}, bundleDependencies: [] }), false);
-  assert.equal(declaresDeps({ bundleDependencies: ['a'] }), true);
-  assert.equal(declaresDeps({ peerDependencies: { a: '1' } }), true);
-  assert.equal(declaresDeps({ devDependencies: 'weird' }), true, '形狀怪的不當成沒有');
-  for (const k of ['bundleDependencies', 'bundledDependencies']) {
-    for (const b of [false, true]) assert.equal(declaresDeps({ [k]: b }), false, `${k}: ${b} 是打包選項、不宣告套件`);
-    assert.equal(declaresDeps({ [k]: false, dependencies: { a: '1' } }), true, `${k}: false 搭配真正的相依仍算`);
-  }
-  assert.equal(declaresDeps({ dependencies: false }), true, '不是打包那兩欄的布林照舊不當成沒有');
+test('needsInstall：dependencies 扣掉 optional 同名、加上 devDependencies；peer、optional、打包欄不算；形狀怪的不當成沒有', () => {
+  assert.equal(needsInstall({}), false);
+  assert.equal(needsInstall({ dependencies: {}, devDependencies: {}, bundleDependencies: ['a'] }), false);
+  assert.equal(needsInstall({ peerDependencies: { a: '1' }, optionalDependencies: { b: '1' }, bundledDependencies: false }), false);
+  assert.equal(needsInstall({ dependencies: { a: '1' }, optionalDependencies: { a: '1' } }), false, 'optional 同名覆寫的不算');
+  assert.equal(needsInstall({ dependencies: { a: '1', b: '1' }, optionalDependencies: { a: '1' } }), true);
+  assert.equal(needsInstall({ devDependencies: { a: '1' }, optionalDependencies: { a: '1' } }), true, 'devDependencies 同名照算');
+  assert.equal(needsInstall({ dependencies: { a: '1' }, optionalDependencies: ['a'] }), true, 'optional 形狀怪的不拿來扣');
+  for (const v of ['weird', null, 1, ['a']]) assert.equal(needsInstall({ devDependencies: v }), true, `形狀怪的不當成沒有：${JSON.stringify(v)}`);
+  assert.equal(needsInstall({ devDependencies: [] }), false);
 });
 
-test('requiredDeps：dependencies 與 devDependencies 的名字（去重）；optional、peer、打包欄、形狀怪的不列；optional 同名覆寫的不列', () => {
-  assert.deepEqual(requiredDeps({ dependencies: { a: '1', '@s/b': '1' }, devDependencies: { a: '2', c: '1' }, optionalDependencies: { o: '1' }, peerDependencies: { p: '1' }, bundleDependencies: ['a'] }), ['a', '@s/b', 'c']);
-  assert.deepEqual(requiredDeps({ dependencies: ['a'], devDependencies: 'weird' }), []);
-  assert.deepEqual(requiredDeps({ dependencies: { addon: '1', a: '1' }, devDependencies: { eslint: '1' }, optionalDependencies: { addon: '1' } }), ['a', 'eslint'], 'optional 同名覆寫的不算必備');
-  assert.deepEqual(requiredDeps({ dependencies: { a: '1' }, optionalDependencies: ['a'] }), ['a'], 'optional 欄位形狀怪的不拿來排除');
-  assert.deepEqual(requiredDeps({}), []);
+test('package.json 讀的是受審版本：基底沒宣告、受審版本宣告了＝退 2（工作樹改回沒宣告也一樣）；反過來＝過', async () => {
+  const git = (/** @type {string} */ dir, /** @type {string[]} */ a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', env: CLEAN_ENV }).trim();
+  const third = (/** @type {string} */ first, /** @type {string} */ second, /** @type {string} */ worktree) => {
+    const repo = tinyRepo({ nodeModules: false, packageJson: first });
+    writeFileSync(join(repo.dir, 'package.json'), second);
+    git(repo.dir, ['commit', '-q', '-am', 'three']);
+    writeFileSync(join(repo.dir, 'package.json'), worktree);   // 工作樹：不提交
+    return { dir: repo.dir, base: repo.head, head: git(repo.dir, ['rev-parse', 'HEAD']) };
+  };
+  const adds = third('{"name":"k"}', '{"devDependencies":{"x":"1"}}', '{"name":"k"}');
+  const r1 = await run({ base: adds.base, head: adds.head, repo: adds.dir });
+  assert.equal(r1.code, 2, r1.text); assert.match(r1.text, /宣告了相依套件、卻沒有 node_modules/);
+  const drops = third('{"devDependencies":{"x":"1"}}', '{"name":"k"}', '{"devDependencies":{"x":"1"}}');
+  assert.ok(passedPreBox(await run({ base: drops.base, head: drops.head, repo: drops.dir })), '受審版本拿掉相依＝過（不看基底、不看工作樹）');
 });
 
-test('isSafeDepName：一般名字與 @範圍/名字＝過；空的、. 開頭的段、多一層斜線、反斜線、.. ＝不過', () => {
-  for (const ok of ['eslint', '@scope/pkg', 'a.b', 'a_b-c~d', 'UPPER']) assert.ok(isSafeDepName(ok), ok);
-  for (const bad of ['', '.', '..', '../x', '.x', 'a/b', '@s/../x', '@s/.x', '@/x', 'a/b/c', 'a\\b', '@s/a/b', ' a', 'a b']) assert.ok(!isSafeDepName(bad), JSON.stringify(bad));
-});
-
-test('有 node_modules 時也讀受審版本的 package.json：壞掉、是陣列、相依名稱形狀認不得＝建盒前退 2', async () => {
-  for (const [label, body, re] of /** @type {[string, string, RegExp][]} */ ([
-    ['壞掉', '{', /不是合法的 JSON/], ['陣列', '[]', /不是一個物件/],
-    ['名稱往上走', '{"dependencies":{"../x":"1"}}', /相依名稱形狀認不得/], ['名稱多一層斜線', '{"devDependencies":{"a/b":"1"}}', /相依名稱形狀認不得/],
-  ])) {
+test('有 node_modules 時也讀受審版本的 package.json：壞掉、是陣列＝建盒前退 2；相依的名字不拿來組路徑，怎麼寫都不擋', async () => {
+  for (const [label, body, re] of /** @type {[string, string, RegExp][]} */ ([['壞掉', '{', /不是合法的 JSON/], ['陣列', '[]', /不是一個物件/]])) {
     const repo = tinyRepo({ packageJson: body });
     const r = await run({ base: repo.base, head: repo.head, repo: repo.dir });
     assert.equal(r.code, 2, label); assert.match(r.text, re, label); assert.ok(!passedPreBox(r), label);
   }
-  const repo = tinyRepo({ packageJson: '{"devDependencies":{"eslint":"1"}}' });
-  assert.ok(passedPreBox(await run({ base: repo.base, head: repo.head, repo: repo.dir })), '對照組：名稱正常、node_modules 在＝過建盒前');
+  for (const body of ['{"devDependencies":{"eslint":"1"}}', '{"devDependencies":{"@.scope/pkg":"npm:x@1","../x":"1","a/b":"1"}}']) {
+    const repo = tinyRepo({ packageJson: body });
+    assert.ok(passedPreBox(await run({ base: repo.base, head: repo.head, repo: repo.dir })), `名字照寫、node_modules 在＝過建盒前：${body}`);
+  }
 });
 
 test('掃描設定：缺檔、壞 JSON、沒有掃描那一節、strongest／maxEffort 形狀不對或以 - 開頭＝退 2；合法的值印在建盒前那一行', async () => {
@@ -362,50 +368,86 @@ test('結構題：掃描那一族考題與夾具裡每一個 git 呼叫都帶乾
   assert.ok(n >= 7, `只找到 ${n} 個 git 呼叫——掃描範圍不對`);
 });
 
-test('node_modules 是空的（安裝沒完成）而受審版本宣告了相依＝退 2、結果包不留；零相依的空 node_modules＝不擋', async (t) => {
+test('需要安裝的相依有名字、node_modules 卻是空的（點開頭的不算）＝退 2、結果包不留；零相依、只有 peer／optional 的空 node_modules＝不擋', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
-  const empty = tinyRepo({ nodeModules: false, packageJson: '{"devDependencies":{"eslint":"1.0.0"}}' });
-  mkdirSync(join(empty.dir, 'node_modules'));
-  const iso = isolated();
-  const r = await runScan({ base: empty.base, head: empty.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: empty.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
-  assert.equal(r.code, 2, r.summary.join('\n'));
-  assert.match(r.summary.join('\n'), /少了受審版本 package\.json 宣告的 1 個套件/);
-  assert.deepEqual(readdirSync(iso.resultsRoot), [], '退 2 時結果包要整個不留');
-  const none = tinyRepo({ nodeModules: false, packageJson: '{"name":"k"}' });
-  mkdirSync(join(none.dir, 'node_modules'));
-  const ok = await runScan({ base: none.base, head: none.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: none.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('die-before-ready') });
-  assert.doesNotMatch(ok.summary.join('\n'), /node_modules/, `零相依的空 node_modules 被擋：${ok.summary.join(' / ')}`);
-  assert.match(ok.summary.join('\n'), /轉送器/);
-});
-
-test('宣告的套件要在盒子裡解析得到：失效的捷徑、指到盒子外的捷徑＝退 2、結果包不留；盒內的相對捷徑、optional 同名覆寫而沒裝＝不擋', async (t) => {
-  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
-  const outside = keep(mkdtempSync(join(tmpdir(), 'outside-pkg-')));
-  for (const [label, target] of /** @type {[string, string][]} */ ([['失效的捷徑', 'does-not-exist'], ['指到盒子外', outside]])) {
-    const repo = tinyRepo({ nodeModules: false, packageJson: '{"devDependencies":{"eslint":"1.0.0"}}' });
-    mkdirSync(join(repo.dir, 'node_modules'));
-    execFileSync('ln', ['-s', target, join(repo.dir, 'node_modules', 'eslint')]);
+  const dotOnly = (/** @type {string} */ dir) => { mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true }); writeFileSync(join(dir, 'node_modules', '.package-lock.json'), '{}'); };
+  for (const [label, pkg] of /** @type {[string, string][]} */ ([
+    ['開發相依', '{"devDependencies":{"eslint":"1.0.0"}}'],
+    ['開發相依與 optional 同名（npm 仍當必備，#675 r4 Codex）', '{"devDependencies":{"eslint":"1.0.0"},"optionalDependencies":{"eslint":"2.0.0"}}'],
+  ])) {
+    const repo = tinyRepo({ nodeModules: false, packageJson: pkg });
+    dotOnly(repo.dir);
     const iso = isolated();
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
     assert.equal(r.code, 2, `${label}：${r.summary.join(' / ')}`);
-    assert.match(r.summary.join('\n'), /少了受審版本 package\.json 宣告的 1 個套件/, label);
+    assert.match(r.summary.join('\n'), /宣告了相依套件、node_modules 卻是空的/, label);
     assert.deepEqual(readdirSync(iso.resultsRoot), [], `${label}：退 2 時結果包要整個不留`);
   }
-  for (const [label, pkg, build] of /** @type {[string, string, (nm: string) => void][]} */ ([
-    ['盒內的相對捷徑（pnpm 那種形狀）', '{"devDependencies":{"eslint":"1.0.0"}}', (nm) => {
-      mkdirSync(join(nm, '.pnpm', 'eslint'), { recursive: true }); writeFileSync(join(nm, '.pnpm', 'eslint', 'package.json'), '{}');
-      execFileSync('ln', ['-s', join('.pnpm', 'eslint'), join(nm, 'eslint')]);
-    }],
-    ['optional 同名覆寫而沒裝', '{"dependencies":{"addon":"1"},"optionalDependencies":{"addon":"1"},"devDependencies":{"eslint":"1.0.0"}}', (nm) => {
-      mkdirSync(join(nm, 'eslint'), { recursive: true }); writeFileSync(join(nm, 'eslint', 'package.json'), '{}');
-    }],
+  for (const [label, pkg] of /** @type {[string, string][]} */ ([['零相依', '{"name":"k"}'], ['只有 peer', '{"peerDependencies":{"eslint":">=9"}}'], ['只有 optional', '{"optionalDependencies":{"@esbuild/linux-x64":"0.20.0"}}']])) {
+    const repo = tinyRepo({ nodeModules: false, packageJson: pkg });
+    dotOnly(repo.dir);
+    const ok = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('die-before-ready') });
+    assert.doesNotMatch(ok.summary.join('\n'), /node_modules/, `${label}的空 node_modules 被擋：${ok.summary.join(' / ')}`);
+    assert.match(ok.summary.join('\n'), /轉送器/, label);
+  }
+});
+
+test('node_modules 的捷徑連到盒子外＝退 2、結果包不留：頂層絕對路徑、相對路徑往上走出去、@範圍 本身、盒內 @範圍 捷徑底下的項目、解不開的絕對路徑、經過更深一層繞出去', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const outside = keep(mkdtempSync(join(tmpdir(), 'outside-pkg-')));
+  mkdirSync(join(outside, 'pkg'));
+  for (const [label, build] of /** @type {[string, (nm: string) => void][]} */ ([
+    ['頂層絕對路徑', (nm) => execFileSync('ln', ['-s', outside, join(nm, 'eslint')])],
+    ['相對路徑往上走出去', (nm) => execFileSync('ln', ['-s', join('..', '..', '..', '..', '..', '..', '..', '..', 'tmp'), join(nm, 'eslint')])],
+    ['@範圍 本身連到盒子外（底下是真目錄）', (nm) => execFileSync('ln', ['-s', outside, join(nm, '@scope')])],
+    ['盒內 @範圍 捷徑底下的項目連到盒子外', (nm) => { mkdirSync(join(nm, '.store', '@scope'), { recursive: true }); execFileSync('ln', ['-s', outside, join(nm, '.store', '@scope', 'pkg')]); execFileSync('ln', ['-s', join('.store', '@scope'), join(nm, '@scope')]); }],
+    ['解不開的絕對路徑', (nm) => execFileSync('ln', ['-s', join(outside, 'does-not-exist'), join(nm, 'eslint')])],
+    ['字面在盒子裡、經過更深一層的捷徑繞到盒子外', (nm) => { mkdirSync(join(nm, '.store')); execFileSync('ln', ['-s', outside, join(nm, '.store', 'x')]); execFileSync('ln', ['-s', join('.store', 'x'), join(nm, 'eslint')]); }],
+  ])) {
+    const repo = tinyRepo({ nodeModules: false, packageJson: '{"devDependencies":{"eslint":"1.0.0"}}' });
+    const nm = join(repo.dir, 'node_modules'); mkdirSync(nm);
+    mkdirSync(join(nm, 'other')); writeFileSync(join(nm, 'other', 'package.json'), '{}');
+    build(nm);
+    const iso = isolated();
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 2, `${label}：${r.summary.join(' / ')}`);
+    assert.match(r.summary.join('\n'), /有 1 個捷徑連到盒子外/, label);
+    assert.deepEqual(readdirSync(iso.resultsRoot), [], `${label}：退 2 時結果包要整個不留`);
+  }
+});
+
+test('盒子裡第一層跟來源對不上＝退 2：來源 node_modules 有 socket（cp 不複製）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo({ packageJson: '{"devDependencies":{"eslint":"1.0.0"}}' });
+  const nm = join(repo.dir, 'node_modules');
+  execFileSync(process.execPath, ['-e', "require('node:net').createServer().listen('sock', () => process.exit(0))"], { cwd: nm });
+  assert.ok(readdirSync(nm).includes('sock'), '考題前提：socket 沒建出來');
+  const iso = isolated();
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 2, r.summary.join(' / '));
+  assert.match(r.summary.join('\n'), /跟來源不一樣/);
+  assert.deepEqual(readdirSync(iso.resultsRoot), [], '退 2 時結果包要整個不留');
+});
+
+test('不擋的：盒內的相對捷徑、點開頭的 @範圍、optional 同名覆寫而沒裝；劃界：少了某一個宣告的套件、盒子裡解不開的相對捷徑（受審版本拿掉了那個 workspace）也不擋，只記一行', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const real = (/** @type {string} */ dir) => { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'package.json'), '{}'); };
+  for (const [label, pkg, build, missingLine] of /** @type {[string, string, (nm: string) => void, boolean][]} */ ([
+    ['盒內的相對捷徑（pnpm 那種形狀）', '{"devDependencies":{"eslint":"1.0.0"}}', (nm) => { real(join(nm, '.pnpm', 'eslint')); execFileSync('ln', ['-s', join('.pnpm', 'eslint'), join(nm, 'eslint')]); }, false],
+    ['盒內的 @範圍 捷徑、底下是真目錄', '{"devDependencies":{"@scope/pkg":"1.0.0"}}', (nm) => { real(join(nm, '.store', '@scope', 'pkg')); execFileSync('ln', ['-s', join('.store', '@scope'), join(nm, '@scope')]); }, false],
+    ['點開頭的 @範圍（npm 接受，#675 r4 Codex）', '{"devDependencies":{"@.scope/pkg":"npm:x@1","eslint":"1.0.0"}}', (nm) => { real(join(nm, '@.scope', 'pkg')); real(join(nm, 'eslint')); }, false],
+    ['optional 同名覆寫而沒裝', '{"dependencies":{"addon":"1"},"optionalDependencies":{"addon":"1"},"devDependencies":{"eslint":"1.0.0"}}', (nm) => real(join(nm, 'eslint')), false],
+    ['劃界：少了宣告的 eslint、有別的套件', '{"devDependencies":{"eslint":"1.0.0","other":"1.0.0"}}', (nm) => real(join(nm, 'other')), false],
+    ['劃界：受審版本拿掉了 workspace，相對捷徑在盒子裡解不開', '{"workspaces":["packages/*"],"devDependencies":{"eslint":"1.0.0"}}', (nm) => { real(join(nm, 'eslint')); execFileSync('ln', ['-s', join('..', 'packages', 'old'), join(nm, 'old')]); }, true],
+    ['劃界：@範圍 底下的相對捷徑解不開', '{"devDependencies":{"@scope/pkg":"1.0.0"}}', (nm) => { mkdirSync(join(nm, '@scope')); execFileSync('ln', ['-s', 'does-not-exist', join(nm, '@scope', 'pkg')]); }, true],
   ])) {
     const repo = tinyRepo({ nodeModules: false, packageJson: pkg });
     const nm = join(repo.dir, 'node_modules'); mkdirSync(nm);
     build(nm);
-    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('die-before-ready') });
+    /** @type {string[]} */ const logs = [];
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, log: (/** @type {string} */ m) => logs.push(m), ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('die-before-ready') });
     assert.doesNotMatch(r.summary.join('\n'), /node_modules/, `${label}被擋：${r.summary.join(' / ')}`);
     assert.match(r.summary.join('\n'), /轉送器/, label);
+    assert.equal(logs.some((l) => /有 1 個捷徑在盒子裡解不開/.test(l)), missingLine, `${label}：解不開那一行${missingLine ? '沒' : '不該'}記`);
   }
 });
-

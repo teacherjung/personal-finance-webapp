@@ -48,7 +48,7 @@
 // ・本腳本不決定掃描時機（條款：複審者通過之後、gh pr ready 之前，不論誰實作——2026-09-09 起對稱）；它只負責「掃的時候有圍欄」。
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, mkdirSync, chmodSync, openSync, fstatSync, readSync, closeSync, constants as fsConst } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync, mkdirSync, chmodSync, openSync, fstatSync, readSync, closeSync, constants as fsConst } from 'node:fs';
 import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { join, resolve, dirname, basename, sep } from 'node:path';
@@ -109,42 +109,22 @@ export function repoLabelFrom(url) {
 }
 
 /**
- * 這一份 package.json 有沒有宣告任何相依（任何一種相依欄位有內容就算；空物件、空陣列不算）。
- * 打包那兩欄（bundleDependencies／bundledDependencies）是布林時是「要不要把相依一起打包」的選項，本身不宣告套件、不算（#675 r2 Codex；npm 文件明列布林值與別名）。
+ * 這一份 package.json 需不需要先裝好才掃：dependencies 或 devDependencies 有名字就算（欄位層級的集合運算，不重做 npm 的解析）。
+ * dependencies 裡被 optionalDependencies 同名覆寫的不算（npm：可以合法不裝；#675 r3 Codex）；devDependencies 同名的照算（npm 仍當必備；#675 r4 Codex）。
+ * 只有 peer／optional／打包欄的不算（沒裝可能是正常的；#675 r4 換做法後的對抗審查）。形狀怪的（字串、null、非空陣列）不當成沒有。
  * @param {Record<string, unknown>} pkg
  */
-export function declaresDeps(pkg) {
-  for (const k of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies', 'bundleDependencies', 'bundledDependencies']) {
+export function needsInstall(pkg) {
+  const opt = pkg.optionalDependencies;
+  const optional = new Set(opt && typeof opt === 'object' && !Array.isArray(opt) ? Object.keys(opt) : []);
+  for (const k of ['dependencies', 'devDependencies']) {
     if (!(k in pkg)) continue;
     const v = pkg[k];
-    if (Array.isArray(v) ? v.length === 0 : (v && typeof v === 'object' && Object.keys(v).length === 0)) continue;
-    if (typeof v === 'boolean' && (k === 'bundleDependencies' || k === 'bundledDependencies')) continue;
+    if (Array.isArray(v)) { if (v.length) return true; continue; }
+    if (v && typeof v === 'object') { if (Object.keys(v).some((n) => k === 'devDependencies' || !optional.has(n))) return true; continue; }
     return true;
   }
   return false;
-}
-
-/**
- * 盒子裡一定要有的套件：dependencies 與 devDependencies 列的名字（考題要用到的那兩種）。
- * optional／peer 不算（沒裝也可能是正常的）；optionalDependencies 也列了的同名項不算（npm：同名的 optional 覆寫 dependencies、可以不裝——#675 r3 Codex）；
- * 欄位不是物件就不列（有沒有 node_modules 那一道另外由 declaresDeps 管）。
- * @param {Record<string, unknown>} pkg
- * @returns {string[]}
- */
-export function requiredDeps(pkg) {
-  const opt = pkg.optionalDependencies;
-  const optional = new Set(opt && typeof opt === 'object' && !Array.isArray(opt) ? Object.keys(opt) : []);
-  /** @type {string[]} */ const out = [];
-  for (const k of ['dependencies', 'devDependencies']) {
-    const v = pkg[k];
-    if (v && typeof v === 'object' && !Array.isArray(v)) out.push(...Object.keys(v).filter((n) => !optional.has(n)));
-  }
-  return [...new Set(out)];
-}
-
-/** 套件名是不是一般的形狀（`名字` 或 `@範圍/名字`；不准空的、`.` 開頭的段、多一層斜線、反斜線）——名字要接在 node_modules 後面查，不能讓它走出去。 @param {string} name */
-export function isSafeDepName(name) {
-  return /^(?:@[A-Za-z0-9_~-][A-Za-z0-9._~-]*\/)?[A-Za-z0-9_~-][A-Za-z0-9._~-]*$/.test(name);
 }
 
 /**
@@ -842,11 +822,14 @@ export async function runScan(args, deps = {}) {
     if (ls.stdout !== '') return fail('受審版本把 node_modules 提交進去了（捷徑或資料夾）——不掃');
   }
   // 沒有相依的倉庫（例如套件倉庫）跳過 node_modules；有宣告相依卻沒有 node_modules＝不掃（盒子裡的考題會因為少套件亂紅）。
-  // 有 node_modules 的：複製進盒子之後，dependencies／devDependencies 列的每一個名字都要在（#675 r2 Codex：安裝沒完成留下空的
-  // node_modules，原本靠 eslint 哨兵擋、換成來源對照之後空對空會放行）。
   // 宣告看的是受審版本的 package.json（git 物件庫），不是工作樹、也不是盒子；有沒有 node_modules 都讀，壞掉都退。
+  // ⚠️ 劃界（#675 r4 連三輪自問表）：這裡**不**判斷「每一個宣告的套件都裝了」——那要重做 npm 的解析（optional 覆寫、別名、
+  //   workspace、開發相依…），r2〜r4 每補一種寫法就漏另一種。這支量的是自己管得到的兩件：複製進盒子的跟來源一樣（含捷徑不連到
+  //   盒子外），以及最常見的手誤「需要安裝的相依有名字、node_modules 卻不在或是空的」（needsInstall）。裝到一半、少了某一個套件、
+  //   盒子裡解不開的捷徑＝不保證：掃描照跑，
+  //   盒子裡的考題會因為少套件紅，那是安裝（npm）的事。原本的 eslint 哨兵量的也是「複製有沒有帶到真的套件」（訊息「clone 沒跟隨 symlink？」）。
   /** @type {boolean} */ let copyNodeModules;
-  /** @type {string[]} */ let mustHave = [];
+  /** @type {boolean} */ let declared;
   {
     /** @type {Record<string, unknown> | null} */ let pkg = null;
     const ls = spawnSync('git', ['-C', repo, 'ls-tree', '-z', '--full-tree', head, '--', 'package.json'], { encoding: 'utf8', env: gitEnv() });
@@ -863,12 +846,10 @@ export async function runScan(args, deps = {}) {
     }
     /** @type {import('node:fs').Stats | null} */ let nm = null;
     try { nm = lstatSync(join(repo, 'node_modules')); } catch (e) { if (errCode(e) !== 'ENOENT') return fail(`node_modules 判斷不了（${errCode(e)}）`); }
-    if (nm) {
-      copyNodeModules = true;
-      mustHave = pkg ? requiredDeps(pkg) : [];
-      if (mustHave.some((n) => !isSafeDepName(n))) return fail('受審版本 package.json 的相依名稱形狀認不得——不掃');
-    } else {
-      if (pkg && declaresDeps(pkg)) return fail('要掃的倉庫宣告了相依套件、卻沒有 node_modules——先裝好再掃');
+    declared = !!pkg && needsInstall(pkg);
+    if (nm) copyNodeModules = true;
+    else {
+      if (declared) return fail('要掃的倉庫宣告了相依套件、卻沒有 node_modules——先裝好再掃');
       copyNodeModules = false;
     }
   }
@@ -1038,19 +1019,36 @@ export async function runScan(args, deps = {}) {
       try { want = readdirSync(nmReal).sort(); got = readdirSync(join(src, 'node_modules')).sort(); }
       catch (e) { return failAndClean(`盒子裡的 node_modules 判斷不了（${errCode(e)}）`); }
       if (want.length !== got.length || want.some((n, i) => n !== got[i])) return failAndClean('盒子裡的 node_modules 跟來源不一樣（clone 沒複製完整？）');
-      // 宣告的套件都要在盒子裡解析得到（名字建盒前已驗過形狀）：真目錄＝在；捷徑要解得開、而且解完還在盒子裡
-      // （失效的捷徑＝沒裝好，#675 r3 Codex；指到盒子外＝沙箱裡讀不到）。只解路徑、不讀捷徑目標的內容。
+      // 捷徑不准連到盒子外（指到盒子外＝沙箱裡讀不到、跟沒複製進來一樣——#675 r3 Codex）。先照字面判（不碰盒外的目標），
+      // 字面在盒子裡才解（realpath）；解不開但字面在盒子裡＝那個套件不在（沒裝、或受審版本沒有那個 workspace／資料夾），
+      // 照劃界不擋、只記一行（#675 r4 換做法後的對抗審查：受審版本拿掉 workspace 時，相對捷徑本來就會解不開）。
+      // 看 Node 找頂層套件會走的兩層：node_modules 底下每一項，以及 @範圍 底下每一項（@範圍 是盒內捷徑時跟過去列）；更深的層不看。
       /** @type {string} */ let srcReal;
       try { srcReal = realpathSync(src); } catch (e) { return failAndClean(`盒子判斷不了（${errCode(e)}）`); }
-      const missing = mustHave.filter((n) => {
-        const p = join(src, 'node_modules', n);
-        try {
-          if (!lstatSync(p).isSymbolicLink()) return false;
-          const r = realpathSync(p);
-          return !(r === srcReal || r.startsWith(srcReal + sep));
-        } catch { return true; }
-      });
-      if (missing.length) return failAndClean(`盒子裡的 node_modules 少了受審版本 package.json 宣告的 ${missing.length} 個套件（沒裝、失效的捷徑或指到盒子外；安裝沒完成？）——先裝好再掃`);
+      const nmBox = join(src, 'node_modules');
+      const under = (/** @type {string} */ r) => [src, srcReal].some((b) => r === b || r.startsWith(b + sep));
+      /** @returns {'ok' | 'missing' | 'outside'} */
+      const classify = (/** @type {string} */ p) => {
+        if (!lstatSync(p).isSymbolicLink()) return 'ok';
+        if (!under(resolve(dirname(p), readlinkSync(p)))) return 'outside';
+        try { return under(realpathSync(p)) ? 'ok' : 'outside'; } catch { return 'missing'; }
+      };
+      let outside = 0; let missing = 0;
+      try {
+        for (const n of got) {
+          const p = join(nmBox, n);
+          const k = classify(p);
+          if (k === 'outside') { outside++; continue; }
+          if (k === 'missing') { missing++; continue; }
+          if (n.startsWith('@') && statSync(p).isDirectory()) {
+            for (const c of readdirSync(p)) { const kc = classify(join(p, c)); if (kc === 'outside') outside++; else if (kc === 'missing') missing++; }
+          }
+        }
+      } catch (e) { return failAndClean(`盒子裡的 node_modules 判斷不了（${errCode(e)}）`); }
+      if (outside) return failAndClean(`盒子裡的 node_modules 有 ${outside} 個捷徑連到盒子外（沙箱裡讀不到）——先處理再掃`);
+      if (missing) log(`（node_modules 裡有 ${missing} 個捷徑在盒子裡解不開＝那個套件不在：沒裝、或受審版本沒有那個資料夾；照劃界不擋，盒子裡的考題可能會紅）`);
+      // 最常見的手誤：宣告了相依、node_modules 卻是空的（點開頭的 .bin、.package-lock.json 之類不算）——#675 r2 Codex
+      if (declared && !got.some((n) => !n.startsWith('.'))) return failAndClean('要掃的倉庫宣告了相依套件、node_modules 卻是空的（安裝沒完成？）——先裝好再掃');
     } else log('（要掃的倉庫沒有宣告相依套件、也沒有 node_modules：盒子裡不放 node_modules）');
     for (const forbidden of ['data/store.db', 'data/store.json', '.env', '.env.local']) {
       if (existsSync(join(src, forbidden))) return failAndClean(`盒子裡出現不該有的檔：${forbidden}——git archive 不該帶出它，先查 .gitignore`);
