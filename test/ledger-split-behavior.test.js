@@ -691,6 +691,8 @@ test('信用卡年月選單：只列卡帳月份，跨年保留同月或回退�
     const mobileCategory = document.querySelector('.credit-category-panel.credit-mobile-only');
     const desktopCategory = document.querySelector('.credit-category-panel.credit-desktop-only');
     const ledger = document.querySelector('.credit-ledger-section');
+    assert.equal(document.querySelector('.credit-overview-grid').getAttribute('aria-label'), '本月信用卡摘要');
+    assert.equal(desktopCategory.getAttribute('aria-label'), '本月消費分類');
     assert.ok(mobileCategory.compareDocumentPosition(ledger) & globalThis.Node.DOCUMENT_POSITION_FOLLOWING,
       '手機分類維持在明細之前');
     assert.ok(ledger.compareDocumentPosition(desktopCategory) & globalThis.Node.DOCUMENT_POSITION_FOLLOWING,
@@ -726,6 +728,44 @@ test('信用卡年月選單：只列卡帳月份，跨年保留同月或回退�
   }
 });
 
+test('信用卡年月選單：連續切年、切月時採用畫面上最新的年月', async () => {
+  await boot();
+  const { renderTransactions, setMonthFilter } = await import('../public/modules/transactions.js');
+  const original = API['/api/transactions'];
+  const card = (id, date) => ({ ...FIXTURE[0], id, date });
+  const change = (id, value) => {
+    const el = document.getElementById(id);
+    el.value = value;
+    el.dispatchEvent(new globalThis.Event('change', { bubbles: true }));
+  };
+  try {
+    API['/api/transactions'] = [
+      card('new-aug', '2026-08-01'), card('new-mar', '2026-03-01'),
+      card('old-dec', '2025-12-01'), card('old-mar', '2025-03-01'),
+    ];
+    setMonthFilter('2026-08');
+    await renderTransactions();
+    change('creditYearSel', '2025');
+    assert.deepEqual([...document.querySelectorAll('#creditMonthSel option')].map(el => el.value), ['12', '03'], '年份一變就要換成該年的月份選項');
+    change('creditMonthSel', '03');
+    await settleRender();
+    assert.equal(document.getElementById('monthSel').value, '2025-03');
+    assert.deepEqual(rowIds(), ['old-mar']);
+
+    setMonthFilter('2026-08');
+    await renderTransactions();
+    change('creditMonthSel', '03');
+    change('creditYearSel', '2025');
+    await settleRender();
+    assert.equal(document.getElementById('monthSel').value, '2025-03');
+    assert.deepEqual(rowIds(), ['old-mar']);
+  } finally {
+    API['/api/transactions'] = original;
+    setMonthFilter(MONTH);
+    await renderTransactions();
+  }
+});
+
 test('信用卡年月選單：讀取失敗時退回最後成功顯示的年份與月份', async () => {
   await boot();
   const { renderTransactions, setMonthFilter } = await import('../public/modules/transactions.js');
@@ -744,6 +784,7 @@ test('信用卡年月選單：讀取失敗時退回最後成功顯示的年份�
     assert.equal(document.getElementById('creditMonthSel').value, '08');
     assert.equal(document.getElementById('monthSel').value, '2026-08');
     assert.deepEqual(rowIds(), ['new-aug']);
+    assert.match(text('#toast-root'), /載入失敗/);
     failedGetPath = '';
     const month = document.getElementById('creditMonthSel');
     month.value = '03';
@@ -751,6 +792,14 @@ test('信用卡年月選單：讀取失敗時退回最後成功顯示的年份�
     await settleRender();
     assert.equal(document.getElementById('monthSel').value, '2026-03');
     assert.deepEqual(rowIds(), ['new-mar']);
+    failedGetPath = '/api/accounts';
+    document.querySelector('[data-sort="amount"]').click();
+    await settleRender();
+    assert.equal(text('[data-sort="date"] .sort-tri.active'), '▼', '失敗時仍顯示上次成功的排序');
+    failedGetPath = '';
+    document.querySelector('[data-sort="amount"]').click();
+    await settleRender();
+    assert.equal(text('[data-sort="amount"] .sort-tri.active'), '▼', '重試同一排序欄應是第一次點選的方向');
   } finally {
     failedGetPath = '';
     API['/api/transactions'] = original;

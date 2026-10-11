@@ -31,6 +31,8 @@ const subOptions = (parent, cur = '') =>
 let monthFilter = monthKey();
 let renderGeneration = 0;
 let renderedMonth = '';
+let renderedMonths = [];
+let renderedSort = null;
 // 匯入後跳到「筆數最多」的月份要改這個頁面狀態——匯入工作流搬走後由這個接縫代寫
 //（import 綁定唯讀、不能直接賦值；階段二①）
 /** @param {string} m */
@@ -54,9 +56,12 @@ export async function renderTransactions() {
       const message = e instanceof Error ? e.message : String(e);
       if (view().querySelector('.credit-workspace') && renderedMonth) {
         monthFilter = renderedMonth;
+        if (renderedSort) Object.assign(listSort, renderedSort);
         byId('monthSel').value = renderedMonth;
-        byId('creditYearSel').value = renderedMonth.slice(0, 4);
-        byId('creditMonthSel').value = renderedMonth.slice(5, 7);
+        const year = renderedMonth.slice(0, 4);
+        const month = renderedMonth.slice(5, 7);
+        byId('creditYearSel').value = year;
+        byId('creditMonthSel').innerHTML = monthNumberOptionsHtml(monthNumbersForYear(renderedMonths, year), month, esc);
         toast(`載入失敗：${message}`, true);
       } else view().innerHTML = `<div class="hint" role="alert">載入失敗：${esc(message)}</div>`;
     }
@@ -94,7 +99,7 @@ export async function renderTransactions() {
     && active.matches('#creditYearSel, #creditMonthSel') ? active.id : '';
   // 兩種版面的閱讀順序各自跟畫面一致；隱藏的一份不進鍵盤順序。
   const categoryPanelHtml = (/** @type {string} */ visibility, /** @type {string} */ suffix) => `
-    <div class="chart-card credit-category-panel ${visibility}">
+    <section class="chart-card credit-category-panel ${visibility}" aria-label="本月消費分類">
       <div class="credit-category-head">
         <div><h2>本月消費分類</h2><p>依淨額由高到低，最多六類</p></div>
         <button type="button" class="info-link" id="lensInfo${suffix}">退款算在哪個月？</button>
@@ -107,7 +112,7 @@ export async function renderTransactions() {
       ${!refundData ? '<p class="credit-category-note">退款歸屬暫時讀不到，這裡先用帳面口徑（退款與點數折抵都算在發生當月）。重新整理可再試一次。</p>' : ''}
       ${unmatchedThisMonth.length ? `<p class="credit-category-note">本月另有 ${unmatchedThisMonth.length} 筆退款（共 ${money(unmatchedTotal)}）找不到對應消費，未計入上面的統計。 <button type="button" class="info-link" id="unmatchedInfo${suffix}">為什麼？</button></p>` : ''}
       ${rewardsThisMonth.length ? `<p class="credit-category-note">本月另有 ${rewardsThisMonth.length} 筆回饋（共 ${money(rewardTotal)}）是點數折抵帳單，未計入上面的統計。 <button type="button" class="info-link" id="rewardInfo${suffix}">為什麼？</button></p>` : ''}
-    </div>`;
+    </section>`;
 
   view().innerHTML = `
     <div class="credit-workspace">
@@ -131,7 +136,7 @@ export async function renderTransactions() {
         <p>消費統計依消費發生月歸屬；下方明細保留帳單上的原始日期。</p>
       </section>
 
-      <section class="credit-overview-grid" aria-label="本月信用卡摘要與分類">
+      <section class="credit-overview-grid" aria-label="本月信用卡摘要">
         <div class="card credit-stat" data-kind="spend">
           <h3>本月消費</h3>
           <div class="stat sm ${expense < 0 ? 'pos' : 'neg'}">${money(expense)}</div>
@@ -158,6 +163,8 @@ export async function renderTransactions() {
     </div>
   `;
   renderedMonth = monthFilter;
+  renderedMonths = months;
+  renderedSort = { ...listSort };
 
   byId('uploadStmt').onclick = () => openStatementUpload();
   const batchBtn = byId('stmtBatches');
@@ -166,13 +173,15 @@ export async function renderTransactions() {
   byId('creditYearSel').onchange = (e) => {
     const year = e.target.value;
     const availableMonths = monthNumbersForYear(months, year);
-    const month = availableMonths.includes(selectedMonth) ? selectedMonth : availableMonths[0];
+    const currentMonth = byId('creditMonthSel').value;
+    const month = availableMonths.includes(currentMonth) ? currentMonth : availableMonths[0];
     if (!month) return;
+    byId('creditMonthSel').innerHTML = monthNumberOptionsHtml(availableMonths, month, esc);
     monthFilter = `${year}-${month}`;
     renderTransactions();
   };
   byId('creditMonthSel').onchange = (e) => {
-    monthFilter = `${selectedYear}-${e.target.value}`;
+    monthFilter = `${byId('creditYearSel').value}-${e.target.value}`;
     renderTransactions();
   };
   if (focusedPeriodId) byId(focusedPeriodId).focus({ preventScroll: true });
