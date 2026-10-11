@@ -53,7 +53,7 @@ export const FORBIDDEN_AFTER_RECONNECT = [
 // 把那些語法逐項收窄之後兩張考卷仍全綠；已補下面四支探針把它們扣住）。
 // 本檔是**探針的**唯一住所，不是詞表的正本。（09-01〜09-18 詞表曾住在 python 指令裡、而且有兩份，靠身分互鎖考題鎖同步。）
 // ⚠️ **這份複本會落後正本**：守門＝`test/money-vocab-probe-coverage.test.js`（正本每個詞都要有探針扣著它）。
-//   現況：正本 verbs 38/38、nouns 30/30 都有探針扣著。2026-09-29 補字的沿革在變更 647 的 PR 說明。
+//   正本每個詞要有探針扣著；扣不住而且證明被樣式遮住的，點名列在那支考題的 SHADOWED（2026-10-10 起 withdrawal）。2026-09-29 補字的沿革在變更 647 的 PR 說明。
 export const FAMILY_VERBS = ['create', 'place', 'submit', 'send', 'stage', 'preview', 'prepare', 'draft',
   'amend', 'modify', 'edit', 'update', 'cancel', 'delete', 'execute', 'close', 'open', 'buy',
   'sell', 'purchase', 'exercise', 'liquidate', 'replace', 'redeem', 'pay',
@@ -91,8 +91,10 @@ export const FORBIDDEN_FAMILY = [
   // 判斷改成只試第一個候選，錢的相關考題全綠）。要扣住它，得有第一個候選以唯讀字開頭、後面那段只有額外樣式接得住的名字——
   // 下面那一支就是（#643 的 Codex r1 與 Grok 複審後掃都抓到這個缺口；本專案先補探針，套件那邊的考題仍是待辦）：
   // 第一個候選 get__initiate_transfer 以唯讀字開頭、額外樣式那一張表替它脫罪，只有後面那段 initiate_transfer 接得住。
+  // 2026-10-10 整批同步（套件 #55，William 10/08 裁 a：轉帳提款那一族掛了唯讀開頭字也照擋）：get__initiate_transfer 第一個候選就被擋，
+  // 不再扣住「逐一試」——換成 get__convert_to_cash（第一個候選以唯讀字開頭、convert_to 不合額外樣式，只有後面那段 convert_to_cash 的家族網接得住）。
   'mcp__broker__get__place_order',
-  'mcp__broker__get__initiate_transfer',
+  'mcp__broker__get__convert_to_cash',
 ]);
 
 // Claude 自審（2026-09-01）：指令的正規式有四個語法**沒有探針承重**——把它們逐項收窄之後
@@ -115,9 +117,20 @@ FORBIDDEN_FAMILY.push(
   `${FAKE_UUID}get_place_transfer`, `${FAKE_UUID}get_place_withdrawal`,
   `${FAKE_UUID}get_place_payment`, `${FAKE_UUID}get_place_payout`,
 );
+// 再換形狀補的 10 支（2026-10-10 整批同步）：套件 #55（William 10/08 裁 a）把轉帳提款那一族的樣式也放進「唯讀開頭也不脫罪」那一張，
+// 上面 get_{動詞}_order 那 6 支與 get_place_{名詞} 那 4 支改由那條樣式接走、詞表不再承重。連寫的寫法那條樣式接不到（它要詞的前後是底線或頭尾），
+// 只有詞表扣得住：動詞用全小寫連寫的 {動詞}funds，名詞用 get_place{名詞}（舊探針拿掉一個底線，唯讀開頭的用意不變）。
+// 每一支逐一量過：完整設定下擋、只刪那一欄那個詞就放行。動詞的 withdrawal 什麼形狀都扣不住（連寫被 withdraw 接走、帶底線被樣式接走），
+// 點名例外在 test/money-vocab-probe-coverage.test.js（名詞的 withdrawal 由 get_placewithdrawal 扣著）。
+FORBIDDEN_FAMILY.push(
+  `${FAKE_UUID}withdrawfunds`, `${FAKE_UUID}transferfunds`, `${FAKE_UUID}depositfunds`,
+  `${FAKE_UUID}remitfunds`, `${FAKE_UUID}wirefunds`, `${FAKE_UUID}disbursefunds`,
+  `${FAKE_UUID}get_placetransfer`, `${FAKE_UUID}get_placewithdrawal`,
+  `${FAKE_UUID}get_placepayment`, `${FAKE_UUID}get_placepayout`,
+);
 /** 數量釘（字面數字；2026-09-27 ⑧ 補：這張表被縮短時，走夾具的家族網矩陣題會靜靜少考幾個形狀）。
- *  2026-09-29：89 → 115。 */
-export const EXPECTED_FORBIDDEN_FAMILY = 115;
+ *  2026-09-29：89 → 115。2026-10-10：115 → 125（整批同步，加 10 支連寫探針）。 */
+export const EXPECTED_FORBIDDEN_FAMILY = 125;
 
 // 名字長得像、但不該被家族網擋的工具——對這些名字「matcher 命中且回 deny」都算誤傷
 // （誤擋跟漏擋一樣是病，#384 誤擋事故）。2026-09-27（⑧，登記制）起分成兩組，因為它們在真清單下的命運不同：
@@ -153,7 +166,9 @@ export const LOOKALIKES_UNREGISTERED = [
   `${FAKE_UUID}firmware_update`,                                        // firm+wire 撞名
   'mcp__payments__create_customer',                                     // 伺服器名帶 payment 不牽連工具（r2 M③）
   // 唯讀豁免逐動詞探針：指令的豁免名單少掉任何一個，對應這支在夾具下就會被誤攔＝走夾具的那幾題轉紅（真清單下它們被登記制擋）。
-  ...READ_VERBS.map((v) => `${FAKE_UUID}${v}_transfer_log`),
+  // 2026-10-10 整批同步：原本的 `${v}_transfer_log` 在套件 #55 之後照擋（轉帳那一族唯讀開頭也不脫罪＝William 10/08 裁 a），不再是長得像的名字；
+  // 換成 exchange_traded_funds（實測：夾具下 14 個唯讀動詞全放行；拿掉任一個動詞的唯讀豁免＝那一支被擋，14/14 都承重）。
+  ...READ_VERBS.map((v) => `${FAKE_UUID}${v}_exchange_traded_funds`),
 ];
 
 // 數量釘（r1 M②「宣稱 19 實際 18」＋r2 M④「加法式的釘會跟著清單一起縮」——兩面教訓）：
@@ -362,8 +377,11 @@ export function reasonClass(reason) {
   return hit ? hit[0] : null;
 }
 /**
- * 鉤子輸出的尾句（套件 hookOutput）分兩種：名字像錢或碰到錢＝規矩 B2 那一句（當誤觸或冒名、立即回報裁示者），就是這一個；
- * 登記制拒絕、名字看不出像錢的＝另一種（逐字以 hookOutput 為準，這裡刻意不抄——套件 #18 送審前改過那一句，抄了會在同步之後變成空斷言）。
- * 換了編號的下單工具必須是這一種（本專案 AGENTS 規則 3）。錨在字串結尾（$）：尾句是理由的最後一句，對上這一個就不是另一種。
+ * 2026-10-10 整批同步（套件 #67，William 10/08 裁 a；9/28 他裁 b 把「裁示者」改「擁有者」）：錢的尾句變成兩句，這一個兩句都認、別的不認——
+ *   確定擋下＝「此類指令一律視為誤觸或冒名，拒絕執行並立即回報擁有者。」；名字像錢又沒登記（換了編號的下單工具就是這種）＝「疑似誤觸或冒名。拒絕執行，
+ *   立即回報擁有者；這個連接器要登記進哪一欄，都先問擁有者。」。兩句都照樣擋；差在後者說「疑似」（本專案 AGENTS 規則 3 寫「一律視為」，語意差寫在同步那支的說明）。
+ * 鉤子輸出的尾句（套件 hookOutput）分三種：確定擋下＝規矩 B2 那一句；登記制拒絕、名字像錢＝「疑似」那一句；登記制拒絕、名字看不出像錢＝第三種
+ * （不當成事故、照 B3 先通報；逐字以 hookOutput 為準，這裡刻意不抄——套件 #18 送審前改過那一句，抄了會在同步之後變成空斷言）。
+ * 這一個認前兩種、不認第三種；換了編號的下單工具必須落在前兩種（本專案 AGENTS 規則 3）。錨在字串結尾（$）：尾句是理由的最後一句。
  */
-export const IMPERSONATION_TAIL = /此類指令一律視為誤觸或冒名，拒絕執行並立即回報裁示者。$/u;
+export const IMPERSONATION_TAIL = /(?:此類指令一律視為誤觸或冒名，拒絕執行並立即回報擁有者。|疑似誤觸或冒名。拒絕執行，立即回報擁有者；這個連接器要登記進哪一欄，都先問擁有者。)$/u;

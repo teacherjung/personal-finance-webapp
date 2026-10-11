@@ -48,7 +48,7 @@ const { build, buildRaw, read, validate, inline, literal, plain, countRules, MAR
 const LIMIT = 7000;
 const machinesFile = path.join(__dirname, '..', 'MACHINES.md');
 // MACHINES.md 裡那張定義表的開頭，用來定位（標籤的正本只有那一份）。
-const LABEL_TABLE_ANCHOR = '句尾的執行者標籤，定義在這裡、只在這裡';
+const LABEL_TABLE_ANCHOR = '每條最後一行的執行者標籤，定義在這裡、只在這裡';
 
 /** 從 MACHINES.md 抽出已定義的執行者名字；抽不到就讓這題紅，不要默默放行。 */
 function definedLabels() {

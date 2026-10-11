@@ -4,13 +4,16 @@
 // 為什麼：裁示者定了「沒有時限、問了就等」（I2）。那「還在等哪些」就得有東西在數，不然靠下一個
 // 開工的人剛好想起來。這支讓裁示者不必自己翻留言串就知道還欠哪些答案，也讓 AI 不會重問或自己拍板。
 //
-// ⚠️ 這不是閘：它不擋任何事、不寫任何留言、不判「可不可以先做」。不要把它接進鉤子或合併步驟。
+// ⚠️ 清單腳本本身不擋：它不寫任何留言、不判「可不可以先做」，不要把這一支接進鉤子或合併步驟（擁有者 2026-09-06 裁的是開工時印出來的小工具）。
+//    擋的是另一道閘：tools/gates/check-pending-rulings.js（A5）引用這裡的 evaluate，只看問在那一支的題。
 //
 // 形狀只認範本（templates/ruling-record.md）：
 //   問  ＝第一行「## ❓ 待裁（YYYY-MM-DD）：〈標題〉」
 //   裁示＝第一行「## ⚖️ 〈裁示者識別值〉 裁示（YYYY-MM-DD）：〈標題〉」＋一行「原話（對話中，〈識別值〉 轉述）：**「…」**」，
 //         **而且要由裁示者的貼文帳號貼的**（別人貼的裁示不算，會另列成疑似）
 //   撤回＝第一行「## 🚫 撤回（YYYY-MM-DD）：〈標題〉」＋「撤回理由：〈三選一〉（依據）」＋「〈識別值〉 撤回、〈裁示者〉 未回；他隨時可以要我重問」
+//   驗收＝第一行「## ✅ 驗收（YYYY-MM-DD）：〈標題〉」＋跟裁示同一行形狀的原話行（H6；擁有者 2026-10-07 裁「要貼，寫進規矩 H6」）。
+//         它不是問也不是答：另列成「驗收留痕」，不進待裁、不配對；只看形狀，不看哪一支該貼卻沒貼。
 // 配對＝裁示或撤回的內文（引用區塊以外）出現原 ❓ 留言的編號（貼網址就自然含有），而且比 ❓ 晚。
 // 已裁與已撤回一定印出來、附配對，讓錯的配對看得見；長得像但形狀不合的另列成疑似。
 // 第一行＝原文第一個非空行；原話、撤回理由、自報句、配對只讀**開頭那一段**（讀到第一個引用、程式碼、表格分隔列、HTML、圖片、
@@ -28,6 +31,12 @@ const UNSET = '未設定';
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
 const ASK = /^## ❓ 待裁（(\d{4}-\d{2}-\d{2})）：(\S.*)$/u;
 const WITHDRAW = /^## 🚫 撤回（(\d{4}-\d{2}-\d{2})）：(\S.*)$/u;
+const ACCEPT = /^## ✅ 驗收（(\d{4}-\d{2}-\d{2})）：(\S.*)$/u;
+/**
+ * 第一行像驗收留痕、卻不合 ACCEPT 的形狀（少空白、日期括號寫錯、標題空的）：列疑似，不然寫壞的那一則靜靜不見。
+ * 只認「✅ 後面接驗收」：只看 ✅ 會把別的打勾標題也列進來（第一個使用專案有一則「## ✅ <版本> 實證通過」）。
+ */
+const NEAR_ACCEPT = /✅\s*驗收/u;
 const WITHDRAW_REASON = /^撤回理由：(題目依附的東西沒了|問題本身問錯了|跟另一則 ❓ 重複)（[^\n）]*\S[^\n）]*）[ \t]*$/mu;
 const NEAR = /❓|⚖|🚫|待裁|裁示|撤回/u;
 /** 疑似那一欄逐則印幾則（其餘收成一行，總數與最早日期照印）；理由見 render()。 */
@@ -43,7 +52,7 @@ const clean = (body) => leadingText(body);
 /** 第一行＝原文第一個非空行（跟結論閘的標頭同一條窄路，不經過上面那一段的判斷）。 */
 const firstLine = (body) => String(body || '').replace(/\r\n?/g, '\n').split('\n').find((l) => l.trim()) || '';
 const readPart = clean;
-const TRACE_HEAD = /^## (?:❓|⚖|🚫)/mu;
+const TRACE_HEAD = /^## (?:❓|⚖|🚫|✅ 驗收)/mu;
 // 編號要整個對上：前後不可以再接字母或數字（c1 不可以命中 c12）；但連字號與底線算邊界——網址尾碼是「issuecomment-<編號>」。
 const cites = (body, id) => new RegExp(`(?<![0-9A-Za-z])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![0-9A-Za-z])`, 'u').test(readPart(body));
 
@@ -80,12 +89,13 @@ function evaluate(comments, decider) {
   const asks = [];
   const rulings = [];
   const withdraws = [];
+  const accepts = [];
   const near = [];
   const sorted = [...comments].sort((a, b) => at(a) - at(b));
   for (const c of sorted) {
     const first = firstLine(c.body);
-    // 三種留痕都只採計登記過的貼文帳號（設定的貼文帳號資格；r1 Medium⑧：原本只有裁示看帳號，外人能撤掉待裁）
-    if (!accounts.has(c.author) && (ASK.test(first) || WITHDRAW.test(first) || rulingRe.test(first))) {
+    // 四種留痕（問、裁示、撤回、驗收）都只採計登記過的貼文帳號（設定的貼文帳號資格；r1 Medium⑧：原本只有裁示看帳號，外人能撤掉待裁）
+    if (!accounts.has(c.author) && (ASK.test(first) || WITHDRAW.test(first) || rulingRe.test(first) || ACCEPT.test(first))) {
       near.push({ ...c, why: `不是登記的貼文帳號貼的（${c.author}），不採計` });
       continue;
     }
@@ -111,6 +121,14 @@ function evaluate(comments, decider) {
       withdraws.push({ ...c, date: w[1], title: w[2].trim() });
       continue;
     }
+    const v = ACCEPT.exec(first);
+    if (v) {
+      if (!realDate(v[1])) { near.push({ ...c, why: '日期不是真的日子' }); continue; }
+      if (!quoteRe.test(clean(c.body))) { near.push({ ...c, why: `驗收留痕少了「原話（對話中，〈登記的識別值〉 轉述）：**「…」**」那一行（轉述者要是登記的識別值、不帶記號）${stopNote(c.body)}` }); continue; }
+      accepts.push({ ...c, date: v[1], title: v[2].trim() });
+      continue;
+    }
+    if (NEAR_ACCEPT.test(first)) { near.push({ ...c, why: '第一行長得像驗收留痕、但形狀不合範本' }); continue; }
     if (NEAR.test(first)) near.push({ ...c, why: '第一行長得像留痕、但形狀不合範本' });
     else if (TRACE_HEAD.test(c.body)) near.push({ ...c, why: '內文有留痕的標題、但不在第一行（標題前面不可以有別的字）' });
   }
@@ -136,10 +154,10 @@ function evaluate(comments, decider) {
   // 印法在同一秒時要靠平台順序決定誰後到，所以在這裡把平台給的原始位置帶上（判斷完全不看它）。
   const posOf = new Map(comments.map((c, i) => [c.id, i]));
   for (const n of near) n.pos = posOf.has(n.id) ? posOf.get(n.id) : -1;
-  return { open, ruled, withdrawn, near };
+  return { open, ruled, withdrawn, near, accepted: accepts };
 }
 
-function render({ open, ruled, withdrawn, near }) {
+function render({ open, ruled, withdrawn, near, accepted = [] }) {
   const lines = [];
   const where = (c) => `變更 ${c.change}｜留言 ${c.id}`;
   lines.push(`還沒回：${open.length} 則`);
@@ -148,6 +166,8 @@ function render({ open, ruled, withdrawn, near }) {
   for (const { ask: q, by } of ruled) lines.push(`  ・${q.title}｜問：${where(q)}｜裁：${by.date}，${where(by)}`);
   lines.push(`已撤回：${withdrawn.length} 則`);
   for (const { ask: q, by } of withdrawn) lines.push(`  ・${q.title}｜問：${where(q)}｜撤：${by.date}，${where(by)}`);
+  lines.push(`驗收留痕：${accepted.length} 則（不是待裁；只認形狀，不看哪一支該貼卻沒貼）`);
+  for (const a of accepted) lines.push(`  ・${a.date}｜${a.title}｜${where(a)}`);
   if (near.length) {
     // 這一欄的用途是「**今天**寫壞的那一則要被看見」（寫壞＝配不到題，那一題會一直掛在還沒回，
     // 而貼的人以為早就回完了）。所以照時間**新到舊**排、只逐則印最近 NEAR_SHOWN 則，其餘收成一行——

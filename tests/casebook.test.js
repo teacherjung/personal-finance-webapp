@@ -22,14 +22,18 @@
 //     整行照掃不給任何豁免**（上一版對網址整段放行，結果網址後面緊接著的名字也被吞掉；
 //     來源網址裡本來就不該出現字表上的名字，所以根本不需要那個例外）。
 //
+//   ⑤**cases/DIGEST.md（每條規矩為什麼的摘要）必須與重新產生的結果逐字元相同**；產法本身（每條取最早一則、比字碼、
+//     教訓切在第一個「；」或「。」、有條規矩沒案例指著＝產不出來）用假資料另考，帶不帶案例簿都跑；
+//     「cases/ 在不在」不把那一份算進去（不帶案例簿的專案也帶它）；pick 整份先驗：不是物件、鍵不是本文條號、形狀不對、指到不在或沒指著那條的案例＝產不出來。
+//
 //   ④**帶不帶案例簿只看設定的登記**（裁示 2a：公開的專案可以不帶）：機器表「案例簿考題＋索引產生器」那一列已啟用＝帶、未移植＝不帶。
 //     登記跟 cases/ 在不在對不上一律紅（而且照跑上面四題）；唯一跳過的情況是「登記不帶，而且 cases/ 確實不在」，跳過會寫出原因。
-//     上面四題各自記一筆「我跑了」，最後一題核對跑了幾題＝登記說該跑幾題（接線接錯、跳過值寫死，這裡紅）。
+//     上面五題各自記一筆「我跑了」，最後一題核對跑了幾題＝登記說該跑幾題（接線接錯、跳過值寫死，這裡紅）。
 //     ⚠️ 所以只挑幾題跑（--test-name-pattern）時最後一題會紅，那是這個核對的代價。
 //
 // ⚠️ 守不到的，照實說：
-//    ・同一支PR裡同時把登記改成未移植、又刪掉 cases/：兩樣都改就全綠（四題跳過）——看得見的改動，靠複審；
-//    ・不帶案例簿的專案裡，「本文每一條都有案例指著」與名字字表都不檢查：規矩本文要在套件那邊改；
+//    ・同一支PR裡同時把登記改成未移植、又刪掉 cases/：兩樣都改就全綠（五題跳過）——看得見的改動，靠複審；
+//    ・不帶案例簿的專案裡，「本文每一條都有案例指著」與名字字表都不檢查：規矩本文預設在套件那邊改（用例外先在專案改的，要等搬回套件那一支才過這道檢查）；
 //    ・「在不在」看的是磁碟、不是版本控制：沒追蹤的 cases/ 也算在（本機紅、乾淨的雲端副本可能綠）。
 //    ・欄位「非空」指的是**原始欄值非空**，不是「呈現出來看得到字」——這一題不解讀 Markdown，
 //      只靠 ⓪ 擋掉已知會產生隱藏內容的那兩樣；別種寫法仍可能讓呈現與原文不一致。
@@ -41,15 +45,16 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { read } = require('../tools/build-rules.js');
-const { build: buildIndex, outFile: indexOutFile, MACHINE, NOT_CARRIED_REASON, declaration } = require('../tools/build-casebook-index.js');
+const { build: buildIndex, outFile: indexOutFile, buildDigest, digestFile, casebookPresent, MACHINE, NOT_CARRIED_REASON, declaration } = require('../tools/build-casebook-index.js');
+const os = require('node:os');
 const { read: readSettings } = require('../tools/settings-data.js');
 
 const root = path.join(__dirname, '..');
 const casesDir = path.join(root, 'cases');
 // 帶不帶只看登記；cases/ 在不在只拿來對帳（declaration 的註解）
-const DECLARED = declaration(readSettings().machines, fs.existsSync(casesDir));
+const DECLARED = declaration(readSettings().machines, casebookPresent(casesDir));
 const SKIP = DECLARED.run ? false : NOT_CARRIED_REASON;
-const CHECKS = 4;
+const CHECKS = 5;
 let ran = 0;
 // 六欄，順序就是案例的固定格式。
 const FIELDS = ['日期', '本文條號', '發生什麼', '代價', '教訓', '來源'];
@@ -61,7 +66,7 @@ const HIDDEN = /[\r\u0085\u2028\u2029\v\f]|<!--|-->/u;
 function caseFiles() {
   return fs
     .readdirSync(casesDir)
-    .filter((f) => f.endsWith('.md') && f !== 'README.md')
+    .filter((f) => f.endsWith('.md') && f !== 'README.md' && f !== 'DIGEST.md')
     .sort();
 }
 
@@ -83,9 +88,9 @@ function readCase(file) {
   FIELDS.forEach((name, i) => {
     const line = lines[i + 2];
     const head = `- ${name}：`;
-    assert.ok(line.startsWith(head), `${file} 第 ${i + 3} 行應該是「${head}…」，實際是：${line.slice(0, 24)}`);
+    assert.ok(line.startsWith(head), `${file} 第 ${i + 3} 行應該是「${head}…」，實際是：${line.slice(0, 24)}。六欄依序各一行（日期、本文條號、發生什麼、代價、教訓、來源），照 cases/ 裡任一則的形狀寫，改完跑 node tools/build-casebook-index.js`);
     const value = line.slice(head.length).trim();
-    assert.notEqual(value, '', `${file} 的「${name}」欄是空的`);
+    assert.notEqual(value, '', `${file} 的「${name}」欄是空的：每一欄都要有字，寫不出來就不要立這一則；改完跑 node tools/build-casebook-index.js`);
     fields[name] = value;
   });
   if (lines.length === FIELDS.length + 3) {
@@ -102,9 +107,9 @@ function ruleIds() {
   return ids;
 }
 
-test('案例與索引都不含會製造隱藏內容的字元', { skip: SKIP }, () => {
+test('案例、索引與摘要都不含會製造隱藏內容的字元', { skip: SKIP }, () => {
   ran += 1;
-  for (const file of [...caseFiles(), 'README.md']) {
+  for (const file of [...caseFiles(), 'README.md', 'DIGEST.md']) {
     const text = fs.readFileSync(path.join(casesDir, file), 'utf8');
     const hit = HIDDEN.exec(text);
     assert.equal(
@@ -126,6 +131,14 @@ test('索引與重新產生的結果逐字元相同（索引是產物、不要�
   );
 });
 
+test('摘要（每條規矩為什麼）與重新產生的結果逐字元相同（摘要是產物、不要手改）', { skip: SKIP }, () => {
+  ran += 1;
+  const text = fs.readFileSync(digestFile, 'utf8');
+  assert.equal(text, buildDigest(), 'cases/DIGEST.md 跟案例檔、本文對不上：摘要是產物，要改請改案例、cases/index.json 或 rules.json，再跑 node tools/build-casebook-index.js');
+  const ids = read().sections.flatMap((s) => s.rules.map((r) => `${s.letter}${r.n}`));
+  assert.deepEqual(text.split('\n').filter((l) => l.startsWith('- ')).map((l) => l.slice(2).split('｜')[0]), ids, '本文每一條剛好一行、照本文的順序');
+});
+
 test('每則六欄各一個且非空、條號都存在，而且本文每一條都有案例指著', { skip: SKIP }, () => {
   ran += 1;
   const ids = ruleIds();
@@ -140,9 +153,9 @@ test('每則六欄各一個且非空、條號都存在，而且本文每一條�
   assert.deepEqual(orphans, [], `這幾條規矩沒有任何案例指著它（案例簿的進門規則：一條規矩要進本文，就要說得出它為什麼存在）：${orphans.join('、')}`);
 });
 
-test('案例與索引都不出現擁有者名字與 AI 產品名（只認一份已知字表、不分大小寫）', { skip: SKIP }, () => {
+test('案例、索引與摘要都不出現擁有者名字與 AI 產品名（只認一份已知字表、不分大小寫）', { skip: SKIP }, () => {
   ran += 1;
-  for (const file of [...caseFiles(), 'README.md']) {
+  for (const file of [...caseFiles(), 'README.md', 'DIGEST.md']) {
     fs.readFileSync(path.join(casesDir, file), 'utf8')
       .split('\n')
       .forEach((line, i) => {
@@ -158,7 +171,46 @@ test('案例與索引都不出現擁有者名字與 AI 產品名（只認一份�
   }
 });
 
-// ⚠️ 這一題要留在檔案最後：它核對上面四題跑了幾題
+test('⑤摘要的產法（假資料，帶不帶案例簿都跑）：每條預設取最早一則（日期、檔名比字碼）、pick 可以改挑且要指到有指著那條的案例、教訓切在第一個；或。、照本文順序；有條沒案例指著＝產不出來；只有摘要的 cases/ 不算帶了案例簿', () => {
+  const rules = { sections: [{ letter: 'A', rules: [{ n: 1 }, { n: 2 }] }, { letter: 'B', rules: [{ n: 1 }] }] };
+  const notes = { digest: { title: '摘要', intro: ['導言'] } };
+  const row = (slug, 日期, 條號, 教訓, 標題 = slug) => ({ slug, 日期, 標題, 本文條號: 條號, 教訓 });
+  const rows = [
+    row('b-later', '2026-09-02', 'A1', '後來的；不該選到'),
+    row('z-same-day', '2026-09-01', 'A1、B1', '同一天字碼大的。不該選到'),
+    row('Z-same-day', '2026-09-01', 'A1', '同一天字碼小的；選到這一則'),
+    row('only-a2', '2026-09-05', 'A2', '沒有分號也沒有句號'),
+  ];
+  assert.equal(buildDigest({ rules, rows, notes }), [
+    '# 摘要', '', '導言', '',
+    '- A1｜Z\\-same\\-day（2026-09-01）——同一天字碼小的',
+    '- A2｜only\\-a2（2026-09-05）——沒有分號也沒有句號',
+    '- B1｜z\\-same\\-day（2026-09-01）——同一天字碼大的',
+    '',
+  ].join('\n'));
+  assert.throws(() => buildDigest({ rules, rows: rows.filter((r) => r.slug !== 'only-a2'), notes }), /本文 A2 沒有任何案例指著/u);
+  // pick：規矩改過意思時改挑哪一則；指到的要在、要指著那一條，不然丟錯
+  const picked = buildDigest({ rules, rows, notes: { digest: { ...notes.digest, pick: { A1: { slug: 'b-later', why: '最早那一則講舊制' } } } } });
+  assert.ok(picked.includes('- A1｜b\\-later（2026-09-02）——後來的') && !picked.includes('Z\\-same\\-day（'), picked);
+  assert.throws(() => buildDigest({ rules, rows, notes: { digest: { ...notes.digest, pick: { A1: { slug: 'only-a2', why: 'x' } } } } }), /digest\.pick\.A1 指的「only-a2」不在案例簿、或它的本文條號沒有 A1/u, '指到沒指著 A1 的案例＝丟錯');
+  assert.throws(() => buildDigest({ rules, rows, notes: { digest: { ...notes.digest, pick: { A1: { slug: 'nope', why: 'x' } } } } }), /不在案例簿/u);
+  assert.throws(() => buildDigest({ rules, rows, notes: { digest: { ...notes.digest, pick: { A1: 'b-later' } } } }), /要是 \{ slug, why \}/u, 'pick 要帶為什麼');
+  // 整份 pick 先驗（#59 r2 R1）：鍵打錯條號、整份寫成陣列，都不可以默默當成沒指定而退回最早那一則
+  assert.throws(() => buildDigest({ rules, rows, notes: { digest: { ...notes.digest, pick: { A9: { slug: 'b-later', why: 'x' } } } } }), /digest\.pick 有「A9」：本文沒有這一條/u, '鍵不是本文條號＝丟錯');
+  assert.throws(() => buildDigest({ rules, rows, notes: { digest: { ...notes.digest, pick: [{ id: 'A1', slug: 'b-later', why: 'x' }] } } }), /digest\.pick 要是物件/u, '寫成陣列＝丟錯，不當成 {}');
+  assert.ok(require('../tools/kit-lock.js').SHARED_PATHS.includes('cases/DIGEST.md'), '摘要在共用檔清單的共用路徑裡：同步時跟規矩一起搬，不帶案例簿的專案也拿得到');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'casebook-present-'));
+  try {
+    const cases = path.join(dir, 'cases');
+    assert.equal(casebookPresent(cases), false, '不在＝沒帶');
+    fs.mkdirSync(cases); fs.writeFileSync(path.join(cases, 'DIGEST.md'), 'x');
+    assert.equal(casebookPresent(cases), false, '只有摘要＝沒帶（不帶案例簿的專案也帶這一份）');
+    fs.writeFileSync(path.join(cases, 'README.md'), 'x');
+    assert.equal(casebookPresent(cases), true, '有別的檔＝帶了');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ⚠️ 這一題要留在檔案最後：它核對上面五題跑了幾題
 test('帶不帶案例簿只看設定的登記，而且登記要跟 cases/ 在不在一致；該跑的真的跑了', () => {
   assert.equal(DECLARED.problem, null, DECLARED.problem || '');
   assert.equal(ran, DECLARED.run ? CHECKS : 0, `登記說${DECLARED.run ? '要跑' : '不跑'}案例簿的 ${CHECKS} 題，實際跑了 ${ran} 題：跳過的接線接錯了`);
@@ -178,4 +230,7 @@ test('帶不帶案例簿只看設定的登記，而且登記要跟 cases/ 在不
   }
   // 訊息不可以只叫人還原：在不帶案例簿的專案裡照做＝把私人紀錄複製進公開倉庫（挑錯那一輪實際走出來過）
   assert.match(declaration(row('已啟用'), false).problem, /不要把 cases\/ 複製進來/u, '登記帶、cases/ 不在：訊息要講不帶案例簿的專案該怎麼做');
+  // 不帶案例簿的專案也帶摘要：訊息不可以叫人刪整個 cases/（會把共用檔清單裡的摘要刪掉；#59 r1 R2）
+  assert.match(declaration(row('未移植'), true).problem, /摘要以外的檔刪掉（cases\/DIGEST\.md 要留著/u, '登記不帶、cases/ 有別的東西：只刪摘要以外的、摘要要留');
+  assert.match(NOT_CARRIED_REASON, /沒有摘要以外的東西/u);
 });

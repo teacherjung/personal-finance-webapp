@@ -3,6 +3,7 @@
 // 為什麼有這一層：原專案七支閘直接呼叫某一個平台的指令列工具，合計三千多行。實際量過，
 // 它們只用到平台的九個動作。所以套件定九個問題與答案形狀，各專案自己填一條指令去問。
 // （2026-09-14 加第十個 allComments：待裁清單要掃整個專案的留言。）
+// （2026-10-08 加第十一、十二個 repoTree、repoFile：下游落後在套件這邊讀使用專案的倉庫。）
 //
 // 守得到的：
 //   ①沒登記的動作被問到＝丟錯，**絕不回空答案**——空陣列會讓「沒有未撤銷的阻擋」「沒有別支疊在上面」
@@ -37,6 +38,8 @@ const GOOD = {
   checks: [{ name: '三關', status: 'completed', conclusion: 'success', completedAt: '2026-09-13T01:00:00Z', producer: 'ci' }],
   requiredChecks: [{ name: '三關', producer: 'ci' }],
   branchSha: { sha: 'abc123' },
+  repoTree: [{ path: 'tools/a.js', sha: 'abc123' }],
+  repoFile: { content: '{\n  "x": 1\n}\n' },
 };
 
 /** 把一個答案包成「印出 JSON 的指令」。 */
@@ -53,7 +56,7 @@ function allRegistered(overrides = {}) {
   }
   return settingsWith({ ...ops, ...overrides });
 }
-const ARGS = { change: '7', sha: 'abc123', branch: 'main' };
+const ARGS = { change: '7', sha: 'abc123', branch: 'main', repo: 'acme/app', ref: 'main', path: 'kit-lock.json' };
 const argsFor = (name) => Object.fromEntries(OPERATIONS[name].params.map((p) => [p, ARGS[p]]));
 
 test('每個動作都問得到，而且答案就是登記的指令印出來的東西', () => {
@@ -187,11 +190,14 @@ test('{project} 記號把倉庫身分釘進指令；設定沒填就丟錯；登�
   } finally { if (prev === undefined) delete process.env.PLATFORM_PICK_REPO_TEST; else process.env.PLATFORM_PICK_REPO_TEST = prev; }
 });
 
-test('GitHub 範本：每一條讀寫指令都用 {project} 釘倉庫、不用 {owner}/{repo} 佔位；登記要清 GH_REPO 與 GH_HOST', () => {
+test('GitHub 範本：每一條讀寫指令都用 {project} 釘倉庫（讀別的倉庫的兩條用 {repo}、不混用）、不用 {owner}/{repo} 佔位；登記要清 GH_REPO 與 GH_HOST', () => {
   const doc = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'templates', 'platform-github.json'), 'utf8'));
   for (const [name, argv] of Object.entries(doc.operations)) {
     const joined = argv.join(' ');
-    assert.ok(joined.includes('{project}'), `${name} 沒有用 {project} 釘倉庫`);
+    // 讀別的倉庫的那兩個（下游落後）用 {repo} 指名：一樣寫死在指令裡、不由環境變數決定
+    const pin = OPERATIONS[name].params.includes('repo') ? '{repo}' : '{project}';
+    assert.ok(joined.includes(pin), `${name} 沒有用 ${pin} 釘倉庫`);
+    if (pin === '{repo}') assert.ok(!joined.includes('{project}'), `${name} 問的是別的倉庫，不可以混用 {project}`);
     assert.ok(!joined.includes('{owner}/{repo}'), `${name} 還在用工具自己的佔位（會被 GH_REPO 改寫）`);
   }
   assert.deepEqual([...doc.clearEnv].sort(), ['GH_HOST', 'GH_REPO']);
@@ -204,14 +210,14 @@ test('GitHub 範本：每一條讀寫指令都用 {project} 釘倉庫、不用 {
   // 該動作的參數記號要剛好一次；展開後的 argv 沒有殘留記號
   for (const [name, argv] of Object.entries(doc.operations)) {
     const joined = argv.join(' ');
-    for (const token of ['{change}', '{sha}', '{branch}', '{project}']) {
+    for (const token of ['{change}', '{sha}', '{branch}', '{project}', '{repo}', '{ref}', '{path}']) {
       assert.ok(joined.split(token).length - 1 <= 1, `${name} 的 ${token} 出現超過一次`);
     }
     for (const p of OPERATIONS[name].params) assert.equal(joined.split(`{${p}}`).length - 1, 1, `${name} 少了或多了參數記號 {${p}}`);
     const settings = { platform: { project: 'o/r', operations: { [name]: argv } } };
     const seen = [];
     try { ask(name, Object.fromEntries(OPERATIONS[name].params.map((p) => [p, 'x'])), { settings, run: (cmd, args) => { seen.push([cmd, ...args]); return { status: 0, stdout: OPERATIONS[name].kind === 'list' ? '[]' : '{}', stderr: '' }; } }); } catch { /* 物件型答案會因形狀不合丟錯，這裡只看展開 */ }
-    assert.ok(seen.length === 1 && !seen[0].some((a) => /\{(change|sha|branch|project)\}/u.test(a)), `${name} 展開後還有記號：${JSON.stringify(seen[0])}`);
+    assert.ok(seen.length === 1 && !seen[0].some((a) => /\{(change|sha|branch|project|repo|ref|path)\}/u.test(a)), `${name} 展開後還有記號：${JSON.stringify(seen[0])}`);
   }
 });
 

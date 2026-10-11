@@ -59,3 +59,6 @@ output/
 # **不引入 xlsx** 的檔，git status 看不到、ESLint 也 0 錯 ⇒ 一個真的藏身處（實測過）。
 /lib/_xlsx_guard_probes/
 /public/_xlsx_guard_probes/
+# 憑證檔（2026-10-10 整批同步，跟套件 #64 的忽略清單對上；settings.json 的 ignoreLists、test/no-hiding-places.test.js 三處同序）
+.env
+.env.local

@@ -77,6 +77,20 @@
       "--jq",
       "{sha:.object.sha}"
     ],
+    "repoTree": [
+      "gh",
+      "api",
+      "repos/{repo}/git/trees/{ref}?recursive=1",
+      "--jq",
+      "if .truncated then error(\"平台把檔案清單截斷了\") else [.tree[]|select(.type==\"blob\")|{path:.path,sha:.sha}] end"
+    ],
+    "repoFile": [
+      "gh",
+      "api",
+      "repos/{repo}/contents/{path}?ref={ref}",
+      "--jq",
+      "{content:(.content|@base64d)}"
+    ],
     "markReady": [
       "gh",
       "pr",

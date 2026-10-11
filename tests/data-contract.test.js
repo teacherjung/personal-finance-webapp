@@ -8,7 +8,8 @@
 // 守得到的：每一條契約檢查各有一發壞資料釘著；產生器拿到壞資料不產生半成品。
 // 規矩本文的**範本形狀**（條號在最前、子點縮排與編號、標籤前後空行、記號原樣保住、記號外跳脫）
 // 也在這裡用一份最小資料正向釘住：rules-length 那題的 plain(build)===buildRaw 與 build 共用同一份範本，
-// 證明不了範本本身對不對；真資料有沒有子點、有沒有記號是資料碰巧決定的，不能靠它撐。量過（r1、r2）：拿掉形狀題，子點縮排、子點編號、子點與標籤之間的空行就沒有別題釘；條號格式與標籤後的空行仍由產物逐字元題釘（真資料沒有子點、但每條都有標籤）、角色粗體仍由 inline 題釘——所以形狀題是子點結構唯一的直接輸出樣本，不是整個範本的唯一一張網。
+// 證明不了範本本身對不對；真資料剛好含有哪些形狀（有沒有子點、有沒有記號）會隨規矩增減而變，形狀題不依賴它——用最小資料把每一種形狀都釘住。
+// 量過（2026-09 原專案複審時量的，限當時那一版的資料）：拿掉形狀題，子點縮排、子點編號、子點與標籤之間的空行就沒有別題釘；條號格式與標籤後的空行仍由產物逐字元題釘、角色粗體仍由 inline 題釘——所以形狀題是子點結構唯一的直接輸出樣本，不是整個範本的唯一一張網。
 // ⚠️ 守不到的：資料填的內容對不對（合格不代表那條規矩寫得好）；也不宣稱這些檢查涵蓋了所有壞寫法。
 'use strict';
 const test = require('node:test');
@@ -264,6 +265,13 @@ test('設定資料的每一條契約，各有一發壞資料釘著', () => {
     ['機器的狀態不在三種裡', mutateS((d) => { d.machines[0].state = '應該可以'; })],
     ['預設分工整欄不見（產生器要明寫這一欄：不認得的欄位它不會自己排出來）', mutateS((d) => { delete d.defaultDivision; })],
     ['預設分工的複審者是空的', mutateS((d) => { d.defaultDivision.reviewer = ''; })],
+    ['擁有者不是登記的識別值', mutateS((d) => { d.owner = '沒登記的'; })],
+    ['擁有者欄不是字串', mutateS((d) => { d.owner = 7; })],
+    ['掃描的最強模型是空的', mutateS((d) => { d.scanner.strongest = ''; })],
+    ['掃描的最高推理有換行', mutateS((d) => { d.scanner.maxEffort = '最\n高'; })],
+    ['風險表標了三種以外的級別', mutateS((d) => { d.risk = { families: [{ pattern: '^lib/', tier: '極高' }], raise: ['條件'] }; })],
+    ['複審與掃描分級表多了一種級別', mutateS((d) => { d.reviewTiers = { 極低: { full: '第 1 輪', diffOnly: '第 2 輪起', afterPassFix: '只核差異', scan: '不掃' } }; })],
+    ['複審者不是登記的識別值', mutateS((d) => { d.reviewers = [{ participant: '沒登記的', strongest: '甲', second: '乙', maxEffort: '最高', autoMode: '丙', launch: '丁', machine: '戊', promptOnly: '己', verified: '' }]; })],
   ];
   for (const [name, data] of cases) {
     assert.throws(() => settings.build(data), undefined, `「${name}」應該被契約擋下來`);
@@ -273,6 +281,7 @@ test('設定資料的每一條契約，各有一發壞資料釘著', () => {
 test('設定的值域清單本身沒有被偷偷放寬', () => {
   assert.deepEqual(settings.STATES, ['未移植', '已安裝未啟用', '已啟用']);
   assert.deepEqual(settings.PROVIDERS, ['未設定', '無', '工具自帶', '專案自建']);
+  assert.deepEqual(settings.RISK_TIERS, ['高', '中', '低']);
 });
 
 /** 一則最小的合格案例；改一行就拿去當壞資料。 */

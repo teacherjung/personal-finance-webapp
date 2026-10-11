@@ -47,6 +47,19 @@ test('⑤改名沒帶舊路徑＝退 2；自報總數對不上＝退 2；沒自�
   assert.equal(none.code, 0); assert.match(none.lines.join('\n'), /沒對帳/u);
 });
 
+test('⑤b讀檔案清單前後這一支換了版本＝退 2、不算（理財 #672 r3）；前後同一版照算', () => {
+  const heads = (seq) => { let n = 0; return { ask: (op) => (op === 'change' ? { changedFileCount: '1', headSha: seq[Math.min(n++, seq.length - 1)] } : [{ path: 'docs/a.md', status: 'modified', previousPath: null }]) }; };
+  const moved = run('7', { settings, platform: heads(['a'.repeat(40), 'b'.repeat(40)]) });
+  assert.equal(moved.code, 2, moved.lines.join('\n'));
+  assert.match(moved.lines.join('\n'), /讀檔案清單期間這一支換了版本（aaaaaaaaaaaa → bbbbbbbbbbbb）/u);
+  const same = run('7', { settings, platform: heads(['a'.repeat(40), 'a'.repeat(40)]) });
+  assert.equal(same.code, 0, same.lines.join('\n'));
+  // 前後各問一次：版本那一問要在清單之前與之後各一次
+  const asked = [];
+  run('7', { settings, platform: { ask: (op) => { asked.push(op); return op === 'change' ? { changedFileCount: '1', headSha: 'c'.repeat(40) } : [{ path: 'docs/a.md', status: 'modified', previousPath: null }]; } } });
+  assert.deepEqual(asked, ['change', 'changedFiles', 'change']);
+});
+
 test('③改名前的舊路徑也算；④設定沒填好、平台問不到、沒有路徑＝退 2', () => {
   const platform = fake([{ path: 'docs/new.md', status: 'renamed', previousPath: 'lib/old.js' }]);
   const r = run('7', { settings, platform });

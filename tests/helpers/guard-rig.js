@@ -69,6 +69,9 @@ function sourceRepo(scratch, { forbidden = FAKE, edit, mainBranch = 'main', merg
   fs.writeFileSync(path.join(src, 'settings.json'), JSON.stringify({ participants: [], mainBranch, forbidden, gates: [] }, null, 2));
   if (edit) edit(src);
   assert.equal(git(src, 'init', '-q').status, 0);
+  // 關掉這個暫存倉庫的自動整理：提交之後 git 會叫起 maintenance run --auto；雲端（git 2.55）在 #21、#36 各撞過一次——
+  // 拍快照時讀到 objects/pack/tmp_pack_*、接著它就不見了（推論是背景打包），考題假紅。不整理不改變倉庫的內容
+  for (const [key, value] of [['maintenance.auto', 'false'], ['gc.auto', '0']]) assert.equal(git(src, 'config', key, value).status, 0);
   assert.equal(git(src, 'add', '-A').status, 0);
   const c = git(src, 'commit', '-qm', 'src');
   assert.equal(c.status, 0, c.stderr);

@@ -22,11 +22,14 @@
 //     「25→38」「19→30」要等於範本的長度、加的字要接在舊字後面逐字相同——範本掉一個字、正本改了範本沒跟上、範本加了字
 //     正本沒改，都紅（改預設＝範本、這裡、正本三處一起改，看得見）。③④⑤合起來才是「範本壞掉＝每一個抄它的專案都壞」
 //     那句的證據；④⑤之前 ③ 只釘到測試鈕、第一個連接器與 8 個自造名字碰到的 12 個字（2026-09-27 反駁抓到）。
+//   ⑥再削一刀（擁有者 2026-10-08 裁 a）：範本把轉帳提款那一族搬到「兩張樣式表」裡掛唯讀開頭字也擋的那一張之後，釘量到的幾個名字——掛唯讀開頭字的動錢名擋、
+//     擁有者接受的代價那幾個擋、寬版那一條照舊放行、沒有唯讀開頭字的照擋、範本白名單 0 支被誤擋；只釘這些名字，同一族的變化形與同義字
+//     守不到（射程＝正本「再削一刀」那一節）。
 // ⚠️ 守不到的：只比「有沒有少」，專案多加的項一律不比——放行三欄（safeServers／allowlist／readPrefixes）多加一項＝更鬆，
 //   servers 多登記一個連接器也可能更鬆（白名單是所有碰錢連接器共用的一份，同名的工具會放行）；多加是改禁區清單本身，
 //   照 README 第 3 步的手續（改 forbidden 那一塊＝重印指紋、補複本、重按信任），這一題看不到（不碰錢連接器那一級靠自覺＝
 //   裁示者 2026-09-26；allowlist、readPrefixes 多加不在那條裁示裡）；擋的方向那六欄裡也有兩種「更嚴」的改法會被擋：
-//   把碰錢連接器從 servers 整個拿掉（沒改登記到別欄＝那個連接器全擋）、把 patterns 的一條搬去 patternsReadSafe（乙案）
+//   把碰錢連接器從 servers 整個拿掉（沒改登記到別欄＝那個連接器全擋）、把 patterns 的一條搬去 patternsReadSafe（轉帳提款那一族 2026-10-08 就是先改範本再搬的）
 //   ——兩種都是看得見的紅、要先改套件範本；連接器登記名是**這個 claude.ai 帳號**的連接器編號
 //   （換帳號＝把新編號補進去，碰錢那一欄的舊編號留著、不碰錢那一欄的可以拿掉；拒絕清單那兩支下單工具的名字也綁著舊編號，
 //   要照新編號補一份——沒補，新編號上的下單工具仍由白名單制擋，但 deny 那一道就沒了；正本＝README「搬進一個專案」第 1 步），
@@ -136,7 +139,7 @@ test('空白範本的預設自己站得住：測試鈕在拒絕清單、兩欄�
   assert.deepEqual(misblocked, [], '白名單上的工具走雙保險時不可以被家族網誤擋（詞表加字之後要重量這一條）');
   // 預設名單就是「鑰匙」的來源（#16 r1 高：登記名出現在尾段就放行）：範本每一個不碰錢登記名 k，沒登記的連接器與
   // 變形過的碰錢連接器都不准借 k 放行；擋的理由是登記制（分不清），不是碰禁區那幾道；兩個探針名都像錢（transfer_funds、create_order_instruction）
-  // ＝kind registry-money、尾句照接冒名那一句（tests/forbidden-tools.test.js ⑮②g；裁示者 2026-09-27）。
+  // ＝kind registry-money、尾句是「疑似誤觸或冒名」那一句（tests/forbidden-tools.test.js ⑮②g；裁示者 2026-09-27、2026-09-28 裁 b）。
   // ⚠️ 前提：攔截器含 #16 合併版（32bca59）的 safeConnectorOf（只認標準形狀）；拿 #16 第一版（PR #16 歷史裡的 cf43681）跑這一段 52/52 紅——那正是它要釘的洞。
   for (const k of defaults.safeServers) {
     for (const t of [`mcp__zz_unregistered__transfer_funds__${k}`, `mcp__x${money}__create_order_instruction__${k}`]) {
@@ -153,10 +156,39 @@ test('空白範本的預設自己站得住：測試鈕在拒絕清單、兩欄�
   }
 });
 
+test('⑥再削一刀：轉帳提款那一族掛了唯讀開頭字也照擋、其他家族不動；範本的真工具（白名單、兩支下單工具）判定不變（擁有者 2026-10-08 裁 a）', () => {
+  // 範圍、代價、射程＝「兩張樣式表」（正本＝docs/money-guard-two-pattern-tables.md）；這裡只釘量到的名字，不重述判準。
+  // 全走碰錢連接器白名單那條路：登記制之後，mcp__ 名字只有這條路會被家族網與兩張樣式表決定擋不擋。
+  // 本機看得到的全部工具名不放進這一題：考題會同步進公開的使用專案，那份名單看得出擁有者用哪些服務（B5，判不出＝算）。
+  const defaults = unfilled().forbidden;
+  const f = { ...defaults, name: '假禁區' };
+  const money = defaults.servers[0];
+  const onMoney = (tool) => decide(`mcp__${money}__${tool}`, { ...f, allowlist: [...f.allowlist, tool] });
+  // 動錢的名字掛唯讀開頭字（後面不接表上的錢名詞，家族網湊不成）：搬之前放行、搬之後擋，理由要說出唯讀開頭字不算數
+  for (const t of ['read_withdraw', 'read_withdraw_now', 'get_transfer', 'view_wire', 'download_payout', 'export_remit', 'fetch_deposit', 'query_disburse']) {
+    const d = onMoney(t);
+    assert.equal(d.deny, true, `${t}：轉帳提款那一族掛了唯讀開頭字也要擋（擁有者 2026-10-08 裁 a）`);
+    assert.match(d.why, /唯讀前綴不替它脫罪/u, `${t}：理由要說出唯讀開頭字不算數（拿到的是「${d.why}」）`);
+  }
+  // 擁有者接受的代價（「列出轉帳紀錄」這類無害查詢）：釘著讓代價看得見；要放行照裁示流程，不在這裡開洞
+  for (const t of ['list_transfers', 'get_transfer_log', 'get_payment_methods', 'list_deposits']) {
+    assert.equal(onMoney(t).deny, true, `${t}：再削一刀的代價，這一版擋（要放行先問擁有者、改套件範本）`);
+  }
+  // 對照：其他家族的唯讀放行不動（寬版 convert／exchange／swap 那一條仍吃唯讀豁免）；沒有唯讀開頭字的本來就擋
+  for (const t of ['list_exchange_traded_funds', 'get_exchange_traded_fund_list']) {
+    assert.equal(onMoney(t).deny, false, `${t}：寬版那一條不在這次裁示裡，唯讀開頭字照舊放行`);
+  }
+  for (const t of ['withdraw', 'transfer_now', 'wire']) assert.equal(onMoney(t).deny, true, `${t}：沒有唯讀開頭字，搬之前搬之後都擋`);
+  // 範本的真工具：白名單 32 支（第一個使用專案的券商唯讀工具）走雙保險 0 支被誤擋；拒絕清單那兩支真下單工具照擋
+  const misblocked = defaults.allowlist.filter((tool) => decide(`mcp__${money}__${tool}`, f).deny);
+  assert.deepEqual(misblocked, [], '白名單上的真工具不可以因為再削一刀被誤擋');
+  for (const t of defaults.deny.filter((d) => d.startsWith(`mcp__${money}__`))) assert.equal(decide(t, f).deny, true, `${t}：真下單工具照擋`);
+});
+
 test('④範本自己不縮水：九欄筆數釘在這裡、碰錢連接器與拒絕清單逐字、不碰錢那一欄＝6 個帳號編號＋20 個名字、沒有重複', () => {
   const defaults = unfilled().forbidden;
   // 改預設＝範本、這裡、正本「預設字彙表」三處一起改（看得見）；只改範本＝這裡紅
-  const COUNTS = { servers: 1, safeServers: 26, allowlist: 32, deny: 3, verbs: 38, nouns: 30, readPrefixes: 14, patterns: 2, patternsReadSafe: 4 };
+  const COUNTS = { servers: 1, safeServers: 26, allowlist: 32, deny: 3, verbs: 38, nouns: 30, readPrefixes: 14, patterns: 1, patternsReadSafe: 5 };
   assert.deepEqual(Object.fromEntries(LISTS.map((k) => [k, defaults[k].length])), COUNTS, '範本九欄的筆數跟這裡釘的不一樣：範本縮水、或加了預設沒改這裡');
   for (const k of LISTS) assert.equal(new Set(defaults[k]).size, defaults[k].length, `${k} 有重複的項（重複會讓筆數騙人）`);
   assert.deepEqual(defaults.servers, ['deda1d5d-1ccc-4551-9617-156b9658d236'], '碰錢連接器逐字（第一個使用專案 0562e422 的券商連接器）');
