@@ -254,3 +254,19 @@ test('node_modules 複製失敗＝退 2，訊息只寫 cp 的退出碼、不印�
     assert.ok(!text.includes(repo.dir) && !text.includes('unreadable.js') && !text.includes(tmpdir()), `訊息裡出現了路徑：${text}`);
   } finally { chmodSync(locked, 0o644); }
 });
+
+test('材料的 git diff 不執行受審版本挑的 diff 驅動（.gitattributes 指到 textconv／外部 diff 也不在盒子外跑）', async () => {
+  const marker = join(keep(mkdtempSync(join(tmpdir(), 'textconv-marker-'))), 'ran');
+  const tool = join(keep(mkdtempSync(join(tmpdir(), 'textconv-tool-'))), 'conv.sh');
+  writeFileSync(tool, `#!/bin/sh\ntouch '${marker}'\ncat "$1"\n`); chmodSync(tool, 0o755);
+  const repo = tinyRepo({ firstCommitFiles: { '.gitattributes': 'a.txt diff=probe\n' } });
+  execFileSync('git', ['-C', repo.dir, 'config', 'diff.probe.textconv', tool]);
+  execFileSync('git', ['-C', repo.dir, 'config', 'diff.probe.command', tool]);
+  // 對照組：不關的話這個倉庫的 git diff 真的會執行它（考題自己的前提）
+  execFileSync('git', ['-C', repo.dir, 'diff', `${repo.base}..${repo.head}`], { encoding: 'utf8' });
+  assert.ok(readdirSync(dirname(marker)).includes('ran'), '對照組沒執行驅動——考題前提不成立');
+  rmSync(marker);
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('die-before-ready') });
+  assert.equal(r.code, 2, r.summary.join('\n'));
+  assert.ok(!readdirSync(dirname(marker)).includes('ran'), '掃描程式的 git diff 在盒子外執行了受審版本挑的 diff 驅動');
+});

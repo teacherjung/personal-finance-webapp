@@ -954,7 +954,9 @@ export async function runScan(args, deps = {}) {
   //   **在盒子裡跑任何沙箱內的程式之前就寫好**（下面的 grok --version 是第一個）：晚寫的話，沙箱內的程式留下的子程序
   //   可以先在盒子裡放一個同名的捷徑指到盒外，沙箱外的父程序寫材料時就跟著捷徑、覆寫使用者寫得到的任何檔（#673 的 Grok 掃描指出、實測重現）。
   //   'wx'（獨占建立）是第二道：檔名已經在＝有人先放了東西，不跟隨、不覆寫、不掃。
-  const diff = spawnSync('git', ['-C', repo, 'diff', `${base}..${head}`], { encoding: 'utf8', env: gitEnv(), maxBuffer: 64 * 1024 * 1024 });
+  // --no-ext-diff --no-textconv：受審版本的 .gitattributes 可以替檔案挑 diff 驅動，git 就會在盒子**外面**照設定執行那支轉檔程式
+  //   （#675 r1 Codex 實測重現）；材料要的是原始差異，兩個都關掉。git archive 那邊的 filter 沒有旗標關得掉，記在待辦。
+  const diff = spawnSync('git', ['-C', repo, 'diff', '--no-ext-diff', '--no-textconv', `${base}..${head}`], { encoding: 'utf8', env: gitEnv(), maxBuffer: 64 * 1024 * 1024 });
   if (diff.status !== 0) return failAndClean(`git diff 失敗：${diff.stderr}`);
   const materials = readFileSync(promptFile, 'utf8')
     + `\n\n【受掃版本】base ${base} → head ${head}；你現在所在的目錄 ./src 是 head 的完整原始碼（已 commit 的部分），可以在裡面跑 node --test。`
