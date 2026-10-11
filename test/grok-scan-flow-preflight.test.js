@@ -70,8 +70,9 @@ test('runScan｜node_modules 是 symlink（工作樹形狀）→ clone 後盒子
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   // 把 tinyRepo 的 node_modules 換成 symlink 指向別處（模擬 AGENTS 規定的工作樹形狀）
   const repo = tinyRepo();
-  const real = mkdtempSync(join(tmpdir(), 'real-nm-'));
-  mkdirSync(join(real, 'eslint')); writeFileSync(join(real, 'eslint', 'package.json'), '{}');
+  // 真實位置要叫 node_modules（工作樹的捷徑指到主目錄的 node_modules；指到別名資料夾的另有一題擋下）
+  const real = join(mkdtempSync(join(tmpdir(), 'real-nm-')), 'node_modules');
+  mkdirSync(join(real, 'eslint'), { recursive: true }); writeFileSync(join(real, 'eslint', 'package.json'), '{}');
   rmSync(join(repo.dir, 'node_modules'), { recursive: true });
   execFileSync('ln', ['-s', real, join(repo.dir, 'node_modules')]);
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('die-before-ready') });

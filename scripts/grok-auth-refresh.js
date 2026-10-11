@@ -20,7 +20,7 @@
 //   ②父程序已收到新 token、卻在 write／rename／fsync 落盤前崩潰。兩段都是**可用性**問題（要重新登入），不是機密性。
 // ・**issuer 與 client_id 釘死在程式裡**（r5 #2：原本從 auth.json 讀 issuer 再把 refresh_token POST 過去——
 //   可信程式信了不可信資料；改成 auth.json 裡的值必須**等於**釘住的，不等於＝不 refresh、不掃）。
-// ・grok 在盒內若仍嘗試 refresh（401 時會）會失敗 → 掃描退 2 → 吵。掃描 ≤30 分鐘、token 6 小時，正常不會發生。
+// ・grok 在盒內若仍嘗試 refresh（401 時會）會失敗 → 掃描退 2 → 吵。掃描 ≤50 分鐘（grok-scan.js 的 GROK_WALL_MS）、token 6 小時，正常不會發生。
 // ・盒內 key 是假值、不是短效 token（r5 之後）：Grok 把盒內 auth.json 整份寫進回覆也只外流假值＋user_id／時間戳。
 import { readFileSync, writeFileSync, renameSync, existsSync, lstatSync, openSync, fsyncSync, closeSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
@@ -97,7 +97,7 @@ export function authNeedles(authJson) {
 export async function refreshSandboxAuth(authDir, opt = {}) {
   const f = opt.fetchImpl ?? fetch;
   const now = opt.now ?? Date.now;
-  const early = (opt.earlySecs ?? 3600) * 1000;   // 剩不到 1 小時就先換——掃描最長 30 分鐘
+  const early = (opt.earlySecs ?? 3600) * 1000;   // 剩不到 1 小時就先換——掃描最長 50 分鐘（GROK_WALL_MS）
   const log = opt.log ?? (() => {});
   const pins = opt.pins ?? { issuer: PINNED_ISSUER, clientId: PINNED_CLIENT_ID };
   const p = join(authDir, 'auth.json');

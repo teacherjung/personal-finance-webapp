@@ -34,6 +34,9 @@ const EXPECTED_TOKENS = Object.freeze([
   '--disable-web-search',
   '--no-subagents',
   '--always-approve',
+  '--prompt-file',
+  '--model',
+  '--reasoning-effort',
 ]);
 
 /** 假的 ~/.grok：version.json＋bin/grok（捷徑）＋downloads/<檔>。內容是我們自己組的位元組，不是真執行檔。 */
@@ -89,7 +92,7 @@ function body(/** @type {{ skip?: string, filler?: string, dup?: string }} */ o 
   return s;
 }
 
-test('必要字串清單｜正式清單就是手抄的那五個，一個不多一個不少（清單縮水＝考題跟著縮水的解藥）', async () => {
+test('必要字串清單｜正式清單就是手抄的那八個，一個不多一個不少（清單縮水＝考題跟著縮水的解藥）', async () => {
   assert.deepEqual([...REQUIRED_TOKENS.map((t) => t.token)].sort(), [...EXPECTED_TOKENS].sort());
   for (const { why } of REQUIRED_TOKENS) assert.ok(why && why.length > 4, '每一項都要寫清楚為什麼非有不可');
 });

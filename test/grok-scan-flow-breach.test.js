@@ -9,7 +9,7 @@ import { authNeedles, boxEntryKey } from '../scripts/grok-auth-refresh.js';
 import { escapeForms, knownShapeHitsFromTree, runScan, shapeHitsIn, stripLineMarkers } from '../scripts/grok-scan.js';
 import { REFUSAL_BLOCKING, REFUSAL_TOLERATED, REFUSE_CODES, TOLERATED_REFUSALS, isTolerated, isToleratedRefusal, rejectReason, safeLine } from '../scripts/grok-relay.js';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -304,8 +304,11 @@ test('runScan｜排除集合的記帳要印出來：blob 數、命中數、跳�
 
 test('runScan｜已知來源（head 樹）建不出來 → 退 2 並指名是它，不安靜退回「只認材料」（接線；建盒子之前就退，平台無關）', async () => {
   const repo = tinyRepo();
-  // 通過寫死 SHA 的格式檢查、但這個 repo 裡沒有這顆 commit
-  const r = await runScan({ base: repo.base, head: 'f'.repeat(40), promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()) });
+  // head 這顆 commit 在、但它樹裡一個檔的內容物件被刪掉：commit 與樹都讀得到（建盒前的倉庫檢查都過），
+  // 逐一讀樹裡的內容時才讀不到。（原本用「不存在的 head」；2026-10-11 起那一種在更前面的倉庫檢查就被擋下、訊息不同）
+  const oid = execFileSync('git', ['-C', repo.dir, 'rev-parse', `${repo.head}:tree-only.txt`], { encoding: 'utf8', env: CLEAN_ENV }).trim();
+  rmSync(join(repo.dir, '.git', 'objects', oid.slice(0, 2), oid.slice(2)));
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()) });
   assert.equal(r.code, 2);
   assert.match(r.summary.join('\n'), /已知來源/, '退 2 了但沒說是「已知來源建不出來」——分不出是哪一種失敗');
 });
@@ -401,7 +404,7 @@ test('考題檔｜這一族**每一支**源碼都不留破口形狀的字面（�
   // ⚠️ **驗的是成員身分、不是數量**（#581 r1）：只驗「至少幾個」的話，把某一支改名到前綴之外、
   //    同時另外多一支符合前綴的檔案，數量還是夠，而那支被改名的檔就沒人看管了。
   //    ⇒ 五支同族的名字寫死在這裡：要拆分或改名，**必先來改這一行**（變更必經考題）。
-  const EXPECTED = ['preflight', 'credentials', 'breach', 'incident', 'redaction']
+  const EXPECTED = ['preflight', 'credentials', 'breach', 'incident', 'redaction', 'repo']
     .map((k) => `test/grok-scan-flow-${k}.test.js`)
     .concat('test/helpers/grok-scan-flow-fixtures.js');
   // ⚠️ **照實劃界（Grok #581 掃後 3）**：這個集合是「檔名走 `grok-scan-flow-` 前綴的那些」。

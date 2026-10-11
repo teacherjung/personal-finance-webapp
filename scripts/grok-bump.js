@@ -31,7 +31,8 @@
  *      `--version` 精確比對常數。version.json 說謊 ⇒ 下一次掃描當場擋下，不是本檔的漏洞。
  *    ・必要字串用**讀檔找位元組**確認，不呼叫 `strings`。⚠️ 跟 `strings … | grep -cF` 的數字**不保證一樣**：
  *      那個數的是「含有該字串的**行**數」，這裡數的是實際出現次數；同一行出現兩次就會差。
- *      （1.0.13→1.0.40 這兩支、五個字串、兩種算法，2026-09-22 實測十組全部相同；那是這兩支的結果，不是通則。）
+ *      （1.0.13→1.0.40 這兩支、當時的五個字串、兩種算法，2026-09-22 實測十組全部相同；那是這兩支的結果，不是通則。
+ *      2026-10-11 起清單是八個：多了 --prompt-file、--model、--reasoning-effort。）
  *
  * ⚠️ **寫進原始碼的值只有三個，而且都先過同一道形狀關**（`SAFE_FOR_SOURCE`）。
  *    這是 #636 r1 #1 的修法：審查者拿一個**合法的檔名** `grok'); writeFileSync(…); ('tail` 就把
@@ -79,6 +80,9 @@ export const REQUIRED_TOKENS = Object.freeze([
   { token: '--disable-web-search', why: 'GROK_FLAGS：關掉上網' },
   { token: '--no-subagents', why: 'GROK_FLAGS：關掉它自己再叫小弟' },
   { token: '--always-approve', why: 'GROK_FLAGS：盒內不要互動式確認' },
+  { token: '--prompt-file', why: '材料用檔案交給 grok（不放進指令參數；大差異會 spawn E2BIG，理財 #673）' },
+  { token: '--model', why: '明確指定最強模型（William 2026-10-04 常設指示；值在 settings.json 掃描那一節）' },
+  { token: '--reasoning-effort', why: '明確指定最高推理（同上）' },
 ]);
 
 /**
