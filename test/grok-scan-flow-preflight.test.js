@@ -188,6 +188,24 @@ test('runScan｜材料超過指令參數上限（ARG_MAX）照樣交給 grok：�
   assert.ok(launch.grokArgv.every((/** @type {string} */ a) => a.length < 4096), '指令參數裡不該有整份材料');
 });
 
+test('runScan｜盒子裡第一個跑的沙箱程式（grok --version）先放一個 materials.md 捷徑指到盒外：材料不會跟著捷徑寫到盒外（材料在它跑之前就寫好；#673 Grok 掃描指出）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo(); const iso = isolated();
+  const vdir = mkdtempSync(join(tmpdir(), 'victim-')); const victim = join(vdir, 'store.db');
+  writeFileSync(victim, 'ORIGINAL\n', { mode: 0o644 });
+  // 假 grok 的 --version（沙箱內、盒子裡第一個跑的程式）在盒子根放一個 materials.md 捷徑指到盒外的受害檔
+  const inst = fakeGrok();
+  const bin = join(inst, 'bin', 'grok');
+  const body = readFileSync(bin, 'utf8');
+  assert.ok(body.includes('if [ "$1" = "--version" ]; then '), '假 grok 的 --version 那一行形狀變了，考題要跟著改');
+  writeFileSync(bin, body.replace('if [ "$1" = "--version" ]; then ', `if [ "$1" = "--version" ]; then /bin/ln -s "${victim}" "$HOME/materials.md" 2>/dev/null; `));
+  try {
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+    assert.equal(readFileSync(victim, 'utf8'), 'ORIGINAL\n', '材料跟著盒內放的捷徑寫到盒外了');
+    assert.equal(r.code, 0, r.summary.join('\n'));
+  } finally { rmSync(vdir, { recursive: true, force: true }); }
+});
+
 test('runScan｜發射紀錄 launch.json 留在結果包（事後能分辨「旗標失效」與「沒帶旗標」；盒子本身已清）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo();

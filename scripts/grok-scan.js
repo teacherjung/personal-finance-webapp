@@ -838,6 +838,22 @@ export async function runScan(args, deps = {}) {
     try { validateGrokHomeManifest(grokHome); }
     catch (e) { return failAndClean(`盒內最小家 manifest 不符：${/** @type {Error} */ (e).message}`); }
   }
+  // ── 材料：指示＋diff；寫成盒內的一個檔、用 --prompt-file 交給 grok ──
+  //   不放進指令參數：macOS 單一指令的參數上限約 1MB（ARG_MAX），原本用 -p 把整份材料當參數，
+  //   差異 1.1MB 的那一支（整批同步）在起 grok 那一步就 spawn E2BIG、一個字都沒掃到。
+  //   檔放在盒子根（不在 src 裡，不混進受掃的樹）；盒子在所有出口都會清，它跟著走。
+  //   **在盒子裡跑任何沙箱內的程式之前就寫好**（下面的 grok --version 是第一個）：晚寫的話，沙箱內的程式留下的子程序
+  //   可以先在盒子裡放一個同名的捷徑指到盒外，沙箱外的父程序寫材料時就跟著捷徑、覆寫使用者寫得到的任何檔（#673 的 Grok 掃描指出、實測重現）。
+  //   'wx'（獨占建立）是第二道：檔名已經在＝有人先放了東西，不跟隨、不覆寫、不掃。
+  const diff = spawnSync('git', ['-C', repo, 'diff', `${base}..${head}`], { encoding: 'utf8', env: gitEnv(), maxBuffer: 64 * 1024 * 1024 });
+  if (diff.status !== 0) return failAndClean(`git diff 失敗：${diff.stderr}`);
+  const materials = readFileSync(promptFile, 'utf8')
+    + `\n\n【受掃版本】base ${base} → head ${head}；你現在所在的目錄 ./src 是 head 的完整原始碼（已 commit 的部分），可以在裡面跑 node --test。`
+    + `\n【沙箱提醒】你在 OS 沙箱裡：家目錄、/private/tmp 其他目錄、外網、本機其他 port 都連不到，那是正常的。會起本機 HTTP 伺服器再連自己的整合型考題（hosted-*、heavy-admission 等）在這裡會 EPERM 或卡住——不要跑整套 npm test，挑跟 diff 直接相關的單檔跑。少數考題寫死 /tmp 會因 EPERM 紅——那是沙箱擋寫盒外，不是 diff 的問題。`
+    + `\n\n【以下為 diff】\n` + diff.stdout;
+  const materialsFile = join(box, 'materials.md');
+  try { writeFileSync(materialsFile, materials, { mode: 0o600, flag: 'wx' }); }
+  catch (e) { return failAndClean(`材料檔寫不進盒子：${/** @type {Error & { code?: string }} */ (e).code ?? '不明'}（盒子裡已經有 materials.md＝有人先放了東西；不跟隨、不覆寫、不掃）`); }
   const sbArgv = ['-f', PROFILE, '-D', `SCAN_DIR=${box}`, '-D', `RELAY_PORT=${relayPort}`];
   // ── 版本釘：在**沙箱內**對盒內副本跑（r4 #5：r3 版在沙箱外執行真檔＝未驗身分的程式拿到完整檔案系統）──
   {
@@ -873,14 +889,6 @@ export async function runScan(args, deps = {}) {
     for (const l of lines) say('  ' + l);   // 摘要與 log 同一份、同一道門
     if (code !== 0) return failAndClean(code === 1 ? '金絲雀：有一隻活著＝沙箱是假的，不掃' : '金絲雀：這台機器跑不了沙箱／對照組不活，不掃');
   }
-
-  // ── 材料：指示＋diff ──
-  const diff = spawnSync('git', ['-C', repo, 'diff', `${base}..${head}`], { encoding: 'utf8', env: gitEnv(), maxBuffer: 64 * 1024 * 1024 });
-  if (diff.status !== 0) return failAndClean(`git diff 失敗：${diff.stderr}`);
-  const materials = readFileSync(promptFile, 'utf8')
-    + `\n\n【受掃版本】base ${base} → head ${head}；你現在所在的目錄 ./src 是 head 的完整原始碼（已 commit 的部分），可以在裡面跑 node --test。`
-    + `\n【沙箱提醒】你在 OS 沙箱裡：家目錄、/private/tmp 其他目錄、外網、本機其他 port 都連不到，那是正常的。會起本機 HTTP 伺服器再連自己的整合型考題（hosted-*、heavy-admission 等）在這裡會 EPERM 或卡住——不要跑整套 npm test，挑跟 diff 直接相關的單檔跑。少數考題寫死 /tmp 會因 EPERM 紅——那是沙箱擋寫盒外，不是 diff 的問題。`
-    + `\n\n【以下為 diff】\n` + diff.stdout;
 
   // ── DLP 針：真 auth.json 裡沒給盒子的值（r6 #6：讀不到＝退 2，不是空集合放行；按欄位排除、不按內容形狀）──
   /** @type {string[]} */ let needles;
@@ -966,11 +974,6 @@ export async function runScan(args, deps = {}) {
   //   第四次正式掃描才發現：r6 拿掉 config.toml（裡面有 permission_mode = "always-approve"）後，grok 回到預設「跑指令要問」，
   //   單輪模式（當時用 -p，現在用 --prompt-file）沒人能答 → permission_cancelled → 整輪取消、退 0、只印旁白——一個「成功但空的」掃描。用旗標，不重建 config 檔。
   const GROK_FLAGS = ['--disable-web-search', '--no-subagents', '--always-approve'];
-  // 材料寫成盒內的一個檔、用 --prompt-file 交給 grok，不放進指令參數：macOS 單一指令的參數上限約 1MB（ARG_MAX），
-  //   原本用 -p 把整份材料當參數，差異 1.1MB 的那一支（整批同步）在起 grok 那一步就 spawn E2BIG、一個字都沒掃到。
-  //   檔放在盒子根（不在 src 裡，不混進受掃的樹）；盒子在所有出口都會清，它跟著走。
-  const materialsFile = join(box, 'materials.md');
-  writeFileSync(materialsFile, materials, { mode: 0o600 });
   const grokArgv = [grokBin, ...GROK_FLAGS, '--prompt-file', materialsFile];
   const env = { ...sandboxEnv(box), GROK_CLI_CHAT_PROXY_BASE_URL: `http://127.0.0.1:${relayPort}/v1` };
   // r6 #3：ulimit 包著整個沙箱（sh 設完 exec sandbox-exec；限制隨 fork 繼承）：
