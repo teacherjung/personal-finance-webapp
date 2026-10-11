@@ -108,15 +108,40 @@ export function repoLabelFrom(url) {
   return m ? `${m[1]}/${m[2]}` : null;
 }
 
-/** 這一份 package.json 有沒有宣告任何相依（任何一種相依欄位有內容就算；空物件、空陣列不算）。 @param {Record<string, unknown>} pkg */
+/**
+ * 這一份 package.json 有沒有宣告任何相依（任何一種相依欄位有內容就算；空物件、空陣列不算）。
+ * 打包那兩欄（bundleDependencies／bundledDependencies）是布林時是「要不要把相依一起打包」的選項，本身不宣告套件、不算（#675 r2 Codex；npm 文件明列布林值與別名）。
+ * @param {Record<string, unknown>} pkg
+ */
 export function declaresDeps(pkg) {
   for (const k of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies', 'bundleDependencies', 'bundledDependencies']) {
     if (!(k in pkg)) continue;
     const v = pkg[k];
     if (Array.isArray(v) ? v.length === 0 : (v && typeof v === 'object' && Object.keys(v).length === 0)) continue;
+    if (typeof v === 'boolean' && (k === 'bundleDependencies' || k === 'bundledDependencies')) continue;
     return true;
   }
   return false;
+}
+
+/**
+ * 盒子裡一定要有的套件：dependencies 與 devDependencies 列的名字（考題要用到的那兩種）。
+ * optional／peer 不算（沒裝也可能是正常的）；欄位不是物件就不列（有沒有 node_modules 那一道另外由 declaresDeps 管）。
+ * @param {Record<string, unknown>} pkg
+ * @returns {string[]}
+ */
+export function requiredDeps(pkg) {
+  /** @type {string[]} */ const out = [];
+  for (const k of ['dependencies', 'devDependencies']) {
+    const v = pkg[k];
+    if (v && typeof v === 'object' && !Array.isArray(v)) out.push(...Object.keys(v));
+  }
+  return [...new Set(out)];
+}
+
+/** 套件名是不是一般的形狀（`名字` 或 `@範圍/名字`；不准空的、`.` 開頭的段、多一層斜線、反斜線）——名字要接在 node_modules 後面查，不能讓它走出去。 @param {string} name */
+export function isSafeDepName(name) {
+  return /^(?:@[A-Za-z0-9_~-][A-Za-z0-9._~-]*\/)?[A-Za-z0-9_~-][A-Za-z0-9._~-]*$/.test(name);
 }
 
 /**
@@ -814,27 +839,34 @@ export async function runScan(args, deps = {}) {
     if (ls.stdout !== '') return fail('受審版本把 node_modules 提交進去了（捷徑或資料夾）——不掃');
   }
   // 沒有相依的倉庫（例如套件倉庫）跳過 node_modules；有宣告相依卻沒有 node_modules＝不掃（盒子裡的考題會因為少套件亂紅）。
-  // 宣告看的是受審版本的 package.json（git 物件庫），不是工作樹、也不是盒子。
+  // 有 node_modules 的：複製進盒子之後，dependencies／devDependencies 列的每一個名字都要在（#675 r2 Codex：安裝沒完成留下空的
+  // node_modules，原本靠 eslint 哨兵擋、換成來源對照之後空對空會放行）。
+  // 宣告看的是受審版本的 package.json（git 物件庫），不是工作樹、也不是盒子；有沒有 node_modules 都讀，壞掉都退。
   /** @type {boolean} */ let copyNodeModules;
+  /** @type {string[]} */ let mustHave = [];
   {
+    /** @type {Record<string, unknown> | null} */ let pkg = null;
+    const ls = spawnSync('git', ['-C', repo, 'ls-tree', '-z', '--full-tree', head, '--', 'package.json'], { encoding: 'utf8', env: gitEnv() });
+    if (ls.status !== 0) return fail('讀不出受審版本的 package.json 在不在');
+    if (ls.stdout !== '') {
+      const m = /^(100644|100755) blob ([0-9a-f]{40,64})\tpackage\.json\0$/.exec(ls.stdout);
+      if (!m) return fail('受審版本的 package.json 不是一般檔案');
+      const blob = spawnSync('git', ['-C', repo, 'cat-file', 'blob', m[2]], { encoding: 'utf8', env: gitEnv(), maxBuffer: 8 * 1024 * 1024 });
+      if (blob.status !== 0) return fail('讀不出受審版本的 package.json');
+      /** @type {unknown} */ let parsed;
+      try { parsed = JSON.parse(blob.stdout); } catch { return fail('受審版本的 package.json 不是合法的 JSON'); }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fail('受審版本的 package.json 不是一個物件');
+      pkg = /** @type {Record<string, unknown>} */ (parsed);
+    }
     /** @type {import('node:fs').Stats | null} */ let nm = null;
     try { nm = lstatSync(join(repo, 'node_modules')); } catch (e) { if (errCode(e) !== 'ENOENT') return fail(`node_modules 判斷不了（${errCode(e)}）`); }
-    if (nm) copyNodeModules = true;
-    else {
-      const ls = spawnSync('git', ['-C', repo, 'ls-tree', '-z', '--full-tree', head, '--', 'package.json'], { encoding: 'utf8', env: gitEnv() });
-      if (ls.status !== 0) return fail('讀不出受審版本的 package.json 在不在');
-      if (ls.stdout === '') copyNodeModules = false;
-      else {
-        const m = /^(100644|100755) blob ([0-9a-f]{40,64})\tpackage\.json\0$/.exec(ls.stdout);
-        if (!m) return fail('受審版本的 package.json 不是一般檔案');
-        const blob = spawnSync('git', ['-C', repo, 'cat-file', 'blob', m[2]], { encoding: 'utf8', env: gitEnv(), maxBuffer: 8 * 1024 * 1024 });
-        if (blob.status !== 0) return fail('讀不出受審版本的 package.json');
-        /** @type {unknown} */ let pkg;
-        try { pkg = JSON.parse(blob.stdout); } catch { return fail('受審版本的 package.json 不是合法的 JSON'); }
-        if (!pkg || typeof pkg !== 'object' || Array.isArray(pkg)) return fail('受審版本的 package.json 不是一個物件');
-        if (declaresDeps(/** @type {Record<string, unknown>} */ (pkg))) return fail('要掃的倉庫宣告了相依套件、卻沒有 node_modules——先裝好再掃');
-        copyNodeModules = false;
-      }
+    if (nm) {
+      copyNodeModules = true;
+      mustHave = pkg ? requiredDeps(pkg) : [];
+      if (mustHave.some((n) => !isSafeDepName(n))) return fail('受審版本 package.json 的相依名稱形狀認不得——不掃');
+    } else {
+      if (pkg && declaresDeps(pkg)) return fail('要掃的倉庫宣告了相依套件、卻沒有 node_modules——先裝好再掃');
+      copyNodeModules = false;
     }
   }
   // 最強模型、最高推理（William 2026-10-04 常設指示「Grok掃描也請用最強模型、最高推理能力」）：值從本掃描程式所在倉庫的設定讀，
@@ -1003,6 +1035,9 @@ export async function runScan(args, deps = {}) {
       try { want = readdirSync(nmReal).sort(); got = readdirSync(join(src, 'node_modules')).sort(); }
       catch (e) { return failAndClean(`盒子裡的 node_modules 判斷不了（${errCode(e)}）`); }
       if (want.length !== got.length || want.some((n, i) => n !== got[i])) return failAndClean('盒子裡的 node_modules 跟來源不一樣（clone 沒複製完整？）');
+      // 宣告的套件都要在（只看這一層有沒有這個名字、不跟隨捷徑；名字建盒前已驗過形狀）
+      const missing = mustHave.filter((n) => { try { lstatSync(join(src, 'node_modules', n)); return false; } catch { return true; } });
+      if (missing.length) return failAndClean(`盒子裡的 node_modules 少了受審版本 package.json 宣告的 ${missing.length} 個套件（安裝沒完成？）——先裝好再掃`);
     } else log('（要掃的倉庫沒有宣告相依套件、也沒有 node_modules：盒子裡不放 node_modules）');
     for (const forbidden of ['data/store.db', 'data/store.json', '.env', '.env.local']) {
       if (existsSync(join(src, forbidden))) return failAndClean(`盒子裡出現不該有的檔：${forbidden}——git archive 不該帶出它，先查 .gitignore`);
