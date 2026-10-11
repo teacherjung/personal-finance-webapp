@@ -121,6 +121,24 @@ test('incident.json｜三族的欄位是**白名單**：DLP 與暗號族連雜�
   assert.equal(raw.includes(REAL), false, '指紋包裡有真 token 原文');
 });
 
+test('incident.json｜私人文字只在登入檔的鍵名裡：命中時訊息與指紋包都不帶出那個鍵名（寫「未列名欄位」）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const PRIVATE_KEY_NAME = 'private-owner-only-in-key@example.test';
+  const LEAKED = 'VALUE-UNDER-PRIVATE-KEY-0123456789';
+  const repo = tinyRepo(); const iso = isolated();
+  mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ extra: { contacts: { [PRIVATE_KEY_NAME]: LEAKED } } }));
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(fakeGrok({ reply: `leaked: ${LEAKED}` })), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 1, r.summary.join('\n'));
+  const text = r.summary.join('\n');
+  assert.match(text, /（欄位：未列名欄位）/, '沒寫成未列名欄位');
+  const { json, raw } = readIncident(iso.resultsRoot);
+  for (const h of json.hits.filter((/** @type {{family: string}} */ x) => x.family === 'dlp')) assert.deepEqual(h.fields, ['未列名欄位']);
+  for (const [where, s] of /** @type {[string, string][]} */ ([['摘要', text], ['指紋包', raw]])) {
+    assert.ok(!s.includes(PRIVATE_KEY_NAME), `${where}帶出了只在鍵名裡的私人文字`);
+    assert.ok(!s.includes(LEAKED), `${where}帶出了命中的值`);
+  }
+});
+
 test('incident.json｜形狀族要留得下判得出真假的東西：雜湊、字元組成、最近似排除項、遮蔽過的上下文', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const BODY = 'MIIEPLANTEDBODY' + 'W'.repeat(50);

@@ -88,32 +88,41 @@ export function authNeedles(authJson) {
 }
 
 /**
- * 每一根 DLP 針來自哪個**欄位名**（只回鍵名、不回值）：事故時寫進訊息與指紋包，讓人知道外流的是哪一欄
- * （例如 email 跟 refresh_token 的嚴重度差很多）。鍵名是真檔的結構、不是機密；巢狀的用「外層.內層」、陣列用 [序號]。
- * 跟 authNeedles 用同一套取法（給了盒子的值不算、枚舉欄位不算），所以兩邊的針集合一樣（#83 借用掃描事故後擁有者裁：先改程式再重掃）。
+ * 事故訊息與指紋包准寫出的欄位名（**白名單**）：grok 登入項裡我們知道的那幾個鍵。不在這裡的鍵（包括巢狀那一層的鍵）
+ * 一律寫成「未列名欄位」、不帶原文——鍵名也可能是私人資料（例如拿 email 當字典的鍵），值的遮蔽字典認不得它（#677 r1 Codex）。
+ * 要加名字＝改這裡＋考題；只加 grok 登入項真的有、而且不是私人資料的固定欄位名。
+ */
+export const NEEDLE_FIELD_LABELS = Object.freeze(['email', 'first_name', 'key', 'last_name', 'principal_id', 'refresh_token', 'team_id']);
+export const UNLISTED_FIELD = '未列名欄位';
+
+/**
+ * 每一根 DLP 針來自哪個欄位（只回**白名單裡的欄位名**或「未列名欄位」，不回值、不回白名單外的鍵名）：事故時寫進訊息與指紋包，
+ * 讓人知道外流的是哪一欄（例如 email 跟 refresh_token 的嚴重度差很多）。白名單欄位底下的巢狀值寫成「<欄位>（巢狀）」，不寫更深的鍵名。
+ * 跟 authNeedles 用同一套取法（給了盒子的值不算、枚舉欄位不算），所以兩邊的針集合一樣（套件 #83 借用掃描事故後擁有者裁：先改程式再重掃）。
  * @param {Record<string, Record<string, unknown>>} authJson
- * @returns {Map<string, string[]>} 針的值 → 它出現過的欄位名（排序、去重）
+ * @returns {Map<string, string[]>} 針的值 → 它出現過的欄位標籤（排序、去重）
  */
 export function authNeedleFields(authJson) {
   /** @type {Map<string, Set<string>>} */ const where = new Map();
   /** @type {Set<string>} */ const givenToBox = new Set();
-  const walk = (/** @type {unknown} */ v, /** @type {string} */ path, /** @type {boolean} */ toBox) => {
+  const walk = (/** @type {unknown} */ v, /** @type {string} */ label, /** @type {boolean} */ toBox) => {
     if (typeof v === 'string') {
       if (!v) return;
       if (toBox) givenToBox.add(v);
-      else { if (!where.has(v)) where.set(v, new Set()); /** @type {Set<string>} */ (where.get(v)).add(path); }
-    } else if (Array.isArray(v)) v.forEach((x, i) => walk(x, `${path}[${i}]`, toBox));
-    else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walk(x, `${path}.${k}`, toBox);
+      else { if (!where.has(v)) where.set(v, new Set()); /** @type {Set<string>} */ (where.get(v)).add(label); }
+    } else if (Array.isArray(v)) v.forEach((x) => walk(x, label, toBox));
+    else if (v && typeof v === 'object') for (const x of Object.values(v)) walk(x, label === UNLISTED_FIELD ? label : `${label.replace(/（巢狀）$/u, '')}（巢狀）`, toBox);
   };
   for (const cred of Object.values(authJson)) {
     if (!cred || typeof cred !== 'object') continue;
     for (const [k, v] of Object.entries(cred)) {
-      if (Object.hasOwn(BOX_FIELDS, k)) walk(v, k, true);
-      else if (!ENUM_FIELDS.includes(k)) walk(v, k, false);
+      const label = NEEDLE_FIELD_LABELS.includes(k) ? k : UNLISTED_FIELD;
+      if (Object.hasOwn(BOX_FIELDS, k)) walk(v, label, true);
+      else if (!ENUM_FIELDS.includes(k)) walk(v, label, false);
     }
   }
   /** @type {Map<string, string[]>} */ const out = new Map();
-  for (const [v, paths] of where) if (!givenToBox.has(v)) out.set(v, [...paths].sort());
+  for (const [v, labels] of where) if (!givenToBox.has(v)) out.set(v, [...labels].sort());
   return out;
 }
 

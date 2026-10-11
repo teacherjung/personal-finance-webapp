@@ -714,7 +714,7 @@ export async function runScan(args, deps = {}) {
   let scrubSecrets = [];
   /** DLP 針的**各種序列化表示**；偵測（`leaksIn`）與清洗共用這一份。組法見下面 needles 定稿處。 @type {string[]} */
   let needleForms = [];
-  /** 每個表示對應的欄位名（只有鍵名、沒有值）：事故時寫出命中的是哪一欄。組法見 needles 定稿處。 @type {{ form: string, fields: string[] }[]} */
+  /** 每個表示對應的欄位標籤（白名單裡的欄位名或「未列名欄位」，沒有值、沒有白名單外的鍵名）：事故時寫出命中的是哪一欄。組法見 needles 定稿處。 @type {{ form: string, fields: string[] }[]} */
   let needleFormFields = [];
   /**
    * ⚠️ **算區間再合併，不是逐個替換**。逐個替換擋不住自我重疊的機密：
@@ -1234,7 +1234,7 @@ export async function runScan(args, deps = {}) {
   try { snap = readSessionsOnce(sessionsRoot); }
   catch (e) { return failAndClean(`驗屍：sessions 讀不完（${/** @type {Error} */ (e).message}）——超過上限＝不保存`); }
   const leaksIn = (/** @type {string} */ text) => needleForms.some((v) => text.includes(v));
-  /** 命中的是登入檔裡哪幾個欄位名（只有鍵名、沒有值；#83 借用掃描事故後擁有者裁「先改程式再重掃」）。 */
+  /** 命中的是登入檔裡哪幾個欄位（白名單裡的欄位名，其餘寫「未列名欄位」——鍵名也可能是私人資料，#677 r1 Codex；套件 #83 借用掃描事故後擁有者裁「先改程式再重掃」）。 */
   const leakFields = (/** @type {string} */ text) => [...new Set(needleFormFields.filter((f) => text.includes(f.form)).flatMap((f) => f.fields))].sort();
   const fieldNote = (/** @type {string[]} */ f) => (f.length ? `（欄位：${f.join('、')}）` : '');
   /**
