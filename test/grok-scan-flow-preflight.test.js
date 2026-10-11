@@ -9,6 +9,7 @@ import { DUMMY_BEARER_PREFIX, PINNED_CLIENT_ID, PINNED_ISSUER } from '../scripts
 import { EXPECTED_GROK_VERSION, runScan } from '../scripts/grok-scan.js';
 import { assertChildGitEnvCleanAsync, injectDirtyGitEnv } from './helpers/dirty-git-env.js';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -161,6 +162,48 @@ test('runScan｜鐵則 11：髒的 GIT_* 環境下 git archive／diff 仍對（�
   await assertChildGitEnvCleanAsync(assert, 'grok-scan 的 git archive／diff', async () => {
     await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(fakeGrok()), relayScript: fakeRelay('die-before-ready') });
   });
+});
+
+test('runScan｜材料超過指令參數上限（ARG_MAX）照樣交給 grok：走 --prompt-file，grok 讀到的跟材料逐位元組一樣（整批同步那一支 1.1MB 差異曾在起 grok 時 spawn E2BIG）；很長的中文回覆逐位元組照收', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const argMax = Number(execFileSync('/usr/bin/getconf', ['ARG_MAX'], { encoding: 'utf8' }).trim());
+  assert.ok(argMax > 0, '量不到 ARG_MAX');
+  const repo = tinyRepo(); const iso = isolated();
+  // 假 grok 把 --prompt-file 指的那個檔原樣印成回覆：回覆＝它讀到的材料
+  const inst = fakeGrok();
+  writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m,
+    'f=; prev=; for a in "$@"; do [ "$prev" = "--prompt-file" ] && f="$a"; prev="$a"; done; [ -n "$f" ] || { echo "沒收到 --prompt-file" >&2; exit 9; }; cat "$f"'));
+  const out = join(mkdtempSync(join(tmpdir(), 'out-')), 'reply.txt');
+  // 指示檔會進材料：放一段比 ARG_MAX 還長的中文（單一指令的參數放不下；回覆也夠長、會分好幾段從管子讀進來，
+  // 一個中文字三個位元組，段落邊界切在字中間時要照樣接回原字——逐段各自解碼會把切開的字變成亂碼）
+  const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile('材料'.repeat(Math.ceil(argMax / 3))), outFile: out }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+  assert.equal(r.code, 0, r.summary.join('\n'));
+  const reply = readFileSync(out);
+  assert.ok(reply.length > argMax, `回覆 ${reply.length} 位元組，沒超過 ARG_MAX ${argMax}——考題沒量到大材料`);
+  const resultsDir = /結果包=([^（]+)/.exec(r.summary.find((l) => l.includes('結果包=')) || '')?.[1];
+  assert.ok(resultsDir, '沒印結果包路徑');
+  const launch = JSON.parse(readFileSync(join(resultsDir, 'launch.json'), 'utf8'));
+  assert.equal(createHash('sha256').update(reply).digest('hex'), launch.materialsSha256, 'grok 讀到的跟材料不一樣（或回覆在段落邊界被解碼壞了）');
+  assert.ok(launch.grokArgv.includes('--prompt-file') && !launch.grokArgv.includes('-p'), `材料要走 --prompt-file、不放進指令參數：${JSON.stringify(launch.grokArgv)}`);
+  assert.ok(launch.grokArgv.every((/** @type {string} */ a) => a.length < 4096), '指令參數裡不該有整份材料');
+});
+
+test('runScan｜盒子裡第一個跑的沙箱程式（grok --version）先放一個 materials.md 捷徑指到盒外：材料不會跟著捷徑寫到盒外（材料在它跑之前就寫好；#673 Grok 掃描指出）', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo(); const iso = isolated();
+  const vdir = mkdtempSync(join(tmpdir(), 'victim-')); const victim = join(vdir, 'store.db');
+  writeFileSync(victim, 'ORIGINAL\n', { mode: 0o644 });
+  // 假 grok 的 --version（沙箱內、盒子裡第一個跑的程式）在盒子根放一個 materials.md 捷徑指到盒外的受害檔
+  const inst = fakeGrok();
+  const bin = join(inst, 'bin', 'grok');
+  const body = readFileSync(bin, 'utf8');
+  assert.ok(body.includes('if [ "$1" = "--version" ]; then '), '假 grok 的 --version 那一行形狀變了，考題要跟著改');
+  writeFileSync(bin, body.replace('if [ "$1" = "--version" ]; then ', `if [ "$1" = "--version" ]; then /bin/ln -s "${victim}" "$HOME/materials.md" 2>/dev/null; `));
+  try {
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
+    assert.equal(readFileSync(victim, 'utf8'), 'ORIGINAL\n', '材料跟著盒內放的捷徑寫到盒外了');
+    assert.equal(r.code, 0, r.summary.join('\n'));
+  } finally { rmSync(vdir, { recursive: true, force: true }); }
 });
 
 test('runScan｜發射紀錄 launch.json 留在結果包（事後能分辨「旗標失效」與「沒帶旗標」；盒子本身已清）', async (t) => {
