@@ -34,6 +34,12 @@
 4. D5 第二批剩餘：①股息換算 ②大盤基準（皆比③重，②需新增大盤資料源） — **未分配**
 5. （遠期）電子發票載具 API 即時預算系統（財政部 API，需申請；見「重要決定」） — **未分配**
 
+工具與流程的待辦（不排優先序；開工印待辦 `tools/backlog-touch.js` 只讀 `- ` 開頭的條目；每條＝一句話／放在哪裡／什麼情況下值得做）：
+
+- （掃描工具，2026-10-11 #673 掃描第 2 題前半，屬實·進待辦）掃描收輸出的上限算的是字元、失敗訊息卻寫 bytes，跨線那一段整段收下（最多多一次讀取），stderr 共用同一個旗標／`scripts/grok-scan.js` 收輸出那一段（訊息單位改成「字元」；要的話改成先收進陣列最後一次接起來）／下一支動到收輸出那一段時 — **未分配**
+- （掃描工具，2026-10-11 #675 r1）建盒子時 `git archive` 會照本機 git 設定執行受審版本 `.gitattributes` 挑的過濾器（smudge），沒有旗標關得掉（diff 那一半 #675 已關）／`scripts/grok-scan.js` 建盒那一段（可能的做法：改用 ls-tree＋cat-file 逐檔寫出、不經過濾）／這台機器裝了 git-lfs 或任何自訂過濾器時，或下一支動到建盒那一段時 — **未分配**
+- （掃描工具考題，2026-10-11 #675 r2 Codex 測試待辦）掃描那一族考題只驗 git 呼叫的答案與原始碼形狀，沒有直接觀測子行程收到的 `GIT_*`／`test/grok-scan-flow-repo.test.js`、`test/helpers/grok-scan-flow-fixtures.js`／下次變更 Git 呼叫或抽換環境清理方式時 — **未分配**
+
 ## 重要決定（已拍板，勿重議）
 
 - **銀行收支文案裁示（2026-10-05）**：#655 r3 第 6 項所指的 `「收支說明」是什麼？` 跳窗已由 #657 移除；William 回「A」，同意結清該文案審改項（[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/655#issuecomment-5987417002)）。第 7 項選擇保留面向使用者的「帳單原文」用詞（[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/655#issuecomment-5987477663)）。**以下為 Codex 的操作化與技術劃界**：這不代表逐字保留空白；部分解析路徑會整理空白，技術文件與型別註解已改以「保存解析結果」及實際用途說明，完成紀錄見[後續補強 #664](https://github.com/teacherjung/personal-finance-webapp/pull/664)。銀行收支另依 William 回報記錄[使用者驗收完成](https://github.com/teacherjung/personal-finance-webapp/pull/657#issuecomment-5987477941)，該驗收對應原畫面變更；r3 前五項技術待辦另由上述後續補強處理，未將其自動算成使用者驗收。
