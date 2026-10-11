@@ -916,7 +916,7 @@ export async function runScan(args, deps = {}) {
   {
     mkdirSync(join(grokHome, 'bin'), { recursive: true }); mkdirSync(sessionsRoot);
     const c = spawnSync('/bin/cp', [...CP_CLONE, realGrokBin, grokBin], { encoding: 'utf8' });   // APFS clone，127MB 免費
-    if (c.status !== 0) return failAndClean(`grok 執行檔 clone 失敗：${c.stderr}`);
+    if (c.status !== 0) return failAndClean(`grok 執行檔 clone 失敗（cp 退 ${c.status}）`);   // 不印 cp 的錯誤輸出：裡面有本機路徑
     // r4 #5：對**盒內副本**算 hash（不是真檔——檢查與複製之間的路徑替換競態）；不符＝不掃；之後只執行這份副本
     const sha = createHash('sha256').update(readFileSync(grokBin)).digest('hex');
     if (sha !== expectedSha) return failAndClean(`grok 執行檔 sha256 不符：要 ${expectedSha.slice(0, 12)}…，實際 ${sha.slice(0, 12)}…——執行檔被換過或升版了；升版要改 EXPECTED_GROK_SHA256 並重驗轉送器目的地`);
