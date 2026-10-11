@@ -17,7 +17,10 @@
 //   第一版在這些情況全部退 0（Codex r1 實測 `allSessionDirs('/no/such')` 直接走到 exit 0）。
 //
 // ## 用法（呼叫紀律；2026-09-17 自 AGENTS 舊「Grok 的邊界」節搬來，正本從此在這裡）
-//   node scripts/grok-scan.js --base <sha> --head <sha> --prompt <指示檔> [--out <輸出檔>]
+//   node scripts/grok-scan.js --base <sha> --head <sha> --prompt <指示檔> [--out <輸出檔>] [--repo <要掃的倉庫>]
+//   --repo 不給＝掃本倉庫；給了＝掃那個倉庫（只收倉庫的根目錄；base／head 要在那個倉庫裡；沙箱、轉送器、設定照舊用本倉庫這一套——
+//   William 2026-10-05「先借用試試看」：套件倉庫借本專案的隔離盒掃，不另蓋）。模型與推理強度照本倉庫 settings.json 掃描那一節
+//   （strongest、maxEffort；William 2026-10-04 常設指示「Grok掃描也請用最強模型、最高推理能力」）。
 //   一律經這支跑；**不准手動啟動 grok 的 CLI、不在任何 repo 目錄啟動它**（在 repo 目錄啟動時它會自動讀 AGENTS.md 規則入口，
 //   而它的正式通道都在站外＝材料制；主目錄有 data/store.db，連在那裡啟動都算違規）。
 //   base／head 兩顆都寫死 SHA，不用 origin/main 這類會移動的名稱。
@@ -45,10 +48,10 @@
 // ・本腳本不決定掃描時機（條款：複審者通過之後、gh pr ready 之前，不論誰實作——2026-09-09 起對稱）；它只負責「掃的時候有圍欄」。
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, mkdirSync, chmodSync, openSync, fstatSync, readSync, closeSync, constants as fsConst } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync, mkdirSync, chmodSync, openSync, fstatSync, readSync, closeSync, constants as fsConst } from 'node:fs';
 import { createServer } from 'node:net';
 import { homedir } from 'node:os';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, dirname, basename, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runCanary, sandboxEnv, PROFILE, RELAY_PORT, BOX_ROOT } from './grok-sandbox-canary.js';
 import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
@@ -81,9 +84,48 @@ export const EXPECTED_GROK_SHA256 = 'e8daa302364c9c3b6a5546d511cfbd1ab5e5d407a9b
 export { RELAY_PORT };
 /** macOS 的 cp -c＝APFS copy-on-write clone（node_modules 1.4 秒、不占空間）；GNU cp 沒有 -c——CI 的 Linux 只跑金絲雀之前的 fail-closed 路徑，普通 cp 就好 */
 const CP_CLONE = process.platform === 'darwin' ? ['-c'] : [];
+/**
+ * grok 整群最多跑多久就 SIGKILL。原本 30 分鐘；明確指定最高推理（xhigh）之後一輪會比預設的 high 慢
+ * （之前的正式掃描在預設推理下跑 15〜26 分鐘），所以放到 50 分鐘。上限不超過盒內憑證提早 refresh 的 60 分鐘餘裕
+ * （scripts/grok-auth-refresh.js），免得掃到一半憑證過期。
+ */
+export const GROK_WALL_MS = 50 * 60_000;
 
 /** sessions 單趟讀取的上限（r6 #3）：超過任何一項＝退 2、不保存 */
 export const SESSION_CAPS = Object.freeze({ files: 4000, depth: 12, fileBytes: 16 * 1024 * 1024, totalBytes: 64 * 1024 * 1024 });
+
+/** 錯誤只留碼、不留訊息：例外的 message 會帶出本機路徑（資料夾名含擁有者的名字），而摘要要貼進公開的 PR。 */
+const errCode = (/** @type {unknown} */ e) => /** @type {{ code?: string }} */ (e)?.code ?? '不明';
+
+/**
+ * 被掃倉庫的身分：只認 GitHub 的 https／ssh 遠端，解析成 `owner/name`；認不出就回 null（呼叫端換成固定字串）。
+ * 不回原始網址（https 遠端可能夾著權杖）、不回資料夾名（本機路徑）。只是紀錄，不是閘。
+ * @param {string} url
+ */
+export function repoLabelFrom(url) {
+  const m = /^https:\/\/(?:[^@/\s]+@)?github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/.exec(url)
+    ?? /^(?:ssh:\/\/)?git@github\.com[:/]([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/.exec(url);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
+/**
+ * 這一份 package.json 需不需要先裝好才掃：dependencies 或 devDependencies 有名字就算（欄位層級的集合運算，不重做 npm 的解析）。
+ * dependencies 裡被 optionalDependencies 同名覆寫的不算（npm：可以合法不裝；#675 r3 Codex）；devDependencies 同名的照算（npm 仍當必備；#675 r4 Codex）。
+ * 只有 peer／optional／打包欄的不算（沒裝可能是正常的；#675 r4 換做法後的對抗審查）。形狀怪的（字串、null、非空陣列）不當成沒有。
+ * @param {Record<string, unknown>} pkg
+ */
+export function needsInstall(pkg) {
+  const opt = pkg.optionalDependencies;
+  const optional = new Set(opt && typeof opt === 'object' && !Array.isArray(opt) ? Object.keys(opt) : []);
+  for (const k of ['dependencies', 'devDependencies']) {
+    if (!(k in pkg)) continue;
+    const v = pkg[k];
+    if (Array.isArray(v)) { if (v.length) return true; continue; }
+    if (v && typeof v === 'object') { if (Object.keys(v).some((n) => k === 'devDependencies' || !optional.has(n))) return true; continue; }
+    return true;
+  }
+  return false;
+}
 
 /**
  * 破口線索的**形狀**（活金絲雀的暗號不在裡面，刻意的）。
@@ -294,7 +336,7 @@ export const stripLineMarkers = (text) => text.replace(/(^|\n|(?<!\\)\\{1,4}n)\d
 export function knownShapeHitsFromTree(repo, head, maxBlobBytes = SESSION_CAPS.fileBytes) {
   // -z：git 預設會把非 ASCII 路徑輸出成八進位轉義並加引號，拿去查就 fatal 而掃描器**靜靜跳過**
   //     ——本專案踩過的「掃描器跳過中文檔名」同一個坑。
-  const ls = spawnSync('git', ['-C', repo, 'ls-tree', '-r', '-z', head], { encoding: 'utf8', maxBuffer: 1 << 28, env: gitEnv() });
+  const ls = spawnSync('git', ['--no-replace-objects', '-C', repo, 'ls-tree', '-r', '-z', head], { encoding: 'utf8', maxBuffer: 1 << 28, env: gitEnv() });
   if (ls.status !== 0) throw new Error(`git ls-tree 失敗（status ${ls.status}）`);
   /** @type {{ oid: string, path: string }[]} */ const blobs = [];
   for (const rec of (ls.stdout || '').split('\0')) {
@@ -304,7 +346,7 @@ export function knownShapeHitsFromTree(repo, head, maxBlobBytes = SESSION_CAPS.f
     const [, type, oid] = rec.slice(0, tab).split(' ');
     if (type === 'blob') blobs.push({ oid, path: rec.slice(tab + 1) });   // 只收 blob：submodule（gitlink）與子樹跳過
   }
-  const cat = spawnSync('git', ['-C', repo, 'cat-file', '--batch'], { input: blobs.map((b) => b.oid).join('\n') + '\n', maxBuffer: 1 << 29, env: gitEnv() });
+  const cat = spawnSync('git', ['--no-replace-objects', '-C', repo, 'cat-file', '--batch'], { input: blobs.map((b) => b.oid).join('\n') + '\n', maxBuffer: 1 << 29, env: gitEnv() });
   if (cat.status !== 0) throw new Error(`git cat-file 失敗（status ${cat.status}）`);
   const out = /** @type {Buffer} */ (cat.stdout);
   /** @type {Set<string>} */ const hits = new Set();
@@ -480,8 +522,8 @@ const MODEL_LOG_EXT = Object.freeze(['.json', '.jsonl']);
 export const MODEL_WALK_MAX_NODES = 100_000;
 
 /**
- * 這次實際用的模型名，從 session 日誌**解析出來的物件**裡取 `model_id`（掃描器**不指定模型**——
- * `GROK_FLAGS` 沒有 `-m`，用的是上游當下的預設；上游換了模型我們這邊不會有任何動靜）。
+ * 這次實際用的模型名，從 session 日誌**解析出來的物件**裡取 `model_id`（2026-10-11 起掃描器用 `--model` 明確指定設定裡的最強模型；
+ * 這一格記的是**實際跑出來**的，跟指定的那一個並列在配方聲明裡——兩者不一樣就看得出來）。
  * 只是留痕、**不是閘**：讀不到、讀到不認得的、讀不完整——都只是換一個**值域寫死**的字串，
  * 不擋掃描、不改退出碼。⚠️ 不要寫成「讀到不認得的就寫查不出來」：**已知與未知並存**時，
  * 公開欄印的是已知的那幾個再加旗標（例如 `grok-4.7；另有不在清單上的 model_id`），不含「查不出來」。
@@ -633,17 +675,17 @@ export function modelFieldText(mu) {
  *   ⚠️ 三格的證據強度不一樣，別混為一談：`liveRoot` 的預設有**行為題**釘著（見那一格）；這一格有一道
  *   **只到文字層**的行為題（就是上面那題，而且只在 macOS）——真正沒有題的是「跑的是不是**那個函式本人**」
  *   與 CLI 入口那一行；`maxBlobBytes` 的預設則完全沒有題，只靠複審。
+ * @property {string} [settingsFile] 掃描設定（最強模型、最高推理）從哪一份 settings.json 讀；預設＝本掃描程式所在倉庫的 settings.json。只給考題注入。
  * @property {(grokHome: string) => void} [afterGrokHomeAuthWrite] 考題用：在父程序寫完盒內 auth 後、manifest 驗證前插入異常形狀，證明接線真的會擋。
  */
 
 /**
  * 主流程。回傳 { code, summary }；不自己 process.exit（考題要讀回傳值）。
- * @param {{ base: string, head: string, promptFile: string, outFile?: string }} args
+ * @param {{ base: string, head: string, promptFile: string, outFile?: string, repo?: string }} args
  * @param {ScanDeps} [deps]
  * @returns {Promise<{ code: 0|1|2, summary: string[] }>}
  */
 export async function runScan(args, deps = {}) {
-  const repo = deps.repo ?? REPO;
   const grokInstall = realpathSync(deps.grokInstall ?? join(homedir(), '.grok'));
   const realGrokBin = realpathSync(join(grokInstall, 'bin', 'grok'));   // 只拿來 cp 進盒子；**不在沙箱外執行它**（hash 盒內副本、--version 在沙箱內跑）
   const authDir = deps.authDir ?? join(homedir(), '.grok-sandbox-auth');
@@ -747,6 +789,103 @@ export async function runScan(args, deps = {}) {
   if (!existsSync(realGrokBin)) return fail(`找不到 grok：${realGrokBin}`);
   const expectedSha = deps.expectedSha256 ?? EXPECTED_GROK_SHA256;
 
+  // ── 掃哪一個倉庫、怎麼掃（理財接手 Grok 掃描交接，Fable 2026-10-11 代裁；William 2026-10-05「先借用試試看」）──
+  // 全在建盒子之前核：核不過一律 fail（退 2、⛔），還沒建任何暫存路徑、也還沒燒掃描時間；訊息只寫原因與錯誤碼，不寫路徑。
+  if (args.repo !== undefined && deps.repo !== undefined) return fail('--repo 與考題注入的倉庫同時給了，分不出要掃哪一個');
+  /** @type {string} */ let repo;
+  if (args.repo !== undefined) {
+    if (typeof args.repo !== 'string' || args.repo === '' || args.repo.startsWith('-')) return fail('--repo 後面要接要掃的倉庫路徑（不能是空的、不能以 - 開頭）');
+    repo = resolve(args.repo);   // 相對路徑照呼叫者的目前資料夾解析
+  } else repo = deps.repo ?? REPO;
+  {
+    /** @type {string} */ let real;
+    try { real = realpathSync(repo); } catch (e) { return fail(`要掃的倉庫找不到（${errCode(e)}）`); }
+    try { if (!lstatSync(real).isDirectory()) return fail('要掃的倉庫不是資料夾'); } catch (e) { return fail(`要掃的倉庫判斷不了（${errCode(e)}）`); }
+    const top = spawnSync('git', ['--no-replace-objects', '-C', real, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env: gitEnv() });
+    if (top.status !== 0) return fail('要掃的路徑不是 git 倉庫');
+    /** @type {string} */ let topReal;
+    try { topReal = realpathSync(top.stdout.replace(/\n$/, '')); } catch (e) { return fail(`要掃的倉庫的根目錄判斷不了（${errCode(e)}）`); }
+    // 只准倉庫的根目錄：子資料夾的話 git archive／ls-tree／grep 只看得到那一部分、diff 卻是整個倉庫
+    // （盒子與排除集合悄悄變小）；不是倉庫的資料夾則會讓 git 往上找到上一層的倉庫去掃。
+    if (topReal !== real) return fail('要掃的路徑不是倉庫的根目錄（子資料夾、或不是倉庫的資料夾都不收）');
+    repo = real;
+  }
+  for (const [name, sha] of /** @type {const} */ ([['base', base], ['head', head]])) {
+    const c = spawnSync('git', ['--no-replace-objects', '-C', repo, 'cat-file', '-e', `${sha}^{commit}`], { encoding: 'utf8', env: gitEnv() });
+    if (c.status !== 0) return fail(`${name}（${sha.slice(0, 12)}）不在要掃的倉庫裡`);
+  }
+  // 受審版本把 node_modules 提交進去了（不論是捷徑或資料夾）＝不掃：git archive 解開後它就在盒子裡，
+  // 父程序再往同一個名字複製時會跟著捷徑寫到盒外（#674 之後的設計檢查實測重現）。
+  {
+    const ls = spawnSync('git', ['--no-replace-objects', '-C', repo, 'ls-tree', '-z', '--full-tree', head, '--', 'node_modules'], { encoding: 'utf8', env: gitEnv() });
+    if (ls.status !== 0) return fail('讀不出受審版本有沒有提交 node_modules');
+    if (ls.stdout !== '') return fail('受審版本把 node_modules 提交進去了（捷徑或資料夾）——不掃');
+    // 只比名字擋不住不分大小寫的磁碟：受審版本提交 NODE_MODULES（或別種寫法、再用 export-ignore 讓打包略過它），
+    // 切到這一版時它會蓋掉工作樹的 node_modules，於是複製進盒子的是那一版挑的資料夾（#675 複審後掃的反駁審查實測）。
+    // 所以再比一次「在這台機器上是不是同一個東西」：根目錄每一項跟 node_modules 的裝置與編號都不准相同。
+    /** @type {import('node:fs').Stats | null} */ let nmSt = null;
+    try { nmSt = lstatSync(join(repo, 'node_modules')); } catch (e) { if (errCode(e) !== 'ENOENT') return fail(`node_modules 判斷不了（${errCode(e)}）`); }
+    if (nmSt) {
+      const root = spawnSync('git', ['--no-replace-objects', '-C', repo, 'ls-tree', '-z', '--full-tree', '--name-only', head], { encoding: 'utf8', env: gitEnv() });
+      if (root.status !== 0) return fail('讀不出受審版本根目錄有哪些項目');
+      for (const name of root.stdout.split('\0').filter(Boolean)) {
+        /** @type {import('node:fs').Stats} */ let st;
+        try { st = lstatSync(join(repo, name)); } catch { continue; }
+        if (st.dev === nmSt.dev && st.ino === nmSt.ino) return fail('受審版本的根目錄有一項在這台機器上跟 node_modules 是同一個東西（大小寫或寫法不同的同名）——不掃');
+      }
+    }
+  }
+  // 沒有相依的倉庫（例如套件倉庫）跳過 node_modules；有宣告相依卻沒有 node_modules＝不掃（盒子裡的考題會因為少套件亂紅）。
+  // 宣告看的是受審版本的 package.json（git 物件庫），不是工作樹、也不是盒子；有沒有 node_modules 都讀，壞掉都退。
+  // ⚠️ 劃界（#675 r4 連三輪自問表）：這裡**不**判斷「每一個宣告的套件都裝了」——那要重做 npm 的解析（optional 覆寫、別名、
+  //   workspace、開發相依…），r2〜r4 每補一種寫法就漏另一種。這支量的是自己管得到的兩件：複製進盒子的跟來源一樣（含捷徑不連到
+  //   盒子外），以及最常見的手誤「需要安裝的相依有名字、node_modules 卻不在或是空的」（needsInstall）。裝到一半、少了某一個套件、
+  //   盒子裡解不開的捷徑＝不保證：掃描照跑，
+  //   盒子裡的考題會因為少套件紅，那是安裝（npm）的事。原本的 eslint 哨兵量的也是「複製有沒有帶到真的套件」（訊息「clone 沒跟隨 symlink？」）。
+  /** @type {boolean} */ let copyNodeModules;
+  /** @type {boolean} */ let declared;
+  {
+    /** @type {Record<string, unknown> | null} */ let pkg = null;
+    const ls = spawnSync('git', ['--no-replace-objects', '-C', repo, 'ls-tree', '-z', '--full-tree', head, '--', 'package.json'], { encoding: 'utf8', env: gitEnv() });
+    if (ls.status !== 0) return fail('讀不出受審版本的 package.json 在不在');
+    if (ls.stdout !== '') {
+      const m = /^(100644|100755) blob ([0-9a-f]{40,64})\tpackage\.json\0$/.exec(ls.stdout);
+      if (!m) return fail('受審版本的 package.json 不是一般檔案');
+      const blob = spawnSync('git', ['--no-replace-objects', '-C', repo, 'cat-file', 'blob', m[2]], { encoding: 'utf8', env: gitEnv(), maxBuffer: 8 * 1024 * 1024 });
+      if (blob.status !== 0) return fail('讀不出受審版本的 package.json');
+      /** @type {unknown} */ let parsed;
+      try { parsed = JSON.parse(blob.stdout); } catch { return fail('受審版本的 package.json 不是合法的 JSON'); }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fail('受審版本的 package.json 不是一個物件');
+      pkg = /** @type {Record<string, unknown>} */ (parsed);
+    }
+    /** @type {import('node:fs').Stats | null} */ let nm = null;
+    try { nm = lstatSync(join(repo, 'node_modules')); } catch (e) { if (errCode(e) !== 'ENOENT') return fail(`node_modules 判斷不了（${errCode(e)}）`); }
+    declared = !!pkg && needsInstall(pkg);
+    if (nm) copyNodeModules = true;
+    else {
+      if (declared) return fail('要掃的倉庫宣告了相依套件、卻沒有 node_modules——先裝好再掃');
+      copyNodeModules = false;
+    }
+  }
+  // 最強模型、最高推理（William 2026-10-04 常設指示「Grok掃描也請用最強模型、最高推理能力」）：值從本掃描程式所在倉庫的設定讀，
+  // 換模型只改設定、不改程式；只驗形狀（擋住以 - 開頭被當成旗標的值），不寫死模型清單。
+  /** @type {string} */ let model;
+  /** @type {string} */ let effort;
+  {
+    /** @type {any} */ let s;
+    try { s = JSON.parse(readFileSync(deps.settingsFile ?? join(REPO, 'settings.json'), 'utf8')); } catch (e) { return fail(`讀不出掃描設定（settings.json：${errCode(e)}）`); }
+    const sc = s && typeof s === 'object' ? s.scanner : undefined;
+    model = sc?.strongest; effort = sc?.maxEffort;
+    if (typeof model !== 'string' || !/^grok-[0-9][0-9a-z.-]*$/.test(model)) return fail('settings.json 掃描那一節的 strongest（最強模型）沒填或形狀不對');
+    if (typeof effort !== 'string' || !/^[a-z]+$/.test(effort)) return fail('settings.json 掃描那一節的 maxEffort（最高推理）沒填或形狀不對');
+  }
+  // 紀錄：掃的是哪一個倉庫、用的是哪一版掃描程式（倉庫寫 owner/name、不寫路徑；程式寫內容雜湊、不靠 git）
+  const origin = spawnSync('git', ['--no-replace-objects', '-C', repo, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnv() });
+  const repoLabel = (origin.status === 0 && repoLabelFrom(origin.stdout.trim())) || '（沒有可辨認的 GitHub 遠端）';
+  /** @type {string} */ let scriptSha;
+  try { scriptSha = createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'); } catch (e) { return fail(`讀不出掃描程式本身（${errCode(e)}）`); }
+  log(`（受掃倉庫：${repoLabel}；掃描程式 sha256 ${scriptSha.slice(0, 12)}；指定模型 ${model}、推理 ${effort}）`);
+
   // ── 破口判準的「已在給盒子的東西裡」之一：head 樹的已 commit 原始碼（**不含超過單檔上限的大檔**）──
   // 位置在**建盒子之前**：①建不出來就此刻退 2，還沒建任何暫存路徑、也還沒燒掃描時間
   //   ②不經沙箱 ⇒ 這條路的行為題在非 macOS 也跑得到（掛在盒子之後的話，CI 會先在版本檢查退場、
@@ -807,7 +946,7 @@ export async function runScan(args, deps = {}) {
   {
     mkdirSync(join(grokHome, 'bin'), { recursive: true }); mkdirSync(sessionsRoot);
     const c = spawnSync('/bin/cp', [...CP_CLONE, realGrokBin, grokBin], { encoding: 'utf8' });   // APFS clone，127MB 免費
-    if (c.status !== 0) return failAndClean(`grok 執行檔 clone 失敗：${c.stderr}`);
+    if (c.status !== 0) return failAndClean(`grok 執行檔 clone 失敗（cp 退 ${c.status}）`);   // 不印 cp 的錯誤輸出：裡面有本機路徑
     // r4 #5：對**盒內副本**算 hash（不是真檔——檢查與複製之間的路徑替換競態）；不符＝不掃；之後只執行這份副本
     const sha = createHash('sha256').update(readFileSync(grokBin)).digest('hex');
     if (sha !== expectedSha) return failAndClean(`grok 執行檔 sha256 不符：要 ${expectedSha.slice(0, 12)}…，實際 ${sha.slice(0, 12)}…——執行檔被換過或升版了；升版要改 EXPECTED_GROK_SHA256 並重驗轉送器目的地`);
@@ -845,7 +984,9 @@ export async function runScan(args, deps = {}) {
   //   **在盒子裡跑任何沙箱內的程式之前就寫好**（下面的 grok --version 是第一個）：晚寫的話，沙箱內的程式留下的子程序
   //   可以先在盒子裡放一個同名的捷徑指到盒外，沙箱外的父程序寫材料時就跟著捷徑、覆寫使用者寫得到的任何檔（#673 的 Grok 掃描指出、實測重現）。
   //   'wx'（獨占建立）是第二道：檔名已經在＝有人先放了東西，不跟隨、不覆寫、不掃。
-  const diff = spawnSync('git', ['-C', repo, 'diff', `${base}..${head}`], { encoding: 'utf8', env: gitEnv(), maxBuffer: 64 * 1024 * 1024 });
+  // --no-ext-diff --no-textconv：受審版本的 .gitattributes 可以替檔案挑 diff 驅動，git 就會在盒子**外面**照設定執行那支轉檔程式
+  //   （#675 r1 Codex 實測重現）；材料要的是原始差異，兩個都關掉。git archive 那邊的 filter 沒有旗標關得掉，記在待辦。
+  const diff = spawnSync('git', ['--no-replace-objects', '-C', repo, 'diff', '--no-ext-diff', '--no-textconv', `${base}..${head}`], { encoding: 'utf8', env: gitEnv(), maxBuffer: 64 * 1024 * 1024 });
   if (diff.status !== 0) return failAndClean(`git diff 失敗：${diff.stderr}`);
   const materials = readFileSync(promptFile, 'utf8')
     + `\n\n【受掃版本】base ${base} → head ${head}；你現在所在的目錄 ./src 是 head 的完整原始碼（已 commit 的部分），可以在裡面跑 node --test。`
@@ -864,20 +1005,70 @@ export async function runScan(args, deps = {}) {
     if (ver.status !== 0 || parsed !== EXPECTED_GROK_VERSION) return failAndClean(`grok 版本不符：要 ${EXPECTED_GROK_VERSION}，實際「${verText || ver.error?.message || ver.status}」（${(ver.stderr || '').slice(-200)}）`);
   }
   {
-    // 不用 shell pipeline 組路徑；git 一律帶 gitEnv()（鐵則 11：GIT_DIR 等會讓 -C 失效、指去別棵 repo）
+    // 不用 shell pipeline 組路徑；git 一律帶 gitEnv()（鐵則 11：GIT_DIR 等會讓 -C 失效、指去別棵 repo）；
+    // 也一律帶 --no-replace-objects：gitEnv() 連 GIT_NO_REPLACE_OBJECTS 一起清掉，倉庫裡的 refs/replace 會把 head 換成別的內容、紀錄卻還寫 head（#675 複審後掃的反駁審查實測）
     const tarPath = join(box, 'src.tar');
-    const ar = spawnSync('git', ['-C', repo, 'archive', '--format=tar', '-o', tarPath, head], { encoding: 'utf8', env: gitEnv() });
+    const ar = spawnSync('git', ['--no-replace-objects', '-C', repo, 'archive', '--format=tar', '-o', tarPath, head], { encoding: 'utf8', env: gitEnv() });
     if (ar.status !== 0) return failAndClean(`git archive 失敗：${ar.stderr}`);
     const tx = spawnSync('/usr/bin/tar', ['-x', '-f', tarPath, '-C', src], { encoding: 'utf8' });
     if (tx.status !== 0) return failAndClean(`tar 解開失敗：${tx.stderr}`);
     rmSync(tarPath);
-    // node_modules：先 realpath（工作樹裡它是 symlink；cp -Rc 對 operand 本身是 symlink 時會複製 symlink、不跟隨——Codex r1 實測）
-    const nmReal = realpathSync(join(repo, 'node_modules'));
-    const c = spawnSync('/bin/cp', ['-R', ...CP_CLONE, nmReal, join(src, 'node_modules')], { encoding: 'utf8' });
-    if (c.status !== 0) return failAndClean(`node_modules clone 失敗：${c.stderr}`);
-    const st = lstatSync(join(src, 'node_modules'));
-    if (!st.isDirectory() || st.isSymbolicLink()) return failAndClean('盒子裡的 node_modules 不是真目錄（symlink 指回家目錄＝沙箱裡讀不到）');
-    if (!existsSync(join(src, 'node_modules', 'eslint'))) return failAndClean('盒子裡的 node_modules 少了套件（clone 沒跟隨 symlink？）');
+    if (copyNodeModules) {
+      // 解開之後盒子裡不准已經有 node_modules（建盒前已擋提交進去的；這裡是第二道，不跟隨、不覆寫）
+      try { lstatSync(join(src, 'node_modules')); return failAndClean('盒子裡解開之後已經有 node_modules——不往裡面複製'); }
+      catch (e) { if (errCode(e) !== 'ENOENT') return failAndClean(`盒子裡的 node_modules 判斷不了（${errCode(e)}）`); }
+      // node_modules：先 realpath（工作樹裡它是 symlink；cp -Rc 對 operand 本身是 symlink 時會複製 symlink、不跟隨——Codex r1 實測）；
+      // 指到的地方要是叫 node_modules 的資料夾（捷徑指到家目錄之類的地方＝整包複製進盒子，不收）
+      /** @type {string} */ let nmReal;
+      try { nmReal = realpathSync(join(repo, 'node_modules')); } catch (e) { return failAndClean(`node_modules 找不到真實位置（${errCode(e)}）`); }
+      try { if (basename(nmReal) !== 'node_modules' || !lstatSync(nmReal).isDirectory()) return failAndClean('node_modules 指到的不是叫 node_modules 的資料夾——不複製'); }
+      catch (e) { return failAndClean(`node_modules 判斷不了（${errCode(e)}）`); }
+      const c = spawnSync('/bin/cp', ['-R', ...CP_CLONE, nmReal, join(src, 'node_modules')], { encoding: 'utf8' });
+      if (c.status !== 0) return failAndClean(`node_modules clone 失敗（cp 退 ${c.status}）`);   // 不印 cp 的錯誤輸出：裡面有本機路徑
+      const st = lstatSync(join(src, 'node_modules'));
+      if (!st.isDirectory() || st.isSymbolicLink()) return failAndClean('盒子裡的 node_modules 不是真目錄（symlink 指回家目錄＝沙箱裡讀不到）');
+      // 複製完整：盒子裡第一層的名字要跟來源一模一樣。原本拿本專案才有的 eslint 當哨兵；借掃別的倉庫時它不一定有
+      // （相依備齊卻退 2——#675 r1 Codex 實測），所以改成拿來源本身對照，不假設要掃的倉庫裝了哪個套件
+      /** @type {string[]} */ let want;
+      /** @type {string[]} */ let got;
+      try { want = readdirSync(nmReal).sort(); got = readdirSync(join(src, 'node_modules')).sort(); }
+      catch (e) { return failAndClean(`盒子裡的 node_modules 判斷不了（${errCode(e)}）`); }
+      if (want.length !== got.length || want.some((n, i) => n !== got[i])) return failAndClean('盒子裡的 node_modules 跟來源不一樣（clone 沒複製完整？）');
+      // 捷徑不准連到盒子外（指到盒子外＝沙箱裡讀不到、跟沒複製進來一樣——#675 r3 Codex）。先照字面判（不碰盒外的目標），
+      // 字面在盒子裡才解（realpath）；解不開但字面在盒子裡＝那個套件不在（沒裝、或受審版本沒有那個 workspace／資料夾），
+      // 照劃界不擋、只記一行（#675 r4 換做法後的對抗審查：受審版本拿掉 workspace 時，相對捷徑本來就會解不開）。
+      // 看 Node 找頂層套件會走的兩層：node_modules 底下每一項，以及 @範圍 底下每一項（@範圍 是盒內捷徑時跟過去列）；更深的層不看。
+      /** @type {string} */ let srcReal;
+      try { srcReal = realpathSync(src); } catch (e) { return failAndClean(`盒子判斷不了（${errCode(e)}）`); }
+      const nmBox = join(src, 'node_modules');
+      const under = (/** @type {string} */ r) => [src, srcReal].some((b) => r === b || r.startsWith(b + sep));
+      /** @returns {'ok' | 'missing' | 'outside'} */
+      const classify = (/** @type {string} */ p) => {
+        if (!lstatSync(p).isSymbolicLink()) return 'ok';
+        // 相對目標接在「放這個捷徑的目錄的真實位置」上算（@範圍 本身是盒內捷徑時，它底下的子捷徑才不會被接到虛擬的父路徑上——#675 r5 Codex）；
+        // 那個目錄的真實位置解不開＝跟「盒內解不開的捷徑」同一條，不另加分支
+        /** @type {string} */ let parent;
+        try { parent = realpathSync(dirname(p)); } catch { return 'missing'; }
+        if (!under(resolve(parent, readlinkSync(p)))) return 'outside';
+        try { return under(realpathSync(p)) ? 'ok' : 'outside'; } catch { return 'missing'; }
+      };
+      let outside = 0; let missing = 0;
+      try {
+        for (const n of got) {
+          const p = join(nmBox, n);
+          const k = classify(p);
+          if (k === 'outside') { outside++; continue; }
+          if (k === 'missing') { missing++; continue; }
+          if (n.startsWith('@') && statSync(p).isDirectory()) {
+            for (const c of readdirSync(p)) { const kc = classify(join(p, c)); if (kc === 'outside') outside++; else if (kc === 'missing') missing++; }
+          }
+        }
+      } catch (e) { return failAndClean(`盒子裡的 node_modules 判斷不了（${errCode(e)}）`); }
+      if (outside) return failAndClean(`盒子裡的 node_modules 有 ${outside} 個捷徑連到盒子外（沙箱裡讀不到）——先處理再掃`);
+      if (missing) log(`（node_modules 裡有 ${missing} 個捷徑在盒子裡解不開＝那個套件不在：沒裝、或受審版本沒有那個資料夾；照劃界不擋，盒子裡的考題可能會紅）`);
+      // 最常見的手誤：宣告了相依、node_modules 卻是空的（點開頭的 .bin、.package-lock.json 之類不算）——#675 r2 Codex
+      if (declared && !got.some((n) => !n.startsWith('.'))) return failAndClean('要掃的倉庫宣告了相依套件、node_modules 卻是空的（安裝沒完成？）——先裝好再掃');
+    } else log('（要掃的倉庫沒有宣告相依套件、也沒有 node_modules：盒子裡不放 node_modules）');
     for (const forbidden of ['data/store.db', 'data/store.json', '.env', '.env.local']) {
       if (existsSync(join(src, forbidden))) return failAndClean(`盒子裡出現不該有的檔：${forbidden}——git archive 不該帶出它，先查 .gitignore`);
     }
@@ -912,7 +1103,7 @@ export async function runScan(args, deps = {}) {
       const pf = join(authDir, `needle.${process.pid}`);
       try {
         writeFileSync(pf, needle + '\n', { mode: 0o600 });
-        const g = spawnSync('git', ['-C', repo, 'grep', '-q', '-F', '-f', pf, head, '--'], { encoding: 'utf8', env: gitEnv() });
+        const g = spawnSync('git', ['--no-replace-objects', '-C', repo, 'grep', '-q', '-F', '-f', pf, head, '--'], { encoding: 'utf8', env: gitEnv() });
         if (g.status !== 0 && g.status !== 1) throw new Error(`git grep 失敗（status ${g.status}）：${g.stderr}`);
         return g.status === 0;
       } finally { rmSync(pf, { force: true }); }
@@ -974,7 +1165,8 @@ export async function runScan(args, deps = {}) {
   //   第四次正式掃描才發現：r6 拿掉 config.toml（裡面有 permission_mode = "always-approve"）後，grok 回到預設「跑指令要問」，
   //   單輪模式（當時用 -p，現在用 --prompt-file）沒人能答 → permission_cancelled → 整輪取消、退 0、只印旁白——一個「成功但空的」掃描。用旗標，不重建 config 檔。
   const GROK_FLAGS = ['--disable-web-search', '--no-subagents', '--always-approve'];
-  const grokArgv = [grokBin, ...GROK_FLAGS, '--prompt-file', materialsFile];
+  // 模型與推理強度明確指定（常設指示），用長旗標：grok-bump 的必要字串才驗得到它們還在新版執行檔裡
+  const grokArgv = [grokBin, ...GROK_FLAGS, '--model', model, '--reasoning-effort', effort, '--prompt-file', materialsFile];
   const env = { ...sandboxEnv(box), GROK_CLI_CHAT_PROXY_BASE_URL: `http://127.0.0.1:${relayPort}/v1` };
   // r6 #3：ulimit 包著整個沙箱（sh 設完 exec sandbox-exec；限制隨 fork 繼承）：
   //   -f 單檔 64MB（1024-byte 單位）／-u 程序數＝同 uid 現有數＋256（macOS 的 -u 是 per-uid 計數，設太低連 fork 都不行）／-t CPU 1800 秒。
@@ -985,7 +1177,8 @@ export async function runScan(args, deps = {}) {
   // 發射紀錄留檔（#495 那次事後分不出「旗標失效」還是「根本沒帶旗標」——claude-bd 2026-08-22 建議）：
   // 完整指令、env 白名單、版本、沙箱設定檔的雜湊。之後驗屍或重裁都有憑據，不靠回憶。
   writeFileSync(join(resultsDir, 'launch.json'), JSON.stringify({
-    startedAt, base, head, sandboxExec: '/usr/bin/sandbox-exec', sbArgv, grokArgv, env, grokVersion: verText, relayPort, ulimits,
+    startedAt, base, head, repo: repoLabel, scanScriptSha256: scriptSha, model, reasoningEffort: effort,
+    sandboxExec: '/usr/bin/sandbox-exec', sbArgv, grokArgv, env, grokVersion: verText, relayPort, ulimits,
     profileSha256: createHash('sha256').update(readFileSync(PROFILE)).digest('hex'),
     materialsSha256: createHash('sha256').update(materials).digest('hex'),
   }, null, 2));
@@ -1003,7 +1196,7 @@ export async function runScan(args, deps = {}) {
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', (d) => { if (stdout.length < OUT_CAP) stdout += d; else truncated = true; });
     child.stderr.on('data', (d) => { if (stderr.length < OUT_CAP) stderr += d; else truncated = true; });
-    const t = setTimeout(() => { if (grokPgid) try { process.kill(-grokPgid, 'SIGKILL'); } catch { /* 已死 */ } }, 30 * 60_000);
+    const t = setTimeout(() => { if (grokPgid) try { process.kill(-grokPgid, 'SIGKILL'); } catch { /* 已死 */ } }, GROK_WALL_MS);
     child.on('error', (e) => { clearTimeout(t); resolve({ status: null, signal: null, error: e, stdout, stderr, truncated }); });
     child.on('close', (status, signal) => { clearTimeout(t); resolve({ status, signal, error: undefined, stdout, stderr, truncated }); });
   });
@@ -1263,11 +1456,11 @@ export async function runScan(args, deps = {}) {
     return failAndClean('驗屍：沒有任何工具足跡——這次掃描只證明 Grok 能回文字，不能證明審查能力沒有降級');
   }
   if (outFile) writeFileSync(outFile, reply);
-  // 模型留痕（William 2026-09-22 裁「甲」）：掃描器不指定模型，上游自己換過一次（2026-09-21 grok-4.6→grok-4.7）
-  // 而紀錄裡看不出來。這一格只是**留痕不是閘**：讀不到／不認得／讀不完整都只是換一個
+  // 模型留痕（William 2026-09-22 裁「甲」）：當時掃描器不指定模型，上游自己換過一次（2026-09-21 grok-4.6→grok-4.7）
+  // 而紀錄裡看不出來；2026-10-11 起明確指定（配方聲明的「指定模型」），這一格照舊記實際跑出來的。這一格只是**留痕不是閘**：讀不到／不認得／讀不完整都只是換一個
   // 值域寫死的字串，不擋掃描、不改退出碼。
   const modelField = modelFieldText(modelsUsedIn(snap.files));   // 值域寫死、不含任何由日誌決定的數字（見該函式）
-  const recipe = `base..head=${base}..${head}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜模型=${modelField}｜掃描起訖=${startedAt}→${endedAt}`;
+  const recipe = `base..head=${base}..${head}｜受掃=${repoLabel}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜指定模型=${model}（推理 ${effort}）｜模型=${modelField}｜掃描程式 sha256=${scriptSha.slice(0, 12)}｜掃描起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);
   say(recipe);
   return { code: 0, summary };
@@ -1290,11 +1483,16 @@ if (isMainModule(import.meta.url)) {
   /** @param {string} flag */
   const arg = (flag) => { const i = ARGS.indexOf(flag); return i >= 0 ? ARGS[i + 1] : undefined; };
   const base = arg('--base'), head = arg('--head'), promptFile = arg('--prompt'), outFile = arg('--out');
-  if (!base || !head || !promptFile) { console.error('用法：node scripts/grok-scan.js --base <sha> --head <sha> --prompt <指示檔> [--out <輸出檔>]'); process.exit(2); }
+  const USAGE = '用法：node scripts/grok-scan.js --base <sha> --head <sha> --prompt <指示檔> [--out <輸出檔>] [--repo <要掃的倉庫，預設本倉庫>]';
+  // --repo 寫成 --repo=… 或給兩次＝退 2（不默默掃回本倉庫、不默默挑一個）；給了旗標沒給值＝交給 runScan 印 ⛔ 退 2
+  const repoAt = ARGS.indexOf('--repo');
+  if (ARGS.some((a) => a.startsWith('--repo=')) || ARGS.filter((a) => a === '--repo').length > 1) { console.error(USAGE); process.exit(2); }
+  const repo = repoAt >= 0 ? (ARGS[repoAt + 1] ?? '') : undefined;
+  if (!base || !head || !promptFile) { console.error(USAGE); process.exit(2); }
   // ⚠️ 這裡**不要**傳 deps：`ScanDeps` 的每一格預設都是「正式掃描該用的那個值」，尤其 `liveRoot`——
   //    活金絲雀的餌要落在**真家目錄**才有意義（理由見 ScanDeps.liveRoot）。在這一行注入一個
   //    **不是家目錄、且已經存在**的根目錄，餌就搬家，而全套考題照樣綠（Codex #516 r1 對 BOX_ROOT 實測跑過全卷）
   //    ——釘住預設值的那一題直接呼叫 runScan、不經過這個接縫。
-  const { code } = await runScan({ base, head, promptFile, outFile });
+  const { code } = await runScan({ base, head, promptFile, outFile, repo });
   process.exit(code);
 }

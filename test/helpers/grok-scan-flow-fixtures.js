@@ -65,18 +65,31 @@ export const EXPECTED_BOX_AUTH_FIELDS = ['auth_mode', 'create_time', 'expires_at
 export const PEM_BEGIN = (kind) => `-----BEGIN ${kind} PRIVATE KEY-----`;
 
 /** 一個最小的真 git repo（有一顆 commit），當 runScan 的 repo。 */
-export function tinyRepo(/** @type {{ firstCommitFiles?: Record<string, string> }} */ o = {}) {
+/**
+ * 選項（掃別的倉庫那一族用；不傳＝原本的形狀）：
+ * ・nodeModules: false＝工作樹不放 node_modules（沒有相依的倉庫，例如套件倉庫）
+ * ・packageJson：第一顆 commit 一起提交的 package.json 內容（字串原樣寫）
+ * ・remote：設成 origin 的網址（不會真的連）
+ * ・commitNodeModulesLink：第一顆 commit 把 node_modules 當捷徑提交進去（指到 ../elsewhere）
+ */
+export function tinyRepo(/** @type {{ firstCommitFiles?: Record<string, string>, nodeModules?: boolean, packageJson?: string, remote?: string, commitNodeModulesLink?: boolean }} */ o = {}) {
   const d = keep(mkdtempSync(join(tmpdir(), 'grok-flow-repo-')));
   const git = (/** @type {string[]} */ a) => execFileSync('git', ['-C', d, ...a], { encoding: 'utf8', env: CLEAN_ENV });
   git(['init', '-q']);
   writeFileSync(join(d, 'a.txt'), 'hello\n');
   writeFileSync(join(d, 'tree-only.txt'), 'TREE-ONLY-PUBLIC-VALUE\n');   // 兩顆 commit 都有、不在 diff 裡＝只在樹裡
-  mkdirSync(join(d, 'node_modules', 'eslint'), { recursive: true });
-  writeFileSync(join(d, 'node_modules', 'eslint', 'package.json'), '{}');
+  if (o.nodeModules !== false && !o.commitNodeModulesLink) {
+    mkdirSync(join(d, 'node_modules', 'eslint'), { recursive: true });
+    writeFileSync(join(d, 'node_modules', 'eslint', 'package.json'), '{}');
+  }
+  /** @type {string[]} */ const extra = [];
+  if (o.packageJson !== undefined) { writeFileSync(join(d, 'package.json'), o.packageJson); extra.push('package.json'); }
+  if (o.commitNodeModulesLink) { execFileSync('ln', ['-s', '../elsewhere', join(d, 'node_modules')]); extra.push('node_modules'); }
+  if (o.remote) git(['remote', 'add', 'origin', o.remote]);
   // firstCommitFiles：進**第一顆 commit**＝在 base 之前 ⇒ 在 head 樹裡、不在 base..head 的 diff 裡。
   // 預設不傳：把鑰匙形狀塞進共用夾具會讓每一題的樹都帶著它，反而遮蔽別的題。
   for (const [name, body] of Object.entries(o.firstCommitFiles ?? {})) { mkdirSync(dirname(join(d, name)), { recursive: true }); writeFileSync(join(d, name), body); }   // 可放巢狀路徑（如 data/store.db）
-  git(['add', 'a.txt', 'tree-only.txt', ...Object.keys(o.firstCommitFiles ?? {})]);
+  git(['add', 'a.txt', 'tree-only.txt', ...extra, ...Object.keys(o.firstCommitFiles ?? {})]);
   git(['commit', '-q', '-m', 'one']);
   const head = git(['rev-parse', 'HEAD']).trim();
   writeFileSync(join(d, 'a.txt'), 'hello world\n');
