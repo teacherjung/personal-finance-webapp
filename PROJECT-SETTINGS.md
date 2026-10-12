@@ -224,7 +224,7 @@ PR說明的「實作者」「複審者」兩欄、結論標頭與自評的角色
 
 ## 十二、忽略清單登記（規矩 B4、E7；考題比對每一份的生效樣式）
 
-- \.gitignore：data\/store\.json、data\/store\.json\.bak、data\/store\.db、data\/store\.db\.bak、data\/\*\.db、data\/\*\.db\-wal、data\/\*\.db\-shm、data\/store\.manual\-backup\-\*\.json、data\/\*backup\*、\*\.bak、\.claude\/settings\.local\.json、node\_modules、\.codex\-reviews\/、tmp\/、output\/、\*\.log、\.DS\_Store、\*\*\/\.DS\_Store、\/\.agents\/、\/skills\-lock\.json、\/meeting\.sh、\/meeting\_0724\_1414\.md、\*\.grok\-bump\-tmp、\/lib\/\_xlsx\_guard\_probes\/、\/public\/\_xlsx\_guard\_probes\/、\.env、\.env\.local
+- \.gitignore：data\/store\.json、data\/store\.json\.bak、data\/store\.db、data\/store\.db\.bak、data\/\*\.db、data\/\*\.db\-wal、data\/\*\.db\-shm、data\/store\.manual\-backup\-\*\.json、data\/\*backup\*、\*\.bak、\.claude\/settings\.local\.json、node\_modules、\/\.codex\-reviews\/、\/tmp\/、\/output\/、\*\.log、\.DS\_Store、\*\*\/\.DS\_Store、\/\.agents\/、\/skills\-lock\.json、\/meeting\.sh、\/meeting\_0724\_1414\.md、\/scripts\/grok\-scan\.js\.\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\.grok\-bump\-tmp、\/test\/grok\-scan\-flow\-preflight\.test\.js\.\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\[0\-9a\-f\]\.grok\-bump\-tmp、\/test\-doubles\/\_probe\_\*\/、\/test\-doubles\-evil\-\*\/、\/lib\/\_seam\_probe\_\*\/、\/public\/\_seam\_probe\_\*\/、\/lib\/\_xlsx\_guard\_probes\/、\/public\/\_xlsx\_guard\_probes\/、\.env、\.env\.local
 - prototype\/forest\-ui\-lab\/\.gitignore：assets\/\*\.png、assets\/\*\.jpg
 
 ## 十三、合併步驟登記（規矩 H1；合併指令照這個順序跑，任一道紅就停）

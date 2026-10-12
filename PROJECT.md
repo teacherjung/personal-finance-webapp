@@ -65,6 +65,7 @@
 - （暫存覆蓋，#683 r1 發現 1）生命週期考題未納入 grok-scan-flow-repo 與 grok-scan-flow-redaction；這兩支既有建立點已登記，尚未有生命週期回歸題／`test/scan-fixture-cleanup.test.js`、`test/grok-scan-flow-repo.test.js` 與 `test/grok-scan-flow-redaction.test.js`／下次修改這兩支考題的建立或收尾時，補實際根觀察及有效突變 — **未分配**
 - （暫存觀察器射程，#683 掃描發現 3）建立視界只含本行程 mkdtempSync，未涵蓋非同步建立、mkdir 自建根與子行程根／`test/helpers/temp-root-lifecycle-observer.js`、`test/scan-fixture-cleanup.test.js` 及受影響的掃描考題／受影響考題改用上述建立方式時，擴觀察器並補真行為及有效突變 — **未分配**
 - （暫存回報解析，#683 r2 發現）子行程 stdout 空白時先在 JSON.parse 報 SyntaxError，沒有到缺摘要斷言；仍擋下、不構成假綠／`test/scan-fixture-cleanup.test.js`／下次修改摘要解析時，先濾空行再由缺摘要斷言說明原因 — **未分配**
+- （暫存整組跳過，#683 r3 發現 2）整個 describe 帶 skip 時，回報器把 suite 的跳過也收進明細，與官方個別題數不合而往安全方向紅；[原探針及處置](https://github.com/teacherjung/personal-finance-webapp/pull/683#issuecomment-6132842497)／`test/helpers/temp-root-lifecycle-reporter.js`、`test/scan-fixture-cleanup.test.js`／FILES 任一支開始使用 describe 時，帶事件 details.type 並區分 suite 明細，補真行為與有效突變 — **未分配**
 
 ### 交接工程待辦（文件精簡續作時歸位）
 
@@ -85,7 +86,7 @@
 - （交接原第 25 項）雲端版考題「資料層不得偷偷用 service_role」只抓得到字面寫法，9/26 協作-工讀生稽核的「已證實撐不住」表記為「service_role 的等價寫法」｜值得做：雲端版復工時（10/07 常設指示「目前雲端版都先暫停作業」）｜放：test/hosted-store-pg.test.js 第 260 行那題｜代價：一題考題（Fable 10/10 代裁加的） — **未分配**
 - （交接原第 26 項）雲端版考題「overwrite: true 全 repo 只准出現在 /api/import、一定要帶 from」只抓同一行的字面呼叫，同一張表記為「overwrite: true 的第二入口」｜值得做：雲端版復工時（同上）｜放：test/hosted-import-overwrite.test.js 第 209 行那題｜代價：一題考題（Fable 10/10 代裁加的） — **未分配**
 - （交接原第 27 項）考題在系統暫存區留下資料夾沒收：10/10 量到理財 test/audit-grok-scan.test.js 的 autopsy- 一萬一千多個、test/grok-scan-flow-*.test.js 的 grok-home-、outside-、out- 各數百到一千多個（套件那邊的同一件事記在套件待辦，套件 #73）｜值得做：下一支動到那幾支考題時順手改成用完收掉｜放：「考題與工具」｜代價：每支考題加收尾（套件 #73 的整理清單不列這種，名字不像審查樹） — **機制修正＝[#683](https://github.com/teacherjung/personal-finance-webapp/pull/683)**：audit 登記自有根並在安全斷言後恢復權限；流程考題沿用 keep 收尾。實際建立結果與正常／考題失敗／finally 前初始化故障的生命週期考題見 test/scan-fixture-cleanup.test.js；不清歷史殘骸、不改正式掃描證據保留。範圍由本次授權的 GPT-6.1 Sol 代裁（[留痕](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6126118521)，不是 William 本人原話）。
-- （交接原第 12 項）忽略清單三件綁位置：PDF 考題三種探針殘骸（含指向系統程式的捷徑，9/11 被 git add -A 掃進過）、舊忽略樣式（審查殘留、暫存、產出、升版暫存檔）仍匹配任意深度、PDF 考題中斷留下的臨時探針目錄｜值得做：下次動忽略清單那支一起，或殘骸再被提交時｜放：.gitignore、settings.json 忽略清單、test/no-hiding-places.test.js（三處互相釘死，同支改）｜代價：一支小 PR 要審（S044、S045、S246） — **未分配**
+- （交接原第 12 項）忽略清單位置整理由 [#684](https://github.com/teacherjung/personal-finance-webapp/pull/684) 處理；根目錄、PDF 探針目錄及正式升版產名的邊界見 `docs/ignore-positions-plan.md`，三份登記與生成檔同支改。大小寫依 Git 實際設定匹配，不宣稱跨模式嚴格小寫；不清歷史殘骸。值得再做：正式產名或探針位置改變時，同步核 `test/ignore-positions.test.js` 與登記（S044、S045、S246） — **Codex 實作、交 Claude 複審**
 - （交接原第 13 項）結論聯集閘的考題比對條號太鬆：用「含有 F5」比對，F50 也會過｜值得做：下次動那支考題時｜放：`test/review-verdicts.test.js` 的 `/F5/` 條號比對｜代價：改兩行（S028、S212） — **未分配**
 - （交接原第 14 項）兩處錢邊界考題的註解又把機制講一遍，改成只寫探針原因（K3）｜值得做：下一支動到這兩檔時順手｜放：`test/helpers/money-family-probes.js` 與 `test/money-boundary.test.js` 的 #643 探針註解（改 helper 時連同完整性雜湊更新）｜代價：幾分鐘（S211） — **未分配**
 - （交接原第 15 項）升版小工具兩句舊字沒跟上（檔頭「寫進原始碼的值只有三個」，日期是第四個；成功訊息那句）｜值得做：下次動它時順手｜放：scripts/grok-bump.js｜代價：改兩句（S046、S221） — **未分配**

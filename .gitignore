@@ -21,9 +21,9 @@ node_modules
 
 # 產生的檔案
 # 審查產出的殘留目錄（早期 review-loop 工具留下的；工具已不收，見 docs/development-workflow.md「驗證與三關」節「沒用到的程式直接刪」）
-.codex-reviews/
-tmp/
-output/
+/.codex-reviews/
+/tmp/
+/output/
 *.log
 
 # 系統
@@ -49,7 +49,15 @@ output/
 /meeting_0724_1414.md
 
 # grok 升版助手寫檔時的同目錄暫存檔（正常情況下自己會清掉；清不掉時它會印出位置）
-*.grok-bump-tmp
+/scripts/grok-scan.js.[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].grok-bump-tmp
+/test/grok-scan-flow-preflight.test.js.[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].grok-bump-tmp
+
+# PDF 考題必須在這些位置放探針才能驗糾察；硬中止留下的目錄不應被誤提交。
+# 目錄內的探針仍要經 ESLint，這裡只限制 Git 收檔的範圍。
+/test-doubles/_probe_*/
+/test-doubles-evil-*/
+/lib/_seam_probe_*/
+/public/_seam_probe_*/
 
 # xlsx 護欄那一題的探針目錄（`test/xlsx-isolate.test.js`；它**必須**寫在 lib/ 與 public/ 底下，
 # 否則護欄範圍被縮窄時那一題看不出來）。正常路徑上開頭與 finally 各清一次；

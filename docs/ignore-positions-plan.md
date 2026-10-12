@@ -8,4 +8,6 @@
 
 ESLint 的探針糾察維持由既有 PDF 接縫考題驗證；獨立加入探針忽略的突變須使該題紅。這份 Git 忽略驗證不代替 ESLint 糾察，也不檢查其他目錄的忽略檔或未納入版控的外部忽略設定。不清歷史殘骸，不改其他真實資料、憑證與相依套件樣式。
 
+大小寫依 [本支追加代裁](https://github.com/teacherjung/personal-finance-webapp/pull/684#issuecomment-6133286174) 劃界：在獨立沙盒以命令參數驗 core.ignoreCase=false／true，另核原生探測值；[Git 會探測檔案系統設定](https://git-scm.com/docs/git-config)，不改使用者 Git 設定。大寫與混合大小寫的目錄、固定目標及尾碼獨立驗，不併入跨模式都應拒絕的錯名；嚴格小寫只在 false 模式成立。目錄類樣式驗一般檔與根部捷徑的拒絕；升版樣式是 basename 匹配，也會匹配同名目錄或捷徑，不宣稱它能區分同名物件的建立來源。
+
 本項也在 PROJECT 歸位 [#683 第三輪發現 2](https://github.com/teacherjung/personal-finance-webapp/pull/683#issuecomment-6132842497)：整組 describe 跳過會多收 suite 明細、往安全方向紅；位置為暫存回報器及生命週期考題，FILES 任一支開始使用 describe 時才補強。
