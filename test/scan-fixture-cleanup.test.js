@@ -12,6 +12,7 @@ import { gitEnv } from '../lib/git-env.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OBSERVER = join(ROOT, 'test/helpers/temp-root-lifecycle-observer.js');
+const REPORTER = join(ROOT, 'test/helpers/temp-root-lifecycle-reporter.js');
 const FILES = [
   'test/audit-grok-scan.test.js',
   'test/grok-scan-flow-credentials.test.js',
@@ -32,7 +33,7 @@ function restoreFixtureAccess(dir) {
 /** @param {string} file @param {Record<string,string|undefined>} env */
 function run(file, env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--test', '--import', OBSERVER, '--test-reporter', OBSERVER, file], { cwd: ROOT, env });
+    const child = spawn(process.execPath, ['--test', '--import', OBSERVER, '--test-reporter', REPORTER, file], { cwd: ROOT, env });
     let output = '';
     let report = '';
     child.stdout.on('data', (part) => { output += part; report += part; });

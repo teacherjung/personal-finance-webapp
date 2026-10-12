@@ -19,3 +19,5 @@
 觀察器不是清理者：不讀 TEMP_ROOTS 清單，記錄 Node 實際 mkdtempSync 的建立結果。未登記對照用原生建立函式、內容由外層每題各自種獨立值。捷徑在考題收尾前放入夾具，不影響原安全操作；根與目標各自驗。finally 前初始化故障另測 victim 寫入，否則它原有 finally 足以清正常路徑，新增登記的故障保護會沒有證據。
 
 只證明本平台實際走到的建立路徑；未建立的能力或 victim 路徑明列跳過，不把跳過當通過。外層在殘留斷言之後才清本場夾具；不按目錄前綴掃其他人的根。
+
+官方回報器只轉換 test:summary 與 test:fail 事件，不載入觀察器或註冊考題 hook；觀察器另用 --import 載入。Node 的人類回報文字不作解析依據；官方事件欄位見 [Node 22 API](https://raw.githubusercontent.com/nodejs/node/v22.14.0/doc/api/test.md)。只有官方事件證明全跳過才容許沒有 afterEach；實際根的殘留與獨立對照內容仍在平台判定前驗。
