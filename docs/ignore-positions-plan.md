@@ -1,0 +1,11 @@
+# 忽略清單位置整理（交接原第 12 項）
+
+範圍依 [本次授權的 GPT-6.1 Sol 代裁](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6129379236)，不是 William 本人原話。忽略樣式的正本是 .gitignore；settings.json 的 ignoreLists 與 test/no-hiding-places.test.js 同序登記，PROJECT-SETTINGS.md 由 build-settings 產生。
+
+審查殘留、tmp、output 只匹配根目錄的目錄；grok 升版暫存只匹配 scripts/grok-scan.js 及 test/grok-scan-flow-preflight.test.js 的同目錄暫存檔，尾碼依正式產名的十二個小寫十六進位字元。PDF 探針只匹配 /test-doubles/_probe_*/、/test-doubles-evil-*/、/lib/_seam_probe_*/、/public/_seam_probe_*/ 的目錄。一般檔與根部捷徑不因目錄樣式被忽略；被忽略的實體目錄內含捷徑仍由祖先目錄樣式忽略。
+
+新增 test/ignore-positions.test.js，用本題自建 Git 沙盒、實際 .gitignore 與 check-ignore --no-index --verbose 驗命中樣式及退出碼；Git 環境從零只給 PATH 與本題 HOME，控制模板與外部 excludes。各位置分開驗正確位置、錯深度、相似名、一般檔與捷徑；升版兩個目標用正式 createExclusiveTemp 取得真產名，正式檔與非法尾碼要看得見。各獨立樣式拿掉或放寬位置、型別與尾碼時，行為題須在指定斷言紅、還原綠；先確認基準綠及替換目標存在。
+
+ESLint 的探針糾察維持由既有 PDF 接縫考題驗證；獨立加入探針忽略的突變須使該題紅。這份 Git 忽略驗證不代替 ESLint 糾察，也不檢查其他目錄的忽略檔或未納入版控的外部忽略設定。不清歷史殘骸，不改其他真實資料、憑證與相依套件樣式。
+
+本項也在 PROJECT 歸位 [#683 第三輪發現 2](https://github.com/teacherjung/personal-finance-webapp/pull/683#issuecomment-6132842497)：整組 describe 跳過會多收 suite 明細、往安全方向紅；位置為暫存回報器及生命週期考題，FILES 任一支開始使用 describe 時才補強。
