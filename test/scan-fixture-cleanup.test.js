@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { dirname, join, sep } from 'node:path';
+import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { gitEnv } from '../lib/git-env.js';
@@ -62,13 +62,20 @@ describe('掃描考題自有夾具的生命週期', { concurrency: 2 }, () => {
         events = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
         const roots = events.filter((e) => e.root).map((e) => e.root);
         assert.ok(roots.length, '未觀察到任何實際 mkdtemp；不能當作清理成功');
+        assert.deepEqual(roots.filter((root) => existsSync(root)), [], '考題完成後仍留有實際建立的根');
+        assert.ok(events.some((e) => e.afterEachObserved), '考題生命週期 hook 沒有執行，不能推論平台未執行夾具');
+        const control = events.find((e) => e.control);
+        assert.ok(control, '沒有獨立未登記對照');
+        assert.ok(existsSync(control.control), '收尾刪掉了未登記對照根');
+        assert.equal(readFileSync(control.sentinel, 'utf8'), value, '收尾傷到本題專屬的捷徑目標內容');
         const link = events.find((e) => e.link);
         if (failure === 'victim-write' && !roots.some((p) => p.startsWith(join(temporary, 'victim-')))) {
           assert.equal(result.code, 0, result.output);
           t.skip('本平台未執行 victim 初始化路徑，未驗證該故障收尾');
           return;
         }
-        if (!roots.some((root) => root.startsWith(temporary + sep))) {
+        // 能力探測在模組載入時建立且立即清掉；它不證明受保護的考題夾具走過。
+        if (!events.some((e) => e.fixtureRootsPresent > 0)) {
           assert.equal(result.code, 0, result.output);
           t.skip('本平台未執行留下自有夾具的路徑，未驗證該路徑的收尾');
           return;
@@ -79,12 +86,7 @@ describe('掃描考題自有夾具的生命週期', { concurrency: 2 }, () => {
           assert.match(result.output, /Deliberate fixture lifecycle failure after creation/);
         }
         assert.equal(result.code, failure ? 1 : 0, result.output);
-        assert.deepEqual(roots.filter((root) => existsSync(root)), [], '考題完成後仍留有實際建立的根');
         assert.equal(existsSync(link.linkedRoot), false, '放過捷徑的自有根沒有被收掉');
-        const control = events.find((e) => e.control);
-        assert.ok(control, '沒有獨立未登記對照');
-        assert.ok(existsSync(control.control), '收尾刪掉了未登記對照根');
-        assert.equal(readFileSync(control.sentinel, 'utf8'), value, '收尾傷到本題專屬的捷徑目標內容');
       } finally {
         // 突變拿掉權限還原時，先讓上面的生命週期斷言紅，再收這次自己的殘留。
         for (const event of events) if (event.root) {

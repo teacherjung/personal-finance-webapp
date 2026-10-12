@@ -43,6 +43,7 @@ if (log && scope && process.env.NODE_TEST_CONTEXT?.startsWith('child')) {
   afterEach(() => {
     // 能力探測可能先建立又立即收掉根；故意失敗要等受測夾具確實在場。
     const present = roots.filter((root) => root.startsWith(scope + sep) && fs.existsSync(root));
+    record({ afterEachObserved: true, fixtureRootsPresent: present.length });
     if (process.env.FIXTURE_LIFECYCLE_FAIL === '1' && present.length && !failed) {
       failed = true;
       record({ failureAfterRoots: present.length });
