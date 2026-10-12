@@ -370,7 +370,7 @@ test('★顯示層的機構段也過同一把尺：舊列 `bank2|台新銀行|�
   assert.match(n('x2'), /812-/, '台新行內帳號顯示補 812-');
 });
 
-test('合庫只合併核准的短長名稱，其他共用品牌不併入', () => {
+test('合庫只合併核准的短長名稱，未核准寫法不併入', () => {
   for (const name of ['合作金庫', '合作金庫銀行']) assert.equal(canonicalBank(name), '合作金庫');
   assert.equal(sameBank('合作金庫', '合作金庫銀行'), true);
   for (const name of ['合作金庫證券', '合作金庫商業銀行', '合作金庫國際銀行', 'Taiwan Cooperative Bank']) {

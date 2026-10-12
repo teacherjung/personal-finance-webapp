@@ -52,13 +52,15 @@
 - （合庫多頁版型，#678 r1 發現 2）合成探針的頁尾、續頁表頭前頁首、每頁重印基準日會整份拒收；銀行真實多頁是否這樣排尚未量過／`lib/bank-statement.js` 合庫解析與 `docs/tcb-transfer-statement-plan.md`／第一份實際多頁合庫帳單被拒收時，先核版型、再決定校準範圍 — **未分配**
 - （合庫內轉分類，#678 r1 發現 6）收款遮罩露六碼與本人帳戶末四碼不相認，轉給自己可能先列支出，需在預覽核對／`lib/services/bank-import.js` 的 `noteAccountSuffixes`、`ownSuffixSet` 與 `classifyBankTx`／每月多筆本人跨行轉帳都要手改時，提出具體比對方案給 William 裁示；不可逕自放寬本人帳戶判準 — **未分配**
 
-- （合庫拒收覆蓋，#678 r2 發現 1）金額上限、基準日唯一、轉帳區重複、表頭額外字樣及跨頁缺表頭缺專屬反例題／`test/tcb-transfer-statement.test.js` 與 `lib/bank-statement.js`／下次變更這些限制或擴充版型時補拒收題並各做有效突變 — **未分配**
+- （合庫拒收覆蓋，#678 r2 發現 1）金額上限、基準日唯一、轉帳區重複、表頭額外字樣及跨頁缺表頭缺專屬反例題；結尾後四個證據條件也各缺專屬反例題（#678 r3 發現 5）／`test/tcb-transfer-statement.test.js` 與 `lib/bank-statement.js`／下次變更這些限制或擴充版型時補拒收題並各做有效突變 — **未分配**
 - （合庫其他存款種類，#678 r2 發現 3）台幣概要含非綜合存款列時整份拒收／`lib/bank-statement.js` 與 `docs/tcb-transfer-statement-plan.md`／首次遇到此類帳單需匯入時，先請 William 決定跳過該種類或分開列管 — **未分配**
 - （合庫備註行距，#678 掃描發現 5）合成的 14 點列距與跨 12 點備註會讓備註靠近下一筆；尚無銀行版型佐證其歸屬／`lib/bank-statement.js` 與 `test/tcb-transfer-statement.test.js`／取得實際密排或多行備註版型時，以可公開合成案例核對行距與歸位限制 — **未分配**
 
+- （合庫名稱範圍，#678 r3 發現 4）合庫正式全名或英文名不在已核准別名中，遇到此類機構戳可能另建帳戶／`lib/bank-alias.js` 與 `test/bank-alias.test.js`／首次出現這類機構戳時，核對法人同一性並請 William 裁示是否增列；本支不增列名稱 — **未分配**
+
 ## 重要決定（已拍板，勿重議）
 
-- **合庫匯入補強（2026-10-12）**：William 同意帳單末碼少於四位不直接判本人轉帳、合庫短長名稱同家、檢查進度不宣稱完整驗算；四位以上規則及其他银行不放寬。原話与操作化見[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/678#issuecomment-6116958755)。
+- **合庫匯入補強（2026-10-12）**：William 同意帳單末碼少於四位不直接判本人轉帳、合庫短長名稱同家、檢查進度不宣稱完整驗算；四位以上規則及其他銀行不放寬。原話與操作化見[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/678#issuecomment-6116958755)。
 
 - **銀行收支文案裁示（2026-10-05）**：#655 r3 第 6 項所指的 `「收支說明」是什麼？` 跳窗已由 #657 移除；William 回「A」，同意結清該文案審改項（[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/655#issuecomment-5987417002)）。第 7 項選擇保留面向使用者的「帳單原文」用詞（[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/655#issuecomment-5987477663)）。**以下為 Codex 的操作化與技術劃界**：這不代表逐字保留空白；部分解析路徑會整理空白，技術文件與型別註解已改以「保存解析結果」及實際用途說明，完成紀錄見[後續補強 #664](https://github.com/teacherjung/personal-finance-webapp/pull/664)。銀行收支另依 William 回報記錄[使用者驗收完成](https://github.com/teacherjung/personal-finance-webapp/pull/657#issuecomment-5987477941)，該驗收對應原畫面變更；r3 前五項技術待辦另由上述後續補強處理，未將其自動算成使用者驗收。
 
