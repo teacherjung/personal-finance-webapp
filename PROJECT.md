@@ -63,7 +63,8 @@
 - （合庫名稱範圍，#678 r3 發現 4）合庫正式全名、英文名、簡稱「合庫」及中間帶空白的寫法不在已核准別名中，遇到此類機構戳可能另建帳戶；三碼本人證據門檻也用同一把身分尺認合庫，這些寫法會沿用主幹的短末碼判斷，裁別名時須一併檢查分類影響（#678 r4 發現 1）／`lib/bank-alias.js`、`lib/services/bank-import.js`、`test/bank-alias.test.js` 與 `test/tcb-transfer-statement.test.js`／首次出現這類機構戳時，核對法人同一性並請 William 裁示是否增列；本支不增列名稱 — **未分配**
 
 - （暫存覆蓋，#683 r1 發現 1）生命週期考題未納入 grok-scan-flow-repo 與 grok-scan-flow-redaction；這兩支既有建立點已登記，尚未有生命週期回歸題／`test/scan-fixture-cleanup.test.js`、`test/grok-scan-flow-repo.test.js` 與 `test/grok-scan-flow-redaction.test.js`／下次修改這兩支考題的建立或收尾時，補實際根觀察及有效突變 — **未分配**
-- （暫存施工文件，#683 r1 發現 2）施工計畫保留開草稿前的排隊敘述，可能被當成新的施工步驟／`docs/test-temp-cleanup-plan.md`／下次修改該文件或有人誤認為尚待開草稿時，縮掉施工時態，保留裁示指路與劃界 — **未分配**
+- （暫存觀察器射程，#683 掃描發現 3）建立視界只含本行程 mkdtempSync，未涵蓋非同步建立、mkdir 自建根與子行程根／`test/helpers/temp-root-lifecycle-observer.js`、`test/scan-fixture-cleanup.test.js` 及受影響的掃描考題／受影響考題改用上述建立方式時，擴觀察器並補真行為及有效突變 — **未分配**
+- （暫存回報解析，#683 r2 發現）子行程 stdout 空白時先在 JSON.parse 報 SyntaxError，沒有到缺摘要斷言；仍擋下、不構成假綠／`test/scan-fixture-cleanup.test.js`／下次修改摘要解析時，先濾空行再由缺摘要斷言說明原因 — **未分配**
 
 ### 交接工程待辦（文件精簡續作時歸位）
 

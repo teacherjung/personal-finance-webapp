@@ -4,7 +4,7 @@
 // 可靠的圍欄＝掃完機械稽核日誌。方向要 fail-closed：查不清楚一律當越界。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, symlinkSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, symlinkSync, chmodSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { auditSessionDir, allSessionDirs } from '../scripts/audit-grok-scan.js';
@@ -270,12 +270,22 @@ test('⭐ fail-closed｜workspace 目錄無法列舉 → CLI 退 2 不是 1', (t
   const root = tmp();
   const cwd = '/private/tmp/ws-unlistable';
   const ws = join(root, encodeURIComponent(cwd));
-  mkdirSync(ws, { recursive: true, mode: 0o111 });
+  mkdirSync(ws, { recursive: true, mode: 0o700 });
+  const session = join(ws, 'session-clean');
+  mkdirSync(session);
+  writeFileSync(join(session, 'updates.jsonl'), '{"type":"result","body":"clean"}\n');
+  const args = ['scripts/audit-grok-scan.js', '--workspace', cwd, '--sessions-root', root];
+  assert.doesNotThrow(() => execFileSync(process.execPath, args, { encoding: 'utf8' }),
+    '同一 workspace 的可讀乾淨 session 必須正常通過');
   try {
+    chmodSync(ws, 0o111);
+    assert.throws(() => readdirSync(ws), { code: 'EACCES' }, '必須實際無法列舉受測 workspace');
     let code = 0;
-    try { execFileSync(process.execPath, ['scripts/audit-grok-scan.js', '--workspace', cwd, '--sessions-root', root], { encoding: 'utf8' }); }
-    catch (e) { code = /** @type {any} */ (e).status; }
+    let output = '';
+    try { output = execFileSync(process.execPath, args, { encoding: 'utf8' }); }
+    catch (e) { code = /** @type {any} */ (e).status; output = String(/** @type {any} */ (e).stdout); }
     assert.equal(code, 2, '列舉失敗必須是「查不清楚」，不是「已確認越界」');
+    assert.match(output, /workspace 目錄無法列舉（權限或損毀）/, 'CLI 必須因 workspace 不可列舉而拒絕');
   } finally {
     // 安全斷言完成後才恢復可列舉權限，讓自有根的收尾能走進夾具。
     chmodSync(ws, 0o700);

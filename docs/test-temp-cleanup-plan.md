@@ -12,7 +12,7 @@
 
 獨立突變：逐個新 keep 呼叫、audit 根登記、audit after、權限 finally 各移除一次；對應生命週期斷言須因具體根殘留轉紅，還原後綠。故意失敗場次預期退出碼非零，不算突變證明。新增考題不只掃 after/keep 字面。平台未執行、能力跳過獨立列出，不算完成該平台驗證。
 
-施工計畫先備；待常設指示 #682 合併後再接最新主幹開草稿，草稿後才改考題。開工前再核對 Claude 開著 PR 和完整路徑。預計路徑：test/audit-grok-scan.test.js、test/grok-scan-flow-credentials.test.js、test/grok-scan-flow-breach.test.js、test/grok-scan-flow-preflight.test.js、test/grok-scan-flow-incident.test.js、新增生命週期考題及薄觀察器 helper、施工計畫與 PROJECT 指路。
+本項 PR 與受審版本以 [#683](https://github.com/teacherjung/personal-finance-webapp/pull/683) 為準；裁示與驗證證據留在該 PR，這份文件保留方法及劃界。
 
 ## 生命週期考題的劃界
 
@@ -20,4 +20,6 @@
 
 只證明本平台實際走到的建立路徑；未建立的能力或 victim 路徑明列跳過，不把跳過當通過。外層在殘留斷言之後才清本場夾具；不按目錄前綴掃其他人的根。
 
-官方回報器只轉換 test:summary 與 test:fail 事件，不載入觀察器或註冊考題 hook；觀察器另用 --import 載入。Node 的人類回報文字不作解析依據；官方事件欄位見 [Node 22 API](https://raw.githubusercontent.com/nodejs/node/v22.14.0/doc/api/test.md)。只有官方事件證明全跳過才容許沒有 afterEach；實際根的殘留與獨立對照內容仍在平台判定前驗。
+官方回報器轉換 test:summary、失敗及 test:pass/test:fail 的原始 skip 欄位，不重收 test:complete、不載入觀察器或註冊考題 hook；觀察器另用 --import 載入。Node 的人類回報文字不作解析依據；官方事件欄位見 [Node 22 API](https://raw.githubusercontent.com/nodejs/node/v22.23.1/doc/api/test.md)。數量取最後官方摘要，suite 不併入 test；跳過保留題名與字串／布林原值，布林沒有理由就標「未提供原因」。只有官方事件證明全跳過才容許沒有 afterEach；實際根的殘留與獨立對照內容仍在平台判定前驗。原生混合案例走與受影響檔案相同的外層驗證，另驗操作證據及跳過不遮住失敗；runner 標記跳過不代表題內完全未執行。
+
+掃後補強依 [本支代裁](https://github.com/teacherjung/personal-finance-webapp/pull/683#issuecomment-6132314249)：權限題先在同一 workspace 建乾淨 session 取得正常 CLI 對照，再限制權限；實際列舉須因權限失敗，CLI 須報不可列舉原因，安全斷言後 finally 才還原。觀察器的建立視界只含本行程 mkdtempSync，不涵蓋非同步建立、mkdir 自建根及子行程根；同族建立方式變更時再擴充，不能把這份證據當作全暫存區已驗。

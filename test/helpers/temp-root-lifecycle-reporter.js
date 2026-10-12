@@ -4,6 +4,8 @@ export default async function* reporter(/** @type {AsyncIterable<any>} */ source
   for await (const event of source) {
     if (event.type === 'test:summary') {
       yield JSON.stringify({ type: event.type, counts: event.data.counts, success: event.data.success }) + '\n';
+    } else if ((event.type === 'test:pass' || event.type === 'test:fail') && event.data.skip !== undefined) {
+      yield JSON.stringify({ type: event.type, name: event.data.name, skip: event.data.skip }) + '\n';
     } else if (event.type === 'test:fail') {
       const error = event.data.details?.error;
       yield JSON.stringify({ type: event.type, name: event.data.name,
