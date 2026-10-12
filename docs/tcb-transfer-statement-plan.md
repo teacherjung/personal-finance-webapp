@@ -16,7 +16,7 @@
 
 ## 核准的匯入補強
 
-依 [2026-10-12 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/678#issuecomment-6116958755)，帳單 accounts 與 accountCurrency 的末碼至少四位才作本人轉帳證據，四位以上保留整段比對，不把六碼裁成四碼。「合作金庫」與「合作金庫銀行」沿用銀行別名機制正規化為「合作金庫」，不回寫既有機構戳或去重鍵，不合併其他法人或猜英文別名。共用檢查階段採「正在檢查可驗算的資料…」「檢查完成，正在整理預覽…」，弱驗證說明保留。
+依 [2026-10-12 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/678#issuecomment-6116958755)，合庫帳單 accounts 與 accountCurrency 的末碼至少四位才作本人轉帳證據，四位以上保留整段比對，不把六碼裁成四碼。依[範圍裁示](https://github.com/teacherjung/personal-finance-webapp/pull/678#issuecomment-6118181784)，其他銀行保留既有短末碼判斷，包含台新三碼外幣自有戶的內轉辨識。「合作金庫」與「合作金庫銀行」沿用銀行別名機制正規化為「合作金庫」，不回寫既有機構戳或去重鍵，不合併其他法人或猜英文別名。共用檢查階段採「正在檢查可驗算的資料…」「檢查完成，正在整理預覽…」，弱驗證說明保留。
 
 ## 驗證與邊界
 

@@ -228,12 +228,12 @@ test('合庫三碼相同的他行收款戶不直接判內轉：正式預覽與�
   assert.equal(db.transactions[0].type, 'expense');
 });
 
-for (const from of ['accounts', 'accountCurrency']) test(`本人末碼證據 ${from}：少於四碼不認，四碼與六碼維持完整末碼比對`, () => {
-  for (const suffix of ['3', '63', '363', '3363', '003363']) {
+for (const from of ['accounts', 'accountCurrency']) test(`合庫本人末碼證據 ${from}：少於四碼不認，四碼與六碼維持完整末碼比對`, () => {
+  for (const bank of ['合作金庫', '合作金庫銀行']) for (const suffix of ['3', '63', '363', '3363', '003363']) {
     for (const direction of ['in', 'out']) {
       const masked = `9001000***${suffix}`;
       const own = { suffix, masked, balance: 100, currency: 'TWD', label: '綜合存款', note: '' };
-      const parsed = { bank: '合作金庫銀行', accounts: from === 'accounts' ? [own] : [],
+      const parsed = { bank, accounts: from === 'accounts' ? [own] : [],
         accountCurrency: from === 'accountCurrency' ? { [masked]: 'TWD' } : {},
         transactions: [{ ...expected, acctMasked: masked, acctSuffix: suffix, direction, note: `822-9002000***${suffix}` }] };
       const db = emptyDb();
@@ -241,6 +241,29 @@ for (const from of ['accounts', 'accountCurrency']) test(`本人末碼證據 ${f
       assert.equal(previewBankTxForDb(db, parsed).rows[0].type, want, `${suffix} ${direction}`);
       assert.equal(importBankTxToDb(db, parsed).imported, 1);
       assert.equal(db.transactions[0].type, want, `${suffix} ${direction}`);
+    }
+  }
+});
+
+for (const from of ['accounts', 'accountCurrency']) test(`非合庫本人末碼證據 ${from}：台新三碼外幣自有戶雙向維持內轉`, () => {
+  for (const bank of ['台新', '台新銀行', '合成其他銀行']) {
+    for (const direction of ['in', 'out']) {
+      const twd = '900200****3302', fx = '900300****363';
+      const parsed = { bank,
+        accounts: from === 'accounts' ? [{ suffix: '363', masked: fx, balance: 100, currency: 'USD', label: '外幣活存', note: '' }] : [],
+        accountCurrency: { [twd]: 'TWD', ...(from === 'accountCurrency' ? { [fx]: 'USD' } : {}) },
+        transactions: [{ ...expected, acctMasked: twd, acctSuffix: '3302', direction,
+          desc: direction === 'out' ? '轉帳支取' : '轉帳存入', note: `${direction === 'out' ? '轉入' : '轉出'}${fx}` }] };
+      const db = emptyDb();
+      const row = previewBankTxForDb(db, parsed).rows[0];
+      assert.equal(row.type, 'transfer', `${bank} ${direction}`);
+      assert.equal(row.category, '內轉');
+      assert.equal(row.subcategory, direction === 'out' ? '內轉出' : '內轉入');
+      assert.equal(importBankTxToDb(db, parsed).imported, 1);
+      assert.equal(db.transactions.length, 1);
+      assert.equal(db.transactions[0].type, 'transfer', `${bank} ${direction}`);
+      assert.equal(db.transactions[0].subcategory, row.subcategory);
+      assert.equal(db.transactions[0].amount, expected.amount);
     }
   }
 });
