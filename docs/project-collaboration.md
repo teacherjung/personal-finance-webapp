@@ -31,7 +31,7 @@
 
 - 同時開著的 PR 上限＝RULES C1；重疊就讓道＝D3（讓道留言的固定字樣：「本支讓道中、上游＝#N」／「本支放棄」——沒有機器讀它，是給人查的）。共享規則入口與索引人人都可能加字：兩支同時改到同一檔，合併第一支之後其餘必衝突，開 PR 時就要說「合併第一個之後我要 rebase 其餘的」。
 - 堆疊＝RULES H2；堆疊閘＝`settings.json` gates 登記的 `tools/gates/check-stacked.js`（2026-07-10 #3/#5 被 `--delete-branch` 連帶關閉、2026-07-28 #309/#311/#312 各自合進自己的 base——兩次事故是這道閘存在的理由；本專案的合併指令帶 `--delete-branch`，所以這道閘必須是已啟用，考題釘著）。
-- 合併條件與程序＝RULES A4、A5、H1〜H6；本專案「改到禁區清單」的範圍與登記＝`settings.json` 的 A5、B1 那兩列。本專案沒有另外的合併授權：`settings.json` 的 mergeAuthorization 欄 2026-09-28 隨套件第二輪拿掉，08-13 立、09-05 確認的常設授權由新 A4／A5 取代（裁示者 2026-09-26 定案；2026-09-28 裁 ④ 第 D1 題 a）。合併指令＝`node tools/merge.js <編號> --merger <按鍵那一方的識別值>`，要在**釘住受審版本的樹的根目錄**跑——主目錄永遠停在 main、它的登記不跟著分支走；合併指令回非零時先查那支的狀態、不重跑（在連結工作樹裡 `--delete-branch` 可能合併成功、刪遠端分支失敗、退 1），合併後確認遠端分支已刪。
+- 合併條件與程序＝RULES A4、A5、H1〜H6；本專案「改到禁區清單」的範圍與登記＝`settings.json` 的 A5、B1 那兩列。本專案沒有另外的合併授權：`settings.json` 的 mergeAuthorization 欄 2026-09-28 隨套件第二輪拿掉，08-13 立、09-05 確認的常設授權由新 A4／A5 取代（裁示者 2026-09-26 定案；2026-09-28 裁 ④ 第 D1 題 a）。合併指令＝`node tools/merge.js <編號> --merger <按鍵那一方的識別值>`，只跑 `settings.json` gates 中已啟用的閘，要在**釘住受審版本的樹的根目錄**跑——主目錄永遠停在 main、它的登記不跟著分支走；合併指令回非零時先查那支的狀態、不重跑（在連結工作樹裡 `--delete-branch` 可能合併成功、刪遠端分支失敗、退 1），合併後確認遠端分支已刪。
 - 合併後的驗收分級＝`node tools/acceptance-tier.js <編號>`、照它印的做（RULES H6；分級表＝`settings.json` 的 acceptance：路徑家族表與每一級的動作，F 工具安全設定排第一＝William 2026-09-15 搬家第 3 題 a；每條家族由 `test/acceptance-table.test.js` 釘住）。
 
 ### 自動守門的現況（RULES E2、E3、E4）
@@ -46,7 +46,7 @@
 - **Codex 審查的觸發（William 常設授權，2026-07-27 立、2026-08-03 擴充）**：Claude 直接用本機 `codex` CLI 起審查、不必先問——PR 進行中的每一輪複審，與每批合併進 main 後的例行審查。指令列＝`codex exec -m <當輪最強模型> -c model_reasoning_effort='"<最高推理>"' -s workspace-write -c sandbox_workspace_write.network_access=true -C "/private/tmp/codex-review-pr<N>" - < <提示詞檔>`（模型與推理依 AGENTS.md 常設指示 C28：發審者每輪依平台當時提供的模型與推理等級清單核對，明確指定最強模型、最高推理；不使用 auto 選模／推理或自動升降級模式，判不出最高者先問 William；歷史設定 gpt-6-astra／xhigh 是 William 2026-09-07 的裁示、落點＝https://github.com/teacherjung/personal-finance-webapp/pull/579#issuecomment-5574063644 ；設定寫在指令上、不動 `~/.codex/config.toml`；網路要開，否則綁 localhost 的端點測試被沙箱擋掉 `listen EPERM`；其餘一律這組設定、AI 不可自行分類降級）。審查樹由實作者備與收，複審者不得自建 worktree；diff 一律 `git diff -M origin/main...HEAD`。
 - **送審提示詞＝RULES F3 與 `templates/review-request.md`**；本節仍是本專案複審必讀文件，來源字串的標準表＝`PROJECT-SETTINGS.md`。複審必驗清單「看情況查」的本專案落點：金額顯示走共用格式器（`money`／`moneyCur`／`pct`，`public/app.js`）；共用樣式住 `public/styles.css`。
 - 複審者絕不讀 `data/store.db`（含 `.bak`／`-wal`／`-shm`）與 `data/store.json`（比 RULES B4 子點嚴：套件准 AI 在真實資料上唯讀驗證；本專案刻意照留，放寬先問 William；實作者標註）；缺 `node_modules`＝備樹失敗，停下回報、不自行 `npm install`；動到 money 路徑的支，送審前用隔離的 `STORE_FILE` 重現。
-- 給 William 的回報＝RULES J1、J2；本專案補充見本檔「回報」節。
+- 給 William 的回報＝RULES J1、J2；不主動貼審查回覆原文（他問才貼）；本專案補充見本檔「回報」節。
 - 修不修＝RULES F6；停下來問 William＝RULES F8，F8 那兩個詞哪些算＝下方界線表；磨太久＝RULES F9（範本 `templates/self-review.md`）與 F10（範本 `templates/third-round-self-check.md`）。⚠️ **讓檢查變鬆一律等他**：放寬、關掉、豁免任何一道閘、弱化會進三關／CI 的考題通過條件、或關掉重開 PR 以脫離閘的阻擋——都是「停下來回報」，不是選項題。
 
 **審查回饋處置（本專案的值；規矩正本＝RULES F6、F8、I1〜I3，留痕形狀的正本＝`templates/ruling-record.md`，讀它的機器＝`tools/pending-rulings.js`——開工前跑、只列不擋）**：
