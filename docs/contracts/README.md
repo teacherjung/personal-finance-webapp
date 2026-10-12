@@ -378,7 +378,9 @@
 - `server.js`
 - `test-doubles/fake-supabase.js`
 - `test/backup-alert.test.js`
+- `test/backup-file-permissions.test.js`
 - `test/daily-backup.test.js`
+- `test/helpers/backup-permission-case.js`
 - `test/hosted-import-overwrite.test.js`
 - `test/hosted-store-pg.test.js`
 - `test/repo-async.test.js`

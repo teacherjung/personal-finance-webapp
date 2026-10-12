@@ -64,6 +64,8 @@
 
 **記得同步這裡**：新的備份路徑一律走 `store.js snapshotTo(dest)`（⚠️ 它**不是**唯一一份 VACUUM→rename——`backupOnce` 與搬家函式各有自己的一份，劃界見 snapshotTo 檔頭註解；別寫「大家都共用它」）（VACUUM INTO→.tmp→原子改名；失敗丟例外＋清 .tmp）：啟動 `.bak`＝每行程一顆／操作前 `{tag}.bak`＝backupNow（**函式還在、正式操作路徑零呼叫**，見下一節的裁決）／**每日 `data/backups/` 底下的 store-YYYY-MM-DD.db＝`lib/services/backup.js dailyBackupIfDue`，保留 30 天**。開 app 由 `POST /api/backup/daily`（日期用 snapshot.js `nowLocal()`，勿另算）觸發；同日已備且檔案還在＝跳過，檔案被刪＝補做。**失敗不擋 app**：不寫 `lastBackupDate`（今天才會重試）、`backupFailStreak` 累積、前端 `backup-alert.js` 畫面警告（≥3 次升 danger；**成功與抓不到回應絕不可出警告**——誤報會讓使用者學會忽略）。清理只認 `store-YYYY-MM-DD.db` 樣式＝正式庫絕不會被誤刪；先備份後清理。狀態欄位（lastBackupDate/backupFailStreak/backupLastError/backupLastErrorAt）＝**服務層擁有**（同 storeRulesHash：路由白名單擋前端寫、櫃檯放行、匯入備份被剝＝還原後當天自動重備）。**宣稱範圍（裁決）**：只防誤刪/錯誤匯入/程式寫壞，不防硬碟損壞；離開本機的備份等加密格式＋明確同意（DB 含明文 token/密碼）。考題 `test/daily-backup.test.js`（裁決五條全蓋）＋`test/backup-alert.test.js`。
 
+**本機快照的檔案權限**（2026-10-12，交接原第 9 項）：`migrateLedgerIfNeeded`、`migrateSecTradesContractIfNeeded`、`backupOnce`、`snapshotTo` 在寫入完整帳本前，先排他建立 0600 空暫存檔，再 `VACUUM INTO`、成功後原子改名。安全建立失敗不得改走預設權限；仍按各入口的既有失敗政策保留舊目的備份及清理暫存檔。新的每日備份目錄以 0700 建立，已有目錄不批次改權限。`test/backup-file-permissions.test.js` 以隔離 SQLite 驗寫入前與完成後權限、內容及失敗處置；它不證明現存 DB、WAL、SHM、歷史備份、既有目錄或公開歷史已安全。權限不替代加密，也不是對同一作業系統使用者的其他程序隔離。
+
 ## 不可逆整批操作刻意沒有操作前備份
 
 **改這裡**：**不可逆整批操作「刻意沒有」操作前備份**（William 2026-08-08 裁決）
