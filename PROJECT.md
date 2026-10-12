@@ -48,7 +48,19 @@
 - （掃描工具，2026-10-11 #675 複審後掃反駁審查順帶）受審版本或本機屬性檔寫 `-diff`（例如 `* -diff`）時，材料那段 `git diff --no-ext-diff --no-textconv` 會把檔案都印成「Binary files … differ」，送給 Grok 的 diff 等於被遮掉；不執行程式、不外洩，但材料不實／`scripts/grok-scan.js` 組材料那一段（可能的做法：加 --text，同時處理真正的二進位檔別把位元組灌進材料）／要掃的倉庫出現 .gitattributes 或本機任一層屬性檔時 — **未分配**
 - （掃描工具考題，2026-10-11 #675 推送前鉤子實際紅一次）`test/grok-scan-flow-credentials.test.js`「假 grok 留一個背景 writer…整個程序群組已死」用 `kill(-群組, 0)` 驗群組死了，整套考題一起跑時回 EPERM（群組編號被別的程序重用）而判失敗；單獨跑三次都過／那一題的判死（EPERM 也要能分辨是不是同一群組，例如先記下群組成員再逐一確認）／下一次再偶發，或下一支動到那一題時 — **未分配**
 
+- （合庫解析考題，#678 r1 發現 1）「摘要為網銀轉帳」「種類為綜合存款」的拒收限制缺專屬反例題；移除各自限制仍全綠／`test/tcb-transfer-statement.test.js` 與 `lib/bank-statement.js`／下次變更這兩道版型限制或擴大可讀種類時，先補拒收題並各做有效突變 — **未分配**
+- （合庫多頁版型，#678 r1 發現 2）合成探針的頁尾、續頁表頭前頁首、每頁重印基準日會整份拒收；銀行真實多頁是否這樣排尚未量過／`lib/bank-statement.js` 合庫解析與 `docs/tcb-transfer-statement-plan.md`／第一份實際多頁合庫帳單被拒收時，先核版型、再決定校準範圍 — **未分配**
+- （合庫內轉分類，#678 r1 發現 6）收款遮罩露六碼與本人帳戶末四碼不相認，轉給自己可能先列支出，需在預覽核對／`lib/services/bank-import.js` 的 `noteAccountSuffixes`、`ownSuffixSet` 與 `classifyBankTx`／每月多筆本人跨行轉帳都要手改時，提出具體比對方案給 William 裁示；不可逕自放寬本人帳戶判準 — **未分配**
+
+- （合庫拒收覆蓋，#678 r2 發現 1）金額上限、基準日唯一、轉帳區重複、表頭額外字樣及跨頁缺表頭缺專屬反例題；結尾後四個證據條件也各缺專屬反例題（#678 r3 發現 5）／`test/tcb-transfer-statement.test.js` 與 `lib/bank-statement.js`／下次變更這些限制或擴充版型時補拒收題並各做有效突變 — **未分配**
+- （合庫其他存款種類，#678 r2 發現 3）台幣概要含非綜合存款列時整份拒收／`lib/bank-statement.js` 與 `docs/tcb-transfer-statement-plan.md`／首次遇到此類帳單需匯入時，先請 William 決定跳過該種類或分開列管 — **未分配**
+- （合庫備註行距，#678 掃描發現 5）合成的 14 點列距與跨 12 點備註會讓備註靠近下一筆；尚無銀行版型佐證其歸屬／`lib/bank-statement.js` 與 `test/tcb-transfer-statement.test.js`／取得實際密排或多行備註版型時，以可公開合成案例核對行距與歸位限制 — **未分配**
+
+- （合庫名稱範圍，#678 r3 發現 4）合庫正式全名、英文名、簡稱「合庫」及中間帶空白的寫法不在已核准別名中，遇到此類機構戳可能另建帳戶；三碼本人證據門檻也用同一把身分尺認合庫，這些寫法會沿用主幹的短末碼判斷，裁別名時須一併檢查分類影響（#678 r4 發現 1）／`lib/bank-alias.js`、`lib/services/bank-import.js`、`test/bank-alias.test.js` 與 `test/tcb-transfer-statement.test.js`／首次出現這類機構戳時，核對法人同一性並請 William 裁示是否增列；本支不增列名稱 — **未分配**
+
 ## 重要決定（已拍板，勿重議）
+
+- **合庫匯入補強（2026-10-12）**：William 同意合庫帳單末碼少於四位不直接判本人轉帳、合庫短長名稱同家、檢查進度不宣稱完整驗算；四位以上規則及其他銀行既有判斷維持，台新三碼外幣自有戶仍可判內轉（[範圍裁示](https://github.com/teacherjung/personal-finance-webapp/pull/678#issuecomment-6118181784)）。原三項補強的原話與操作化見[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/678#issuecomment-6116958755)。
 
 - **銀行收支文案裁示（2026-10-05）**：#655 r3 第 6 項所指的 `「收支說明」是什麼？` 跳窗已由 #657 移除；William 回「A」，同意結清該文案審改項（[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/655#issuecomment-5987417002)）。第 7 項選擇保留面向使用者的「帳單原文」用詞（[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/655#issuecomment-5987477663)）。**以下為 Codex 的操作化與技術劃界**：這不代表逐字保留空白；部分解析路徑會整理空白，技術文件與型別註解已改以「保存解析結果」及實際用途說明，完成紀錄見[後續補強 #664](https://github.com/teacherjung/personal-finance-webapp/pull/664)。銀行收支另依 William 回報記錄[使用者驗收完成](https://github.com/teacherjung/personal-finance-webapp/pull/657#issuecomment-5987477941)，該驗收對應原畫面變更；r3 前五項技術待辦另由上述後續補強處理，未將其自動算成使用者驗收。
 

@@ -463,3 +463,8 @@ test('apiStream 行為：非 200（有沒有 body 都一樣）走 JSON 錯誤路
   }
   assert.ok(!('document' in globalThis) && !('window' in globalThis), '假 DOM 用完要拿掉（同行程的別題不可吃到）');
 });
+
+test('文案｜檢查階段不宣稱缺少餘額的帳單已完整驗算', () => {
+  assert.equal(progressText({ t: 'stage', s: 'verify' }), '正在檢查可驗算的資料…');
+  assert.equal(progressText({ t: 'stage', s: 'build_preview' }), '檢查完成，正在整理預覽…');
+});

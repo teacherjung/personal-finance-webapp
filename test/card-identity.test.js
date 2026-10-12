@@ -426,7 +426,7 @@ test('★r1#1b 明細區後面的商店續行不得重獲投票權（前一版�
 });
 
 test('★r1#1c 富邦只認「台北富邦」——裸的「富邦」／Fubon 不算（香港富邦也發卡）', () => {
-  // lib/bank-alias.js:17 自己就記著「富邦香港 vs 台北富邦」是已知撞名危害。
+  // test/bank-alias.test.js 列有異法人對照：「富邦香港 vs 台北富邦」是已知撞名危害。
   assert.equal(identifyIssuer([['台北富邦銀行 信用卡帳單']], new Set()).bank, '富邦');
   assert.equal(identifyIssuer([['富邦銀行（香港）有限公司 信用卡月結單']], new Set()).bank, '',
     '★香港富邦不得被當成台北富邦（認錯家＝自動歸到錯的卡）');
@@ -589,7 +589,7 @@ test('★r3#2 卡片發卡行的比對＝同一組樣式（香港富邦不得算
   assert.equal(issuerBank('台北富邦商業銀行'), '富邦');
   assert.equal(issuerBank('台新銀行'), '台新');
   assert.equal(issuerBank('Richart'), '台新');
-  assert.equal(issuerBank('富邦銀行（香港）有限公司'), '', '★香港富邦不是台北富邦（lib/bank-alias.js:17 記過的撞名）');
+  assert.equal(issuerBank('富邦銀行（香港）有限公司'), '', '★香港富邦不是台北富邦（test/bank-alias.test.js 的異法人對照）');
   assert.equal(issuerBank('Fubon Bank (Hong Kong) Limited'), '');
   assert.equal(issuerBank('玉山銀行'), '');
   assert.equal(issuerBank(''), '');

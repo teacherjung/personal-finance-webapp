@@ -732,7 +732,7 @@ const MANIFEST = {
       'lib/ai-parse-card.js',
       'lib/ai-parse.js',   // P1b-1 AI 解析引擎（2026-08-12，★3 拍板＝Anthropic）
       'lib/ai-transport.js',   // P1b-1 AI 解析引擎（2026-08-12，★3 拍板＝Anthropic）
-      'lib/bank-alias.js',   // Stage 4：機構名正規化（身分尺只認台新＋祖父比對形）
+      'lib/bank-alias.js',   // Stage 4：機構名正規化（台新與合庫限定別名＋祖父比對形）
       'lib/bank-statement.js',
       'lib/card-identity.js',
       'lib/derive.js',
@@ -797,7 +797,7 @@ const MANIFEST = {
       'test/ai-pipeline-interception.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
       'test/ai-time-deposit.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
       'test/bank-accounts-asof-ui.test.js',   // #454：餘額旁小字的整族護欄（r13 待辦補登記）
-      'test/bank-alias.test.js',   // Stage 4：機構名正規化（身分尺只認台新＋祖父比對形）
+      'test/bank-alias.test.js',   // Stage 4：機構名正規化（台新與合庫限定別名＋祖父比對形）
       'test/bank-preview-layout.test.js',   // #455：預覽窗「說明區在最下面」的排版考題（跑真樣板驗順序）
       'test/bank-raw-text.test.js',   // Stage 2：帳單原文兩欄留底（存下來／讀原文欄／舊資料不回填）
       'test/bank-statement.test.js',
@@ -835,6 +835,7 @@ const MANIFEST = {
       'test/store-rules.test.js',
       'test/taishin-debit-card.test.js',   // Stage 5a：A 區刷卡消費明細的讀出與對照
       'test/taishin-debit.test.js',
+      'test/tcb-transfer-statement.test.js',
       'test/upload-progress.test.js',   // P2-1 配方快取（2026-08-15，格式 A 拍板）
     ],
   },

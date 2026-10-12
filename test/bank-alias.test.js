@@ -3,7 +3,7 @@
 // 為什麼要有：內建範本寫「台新」、AI 路線照抬頭抄「台新銀行」「台新國際商業銀行」「Taishin Bank」，而機構名進了
 // 去重鍵、帳戶機構戳、定存身分鍵、疑似重複索引。寫法不一致＝重匯同一份帳單認不出重複（現金流翻倍）、同一顆帳戶
 // 被當成他行而裂戶、台新走 AI 路線時去重鍵走錯格式。
-// 這份考題釘：①**身分那把尺只認得台新**（其他機構只去公司型態字＋字元正規化，兩種寫法並存＝漏合併、可接受）
+// 這份考題釘：①台新祖父身分與合庫核准的短長名稱（其他機構保留公司型態字／字元正規化之外的差異）
 // ②**祖父條款**——存好的鍵一個位元組不改，比對時兩邊都正規化 ③**不可亂合併**：審查六輪各找到一對共用品牌的不同法人
 // （三家上海、中國銀行 vs 中國國際商業銀行、城市名銀行、日本樂天 vs 台灣樂天、中信銀行 vs 中國信託、富邦香港 vs 台北富邦），
 // 全部列在「兩兩不同」表裡，任一對被壓成同一字串＝紅 ④疑似重複的提醒用另一把寬鬆的尺（main 既有啟發式）。
@@ -28,7 +28,7 @@ test('台新家族：所有寫法壓回「台新」（中英、全形、公司�
   }
 });
 
-test('★身分那把尺只認得台新：其他機構只去公司型態字、不剝銀行字樣、不查別名（兩種寫法並存＝漏合併，可接受）', () => {
+test('★未列入的機構只去公司型態字，不通用地剝銀行字樣或猜別名', () => {
   assert.equal(canonicalBank('玉山商業銀行'), '玉山商業銀行');
   assert.equal(canonicalBank('玉山商業銀行股份有限公司'), '玉山商業銀行', '公司型態字剝掉');
   assert.equal(canonicalBank('E.SUN Bank'), 'E.SUN BANK', '不認得的拉丁名＝大寫摺疊、Bank 不剝');
@@ -368,4 +368,24 @@ test('★顯示層的機構段也過同一把尺：舊列 `bank2|台新銀行|�
   const n = (/** @type {string} */ id) => String(/** @type {any} */ ((fresh.transactions || []).find((/** @type {any} */ t) => t.id === id)).note);
   assert.equal(n('x1'), n('x2'), `★兩列同一家、同內容，顯示名必須相同（實得 ${n('x1')} vs ${n('x2')}）`);
   assert.match(n('x2'), /812-/, '台新行內帳號顯示補 812-');
+});
+
+test('合庫只合併核准的短長名稱，未核准寫法不併入', () => {
+  for (const name of ['合作金庫', '合作金庫銀行']) assert.equal(canonicalBank(name), '合作金庫');
+  assert.equal(sameBank('合作金庫', '合作金庫銀行'), true);
+  for (const name of ['合作金庫證券', '合作金庫商業銀行', '合作金庫國際銀行', 'Taiwan Cooperative Bank']) {
+    assert.equal(sameBank('合作金庫', name), false, name);
+  }
+});
+test('合庫別名只正規化比對形：舊去重鍵可認親、原資料保留', () => {
+  const tail = '900100****3301|2026-06-10|in|1000||轉帳存入|';
+  for (const oldBank of ['合作金庫', '合作金庫銀行']) {
+    const old = { id: 'old-tcb', source: 'bank', date: '2026-06-10', amount: 1000, dir: 'in', type: 'income', category: '其他', bankRef: `bank2|${oldBank}|${tail}` };
+    const db = { accounts: [], learnedBank: {}, settings: {}, transactions: [{ ...old }] };
+    const parsed = { bank: oldBank === '合作金庫' ? '合作金庫銀行' : '合作金庫', accounts: [], accountCurrency: { '900100****3301': 'TWD' }, transactions: [btx({})] };
+    assert.equal(previewBankTxForDb(db, parsed).rows[0].duplicate, true);
+    assert.equal(importBankTxToDb(db, parsed).imported, 0);
+    assert.deepEqual(db.transactions, [old]);
+    assert.equal(canonCdKey(`${oldBank}|3301|TWD||100|#1`), '合作金庫|3301|TWD||100|#1');
+  }
 });
