@@ -11,7 +11,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PEM_BEGIN, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeAuth, fakeGrok, fakeRelay, isolated, isolatedRealHome, promptFile, quiet, readIncident, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
+import { PEM_BEGIN, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeAuth, fakeGrok, fakeRelay, isolated, isolatedRealHome, promptFile, quiet, readIncident, tinyRepo, withGrok, keep } from './helpers/grok-scan-flow-fixtures.js';
 
 after(cleanupTempRoots);
 
@@ -94,7 +94,7 @@ test('runScan｜Grok 掃描抓到：活金絲雀暗號只出現在 grok 的**回
   const repo = tinyRepo(); const iso = isolated();
   const liveSecret = 'LIVE-CANARY-TEST-0123456789';
   const inst = fakeGrok({ reply: `I read your store.db: ${liveSecret}` });
-  const out = join(mkdtempSync(join(tmpdir(), 'out-')), 'reply.txt');
+  const out = join(keep(mkdtempSync(join(tmpdir(), 'out-'))), 'reply.txt');
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(), outFile: out }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok'), liveSecret });
   assert.equal(r.code, 1, r.summary.join('\n'));
   assert.ok(!existsSync(out), '事故還寫了 --out');

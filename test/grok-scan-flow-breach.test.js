@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLEAN_ENV, PEM_BEGIN, ROOT, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeAuth, fakeGrok, fakeRelay, isolated, noFetch, promptFile, quiet, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
+import { CLEAN_ENV, PEM_BEGIN, ROOT, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeAuth, fakeGrok, fakeRelay, isolated, noFetch, promptFile, quiet, tinyRepo, withGrok, keep } from './helpers/grok-scan-flow-fixtures.js';
 
 after(cleanupTempRoots);
 
@@ -32,10 +32,10 @@ const toleratedKeysIn = (logs) => {
 
 test('readSessionsOnce｜r7：sessions 根目錄或中介目錄是 symlink → 當捷徑（odd）、不跟過去讀盒外（純函式，平台無關，CI 也跑）', async () => {
   const { readSessionsOnce } = await import('../scripts/grok-scan.js');
-  const outside = mkdtempSync(join(tmpdir(), 'outside-')); writeFileSync(join(outside, 'secret.txt'), 'OUTSIDE-SECRET');
+  const outside = keep(mkdtempSync(join(tmpdir(), 'outside-'))); writeFileSync(join(outside, 'secret.txt'), 'OUTSIDE-SECRET');
   // ① 根目錄本身是指向盒外的 symlink
   {
-    const home = mkdtempSync(join(tmpdir(), 'grok-home-'));
+    const home = keep(mkdtempSync(join(tmpdir(), 'grok-home-')));
     execFileSync('ln', ['-s', outside, join(home, 'sessions')]);
     const r = readSessionsOnce(join(home, 'sessions'));
     assert.deepEqual(r.odd, ['.'], '根目錄是捷徑沒被當成捷徑');
@@ -43,7 +43,7 @@ test('readSessionsOnce｜r7：sessions 根目錄或中介目錄是 symlink → �
   }
   // ② 中介目錄是 symlink
   {
-    const home = mkdtempSync(join(tmpdir(), 'grok-home-')); mkdirSync(join(home, 'sessions'));
+    const home = keep(mkdtempSync(join(tmpdir(), 'grok-home-'))); mkdirSync(join(home, 'sessions'));
     execFileSync('ln', ['-s', outside, join(home, 'sessions', 'ws')]);
     const r = readSessionsOnce(join(home, 'sessions'));
     assert.deepEqual(r.odd, ['ws']);
@@ -51,7 +51,7 @@ test('readSessionsOnce｜r7：sessions 根目錄或中介目錄是 symlink → �
   }
   // ③ 正常樹照讀
   {
-    const home = mkdtempSync(join(tmpdir(), 'grok-home-')); mkdirSync(join(home, 'sessions', 'ws'), { recursive: true }); writeFileSync(join(home, 'sessions', 'ws', 'a.jsonl'), 'x');
+    const home = keep(mkdtempSync(join(tmpdir(), 'grok-home-'))); mkdirSync(join(home, 'sessions', 'ws'), { recursive: true }); writeFileSync(join(home, 'sessions', 'ws', 'a.jsonl'), 'x');
     const r = readSessionsOnce(join(home, 'sessions'));
     assert.deepEqual(r.odd, []); assert.deepEqual([...r.files.keys()], ['ws/a.jsonl']);
   }
@@ -62,7 +62,7 @@ test('runScan｜r7：假 grok 把整個 sessions 目錄換成指向盒外的 sym
   const repo = tinyRepo(); const iso = isolated();
   const inst = fakeGrok();
   // 盒外目標放在假安裝樹裡（沙箱裡 ln -s 的目標不需要讀得到，symlink 本身寫在盒內就行）
-  const outside = mkdtempSync(join(tmpdir(), 'outside-sessions-')); writeFileSync(join(outside, 'leak.txt'), 'OUTSIDE-SESSIONS-SECRET');
+  const outside = keep(mkdtempSync(join(tmpdir(), 'outside-sessions-'))); writeFileSync(join(outside, 'leak.txt'), 'OUTSIDE-SESSIONS-SECRET');
   writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `rm -rf "$GROK_HOME/sessions"; /bin/ln -s ${JSON.stringify(outside)} "$GROK_HOME/sessions"; $1`));
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
   assert.equal(r.code, 1, r.summary.join('\n'));
@@ -73,7 +73,7 @@ test('runScan｜r7：假 grok 把整個 sessions 目錄換成指向盒外的 sym
 
 test('憑證｜r7（Codex #1）：auth.json 的外層鍵名不是釘住的 issuer::client_id → 不重建、不掃；鍵名不進 DLP 的「給了盒子」集合（純函式，CI 也跑）', async () => {
   const { refreshSandboxAuth } = await import('../scripts/grok-auth-refresh.js');
-  const dir = mkdtempSync(join(tmpdir(), 'auth-key-'));
+  const dir = keep(mkdtempSync(join(tmpdir(), 'auth-key-')));
   const cred = JSON.parse(fakeAuth())[boxEntryKey()];
   // 鍵名是 email → 拒
   writeFileSync(join(dir, 'auth.json'), JSON.stringify({ 'owner@example.test': cred }));

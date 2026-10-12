@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { EXPECTED_BOX_AUTH_FIELDS, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeAuth, fakeCanary, fakeGrok, fakeRelay, isolated, promptFile, quiet, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
+import { EXPECTED_BOX_AUTH_FIELDS, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeAuth, fakeCanary, fakeGrok, fakeRelay, isolated, promptFile, quiet, tinyRepo, withGrok, keep } from './helpers/grok-scan-flow-fixtures.js';
 
 after(cleanupTempRoots);
 
@@ -21,7 +21,7 @@ test('runScan｜盒內最小家 manifest：config.toml／agent_id **不帶進盒
   const inst = fakeGrok();
   writeFileSync(join(inst, 'config.toml'), 'stale = "CONFIG-STALE-VALUE"\n'); writeFileSync(join(inst, 'agent_id'), 'AGENT-ID-STALE');
   writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, '( printf "LS=[%s] " "$(ls "$GROK_HOME" | tr \'\\n\' \' \')"; cat "$GROK_HOME/config.toml" "$GROK_HOME/agent_id" "$GROK_HOME/auth.json" 2>/dev/null ) | tr \'\\n\' \' \'; $1'));
-  const out = join(mkdtempSync(join(tmpdir(), 'out-')), 'reply.txt');
+  const out = join(keep(mkdtempSync(join(tmpdir(), 'out-'))), 'reply.txt');
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(), outFile: out }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
   assert.equal(r.code, 0, r.summary.join('\n'));
   const reply = readFileSync(out, 'utf8');
@@ -245,7 +245,7 @@ test('runScan｜r6 #3：ulimit 真的套在盒內——假 grok 印 ulimit -f �
   const inst = fakeGrok();
   writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m,
     'printf "ULIMIT-F=%s " "$(ulimit -f)"; ( /bin/dd if=/dev/zero of="$GROK_HOME/big" bs=1048576 count=80 ) >/dev/null 2>&1; printf "BIG=%s " "$(/usr/bin/stat -f %z "$GROK_HOME/big")"; $1'));
-  const out = join(mkdtempSync(join(tmpdir(), 'out-')), 'reply.txt');
+  const out = join(keep(mkdtempSync(join(tmpdir(), 'out-'))), 'reply.txt');
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(), outFile: out }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
   assert.equal(r.code, 0, r.summary.join('\n'));
   const reply = readFileSync(out, 'utf8');
@@ -259,12 +259,12 @@ test('runScan｜r6 #5：假值走 0600 檔給轉送器（不走 argv／env）、
   const inst = fakeGrok();
   writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'cat "$GROK_HOME/auth.json"; $1'));
   // 假轉送器：把 --dummy-file 的內容抄到自己目錄（考題之後比對），檔不在或形狀不對就不 READY
-  const rd = mkdtempSync(join(tmpdir(), 'fake-relay-dummy-')); const relayScript = join(rd, 'relay.js');
+  const rd = keep(mkdtempSync(join(tmpdir(), 'fake-relay-dummy-'))); const relayScript = join(rd, 'relay.js');
   writeFileSync(relayScript, `const fs=require('node:fs');const i=process.argv.indexOf('--dummy-file');const f=i>=0?process.argv[i+1]:'';
 if(!f||!fs.existsSync(f)||(fs.statSync(f).mode&0o077)!==0){process.exit(1)}
 const v=fs.readFileSync(f,'utf8').trim();if(!v.startsWith('${DUMMY_BEARER_PREFIX}')||v.length<${DUMMY_BEARER_PREFIX.length}+32){process.exit(1)}
 fs.writeFileSync(${JSON.stringify(join(rd, 'seen.txt'))},v);process.stdout.write('READY 1\\n');setInterval(()=>{},1000);`);
-  const out = join(mkdtempSync(join(tmpdir(), 'out-')), 'reply.txt');
+  const out = join(keep(mkdtempSync(join(tmpdir(), 'out-'))), 'reply.txt');
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(), outFile: out }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript });
   assert.equal(r.code, 0, r.summary.join('\n'));
   const seen = readFileSync(join(rd, 'seen.txt'), 'utf8');

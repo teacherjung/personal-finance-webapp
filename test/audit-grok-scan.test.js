@@ -2,15 +2,25 @@
 // Grok 掃後驗屍的考題（2026-08-17）。起因＝真實事故：鎖工具旗標同版本非決定性靜默失效
 // （#477 連兩掃各 54／56 次終端呼叫，此前五掃全乾淨）——旗標只能當第一層，
 // 可靠的圍欄＝掃完機械稽核日誌。方向要 fail-closed：查不清楚一律當越界。
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, symlinkSync, chmodSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { auditSessionDir, allSessionDirs } from '../scripts/audit-grok-scan.js';
 import { execFileSync } from 'node:child_process';
 
-const tmp = () => mkdtempSync(join(tmpdir(), 'autopsy-'));
+const tempRoots = /** @type {string[]} */ ([]);
+const tmp = () => {
+  const dir = mkdtempSync(join(tmpdir(), 'autopsy-'));
+  tempRoots.push(dir);
+  return dir;
+};
+after(() => {
+  for (const dir of tempRoots) {
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* 沿用夾具的盡力收尾。 */ }
+  }
+});
 
 test('⭐ 乾淨 session（有可解析行、零工具足跡）→ 0', () => {
   const d = tmp();
@@ -261,10 +271,15 @@ test('⭐ fail-closed｜workspace 目錄無法列舉 → CLI 退 2 不是 1', (t
   const cwd = '/private/tmp/ws-unlistable';
   const ws = join(root, encodeURIComponent(cwd));
   mkdirSync(ws, { recursive: true, mode: 0o111 });
-  let code = 0;
-  try { execFileSync(process.execPath, ['scripts/audit-grok-scan.js', '--workspace', cwd, '--sessions-root', root], { encoding: 'utf8' }); }
-  catch (e) { code = /** @type {any} */ (e).status; }
-  assert.equal(code, 2, '列舉失敗必須是「查不清楚」，不是「已確認越界」');
+  try {
+    let code = 0;
+    try { execFileSync(process.execPath, ['scripts/audit-grok-scan.js', '--workspace', cwd, '--sessions-root', root], { encoding: 'utf8' }); }
+    catch (e) { code = /** @type {any} */ (e).status; }
+    assert.equal(code, 2, '列舉失敗必須是「查不清楚」，不是「已確認越界」');
+  } finally {
+    // 安全斷言完成後才恢復可列舉權限，讓自有根的收尾能走進夾具。
+    chmodSync(ws, 0o700);
+  }
 });
 
 test('⭐ 判準第六腿｜task_snapshot 真形狀（_x.ai/session/update、無前五腿任何鍵）單獨退 1', () => {

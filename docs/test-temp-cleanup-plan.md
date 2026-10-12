@@ -13,3 +13,9 @@
 獨立突變：逐個新 keep 呼叫、audit 根登記、audit after、權限 finally 各移除一次；對應生命週期斷言須因具體根殘留轉紅，還原後綠。故意失敗場次預期退出碼非零，不算突變證明。新增考題不只掃 after/keep 字面。平台未執行、能力跳過獨立列出，不算完成該平台驗證。
 
 施工計畫先備；待常設指示 #682 合併後再接最新主幹開草稿，草稿後才改考題。開工前再核對 Claude 開著 PR 和完整路徑。預計路徑：test/audit-grok-scan.test.js、test/grok-scan-flow-credentials.test.js、test/grok-scan-flow-breach.test.js、test/grok-scan-flow-preflight.test.js、test/grok-scan-flow-incident.test.js、新增生命週期考題及薄觀察器 helper、施工計畫與 PROJECT 指路。
+
+## 生命週期考題的劃界
+
+觀察器不是清理者：不讀 TEMP_ROOTS 清單，記錄 Node 實際 mkdtempSync 的建立結果。未登記對照用原生建立函式、內容由外層每題各自種獨立值。捷徑在考題收尾前放入夾具，不影響原安全操作；根與目標各自驗。finally 前初始化故障另測 victim 寫入，否則它原有 finally 足以清正常路徑，新增登記的故障保護會沒有證據。
+
+只證明本平台實際走到的建立路徑；未建立的能力或 victim 路徑明列跳過，不把跳過當通過。外層在殘留斷言之後才清本場夾具；不按目錄前綴掃其他人的根。
