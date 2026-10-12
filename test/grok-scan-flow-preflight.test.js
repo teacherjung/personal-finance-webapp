@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PEM_BEGIN, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeAuth, fakeGrok, fakeRelay, isolated, noFetch, promptFile, quiet, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
+import { PEM_BEGIN, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeAuth, fakeGrok, fakeRelay, isolated, noFetch, promptFile, quiet, tinyRepo, withGrok, keep } from './helpers/grok-scan-flow-fixtures.js';
 
 after(cleanupTempRoots);
 
@@ -60,7 +60,7 @@ test('runScan｜執行檔 sha256 不符 → 2，而且**不執行它**（r4 #5�
 test('runScan｜grok --version 本身失敗 → 2（不是靜靜當作版本對）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }   // r4：--version 改在沙箱內跑
   const repo = tinyRepo();
-  const d = mkdtempSync(join(tmpdir(), 'fake-grok-bad-')); mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'auth.json'), fakeAuth());
+  const d = keep(mkdtempSync(join(tmpdir(), 'fake-grok-bad-'))); mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'auth.json'), fakeAuth());
   writeFileSync(join(d, 'bin', 'grok'), '#!/bin/sh\nexit 3\n'); chmodSync(join(d, 'bin', 'grok'), 0o755);
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...isolated(), repo: repo.dir, ...withGrok(d) });
   assert.equal(r.code, 2);
@@ -71,7 +71,7 @@ test('runScan｜node_modules 是 symlink（工作樹形狀）→ clone 後盒子
   // 把 tinyRepo 的 node_modules 換成 symlink 指向別處（模擬 AGENTS 規定的工作樹形狀）
   const repo = tinyRepo();
   // 真實位置要叫 node_modules（工作樹的捷徑指到主目錄的 node_modules；指到別名資料夾的另有一題擋下）
-  const real = join(mkdtempSync(join(tmpdir(), 'real-nm-')), 'node_modules');
+  const real = join(keep(mkdtempSync(join(tmpdir(), 'real-nm-'))), 'node_modules');
   mkdirSync(join(real, 'eslint'), { recursive: true }); writeFileSync(join(real, 'eslint', 'package.json'), '{}');
   rmSync(join(repo.dir, 'node_modules'), { recursive: true });
   execFileSync('ln', ['-s', real, join(repo.dir, 'node_modules')]);
@@ -174,7 +174,7 @@ test('runScan｜材料超過指令參數上限（ARG_MAX）照樣交給 grok：�
   const inst = fakeGrok();
   writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m,
     'f=; prev=; for a in "$@"; do [ "$prev" = "--prompt-file" ] && f="$a"; prev="$a"; done; [ -n "$f" ] || { echo "沒收到 --prompt-file" >&2; exit 9; }; cat "$f"'));
-  const out = join(mkdtempSync(join(tmpdir(), 'out-')), 'reply.txt');
+  const out = join(keep(mkdtempSync(join(tmpdir(), 'out-'))), 'reply.txt');
   // 指示檔會進材料：放一段比 ARG_MAX 還長的中文（單一指令的參數放不下；回覆也夠長、會分好幾段從管子讀進來，
   // 一個中文字三個位元組，段落邊界切在字中間時要照樣接回原字——逐段各自解碼會把切開的字變成亂碼）
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile('材料'.repeat(Math.ceil(argMax / 3))), outFile: out }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
@@ -192,7 +192,7 @@ test('runScan｜材料超過指令參數上限（ARG_MAX）照樣交給 grok：�
 test('runScan｜盒子裡第一個跑的沙箱程式（grok --version）先放一個 materials.md 捷徑指到盒外：材料不會跟著捷徑寫到盒外（材料在它跑之前就寫好；#673 Grok 掃描指出）', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo(); const iso = isolated();
-  const vdir = mkdtempSync(join(tmpdir(), 'victim-')); const victim = join(vdir, 'store.db');
+  const vdir = keep(mkdtempSync(join(tmpdir(), 'victim-'))); const victim = join(vdir, 'store.db');
   writeFileSync(victim, 'ORIGINAL\n', { mode: 0o644 });
   // 假 grok 的 --version（沙箱內、盒子裡第一個跑的程式）在盒子根放一個 materials.md 捷徑指到盒外的受害檔
   const inst = fakeGrok();
@@ -284,7 +284,7 @@ test('runScan｜去機密（r5 broker 之後）：①grok 把盒內 auth.json �
     mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
     const inst = fakeGrok();
     writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'cat "$GROK_HOME/auth.json"; $1'));
-    const out = join(mkdtempSync(join(tmpdir(), 'out-')), 'reply.txt');
+    const out = join(keep(mkdtempSync(join(tmpdir(), 'out-'))), 'reply.txt');
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(), outFile: out }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
     assert.equal(r.code, 0, r.summary.join('\n'));
     const reply = readFileSync(out, 'utf8');
@@ -296,7 +296,7 @@ test('runScan｜去機密（r5 broker 之後）：①grok 把盒內 auth.json �
     const repo = tinyRepo(); const iso = isolated();
     mkdirSync(iso.authDir, { recursive: true }); writeFileSync(join(iso.authDir, 'auth.json'), fakeAuth({ key: REAL }));
     const inst = fakeGrok({ reply: `leaked: ${REAL}` });
-    const out = join(mkdtempSync(join(tmpdir(), 'out-')), 'reply.txt');
+    const out = join(keep(mkdtempSync(join(tmpdir(), 'out-'))), 'reply.txt');
     const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(), outFile: out }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
     assert.equal(r.code, 1, r.summary.join('\n'));
     assert.match(r.summary.join('\n'), /去機密/);
@@ -358,7 +358,7 @@ test('runScan｜confused deputy：盒內 sessions 裡的 symlink 不被父程序
   const repo = tinyRepo();
   const iso = isolated();
   // 盒外放一個機密檔；假 grok 在 sessions 裡放一個指向它的 symlink
-  const outside = mkdtempSync(join(tmpdir(), 'outside-')); writeFileSync(join(outside, 'secret.txt'), 'OUTSIDE-SECRET-CONTENT');
+  const outside = keep(mkdtempSync(join(tmpdir(), 'outside-'))); writeFileSync(join(outside, 'secret.txt'), 'OUTSIDE-SECRET-CONTENT');
   const inst = fakeGrok();
   writeFileSync(join(inst, 'bin', 'grok'), readFileSync(join(inst, 'bin', 'grok'), 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, `ln -s "${join(outside, 'secret.txt')}" "$ws/fake-session/leak.jsonl"; $1`));
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() }, { ...quiet, ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok') });
