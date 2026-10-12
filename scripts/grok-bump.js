@@ -244,7 +244,7 @@ export function readPins(repo) {
  * @param {() => string} [nameFor] 只給考題用的接縫：讓它可以指定要試哪些名字
  */
 export function createExclusiveTemp(target, nameFor) {
-  // 結尾刻意留 `.grok-bump-tmp`，這樣 .gitignore 那一行照樣蓋得到
+  // 保留可辨識的工具尾碼，方便清理失敗時回報；忽略位置的正本見 .gitignore。
   const 取名 = nameFor ?? (() => `${target}.${randomBytes(6).toString('hex')}.grok-bump-tmp`);
   /** @type {string[]} */ const 試過 = [];
   for (let i = 0; i < 8; i++) {

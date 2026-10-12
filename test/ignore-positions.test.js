@@ -16,10 +16,10 @@ const DIRECTORIES = [
   { path: '.codex-reviews', pattern: '/.codex-reviews/', wrong: '.codex-reviews-other' },
   { path: 'tmp', pattern: '/tmp/', wrong: 'tmp-other' },
   { path: 'output', pattern: '/output/', wrong: 'output-other' },
-  { path: 'test-doubles/_probe_fixture', pattern: '/test-doubles/_probe_*/', wrong: 'test-doubles/_probeX_fixture' },
-  { path: 'test-doubles-evil-fixture', pattern: '/test-doubles-evil-*/', wrong: 'test-doubles-evil_fixture' },
-  { path: 'lib/_seam_probe_fixture', pattern: '/lib/_seam_probe_*/', wrong: 'lib/_seam_probeX_fixture' },
-  { path: 'public/_seam_probe_fixture', pattern: '/public/_seam_probe_*/', wrong: 'public/_seam_probeX_fixture' },
+  { path: 'test-doubles/_probe_fixture', tempPrefix: 'test-doubles/_probe_', pattern: '/test-doubles/_probe_*/', wrong: 'test-doubles/_probeX_fixture' },
+  { path: 'test-doubles-evil-fixture', tempPrefix: 'test-doubles-evil-', pattern: '/test-doubles-evil-*/', wrong: 'test-doubles-evil_fixture' },
+  { path: 'lib/_seam_probe_fixture', tempPrefix: 'lib/_seam_probe_', pattern: '/lib/_seam_probe_*/', wrong: 'lib/_seam_probeX_fixture' },
+  { path: 'public/_seam_probe_fixture', tempPrefix: 'public/_seam_probe_', pattern: '/public/_seam_probe_*/', wrong: 'public/_seam_probeX_fixture' },
 ];
 const TARGETS = [...new Set(Object.values(readPins(ROOT)).map((pin) => pin.file))].sort();
 const HEX = '[0-9a-f]'.repeat(12);
@@ -82,21 +82,26 @@ function visible(s, path, mode) {
 for (const row of DIRECTORIES) for (const mode of MODES) {
   test(`目錄位置｜${row.pattern}｜Git 大小寫=${mode}`, (t) => {
     const s = sandbox(t);
-    s.directory(row.path);
-    s.file(`${row.path}/marker.js`);
-    symlinkSync(s.outside, join(s.root, row.path, 'control-link'));
-    for (const path of [row.path, `${row.path}/marker.js`, `${row.path}/control-link`]) ignored(s, path, row.pattern, mode);
-    for (const path of [`nested/${row.path}`, row.wrong, `elsewhere/${basename(row.path)}`]) {
-      s.directory(path); visible(s, path, mode);
+    let path = row.path;
+    if (row.tempPrefix) {
+      // 固定名正例認不出「萬用字元只剩固定名」；用探針的真正產名提供反例機會。
+      s.directory(dirname(row.tempPrefix));
+      path = relative(s.root, mkdtempSync(join(s.root, row.tempPrefix)));
+    } else s.directory(path);
+    s.file(`${path}/marker.js`);
+    symlinkSync(s.outside, join(s.root, path, 'control-link'));
+    for (const candidate of [path, `${path}/marker.js`, `${path}/control-link`]) ignored(s, candidate, row.pattern, mode);
+    for (const wrong of [`nested/${path}`, row.wrong, `elsewhere/${basename(path)}`]) {
+      s.directory(wrong); visible(s, wrong, mode);
     }
-    if (dirname(row.path) !== '.') {
-      const deeper = join(dirname(row.path), 'nested', basename(row.path));
+    if (dirname(path) !== '.') {
+      const deeper = join(dirname(path), 'nested', basename(path));
       s.directory(deeper); visible(s, deeper, mode);
     }
-    rmSync(join(s.root, row.path), { recursive: true, force: true });
-    s.file(row.path); visible(s, row.path, mode);
-    rmSync(join(s.root, row.path));
-    symlinkSync(s.outside, join(s.root, row.path)); visible(s, row.path, mode);
+    rmSync(join(s.root, path), { recursive: true, force: true });
+    s.file(path); visible(s, path, mode);
+    rmSync(join(s.root, path));
+    symlinkSync(s.outside, join(s.root, path)); visible(s, path, mode);
   });
 }
 
