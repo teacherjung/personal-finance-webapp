@@ -50,10 +50,10 @@
 2. **循環 import TDZ**：`app.js` 與各 module 互相 import。任何「模組檔案頂層就會取用」的共用常數，必須放在**零依賴的 `modules/theme.js`**（或同型新檔）直接 import，**不可**經 app.js 轉手。曾因此全站白屏卡「載入中」。
 3. **XSS**：所有使用者資料插入 innerHTML 前必過 `esc()`（app.js 提供）。
 3.5. **原型污染**（Codex r4#1）：凡是**以使用者文字為 key 的 map**（學習表、分類別名、將來任何同型的表），寫入前一律過 `lib/safe-map.js`——`setOwn`（原型名拒收）、`getOwn`（只讀自有屬性）、`emptyMap`（null prototype）、`safeMap`（重建時丟掉原型名 key）；學習表進出資料庫的必經之路＝`schema.sanitizeLearned`。理由：`map['__proto__']={…}` 會污染全域 `Object.prototype`，**實測連 pdfjs 都當場崩潰**，不只是資料錯。⚠️ 光靠 `Object.create(null)` 不夠——`JSON.parse('{"__proto__":…}')` 造得出「自有的 __proto__ 鍵」，JSON 來回一趟就退化，所以讀寫兩端都要用 safe-map。**產品規則（Codex r5#1/#4 拍板統一）：寫入一律拒絕整個保留字家族（`isProtoKey`＝`__proto__`/`toString`/`constructor`…，服務入口明確 400、不靜默吞掉——靜默的後果＝「改名成保留字」變成刪除，儲存卻回報成功）；讀取容忍舊資料（只丟 `__proto__` 這個唯一的賦值陷阱鍵）。** **凡「使用者文字當 key」：聚合一律 null-proto、查表一律 hasOwn/getOwn，沒有例外。** ⚠️ 三個最陰的變體（r6#3 實測）：①`m[k] ||= {…}`——k=`__proto__` 時讀到原型本尊（truthy 所以不重新賦值）→ **直接在全域原型上累加**；②使用者鍵組進普通物件再 `JSON.stringify` 送後端——`__proto__` 在序列化前就消失，後端 400 防線根本收不到、畫面還回報成功；③查表 `({...})[name]`——name=toString 撈到原型函式（用 `Object.hasOwn` 守）。⚠️ 寫「保留字自有鍵」的考題要用 `JSON.parse`——物件**字面量**裡的 `'__proto__'` 是設原型的特殊語法、不會成為自有鍵，字面量寫的考題永遠測不到真實路徑。（r5–r7 三輪掃出的十三處逐檔落點與四條寫入路清點＝歷史紀錄，防線與保留字考題都已上線：`test/proto-pollution.test.js`；細節見 git 紀錄。）
-4. 〔已搬走〕色彩分工 → 見 `docs/ui-conventions.md`「UI 現行慣例」節（2026-08-04 兩級制，內文逐字搬過去）。此處保號，避免既有指路斷掉。
-5. 〔已搬走〕金額格式 → 見 `docs/ui-conventions.md`「UI 現行慣例」節（2026-08-04 兩級制，內文逐字搬過去）。此處保號，避免既有指路斷掉。
+4. 〔已搬走，保號〕色彩分工 → 見 `docs/ui-conventions.md`「UI 現行慣例」節。
+5. 〔已搬走，保號〕金額格式 → 見 `docs/ui-conventions.md`「UI 現行慣例」節。
 6. **前端型別化的刻意放寬（勿當問題報）**：`app.js` 的 `byId()` 回傳 any、彈窗 `onMount(root)` 標 any、`globals.d.ts` 的 `Chart: any`——DOM 層刻意寬鬆（本專案以 innerHTML 樣板為主，元素層級逐處標型別是噪音；畫面正確性靠「全部頁面 reload 無錯」把關（頁數以 app.js ROUTES 為準，不寫死數字），型別檢查主力放資料邏輯）。`portfolio-valuation.js` 的 `fxGaugeHtml`＝**刻意休眠停放**（有固定輸入輸出考題、目前未插入頁面），非死碼、勿刪。
-7. 〔已搬走〕UI 慣例 → 見 `docs/ui-conventions.md`「UI 現行慣例」節（2026-08-04 兩級制，內文逐字搬過去）。此處保號，避免既有指路斷掉。原本掛在這一條後半的那半條＝**鐵則 12**（就地白話解釋），2026-09-08 獨立出去——William 裁、落點＝https://github.com/teacherjung/personal-finance-webapp/pull/584#issuecomment-5581991626 。
+7. 〔已搬走，保號〕UI 慣例 → 見 `docs/ui-conventions.md`「UI 現行慣例」節；就地白話解釋另見鐵則 12。
 8. **repo 櫃檯是 async 的（C4a，2026-07-27；C4b Postgres 的前置）**——規矩如下：
    ①**呼叫必 `await`**：`getDb`/`saveDb`/`getCollection`/`addItem`/`updateItem`/`deleteItem`/`replaceCollection`/`getSettings`/`updateSettings` 全回 Promise（轉供的 `uid`/`emptyDb`/`backupNow`/`normalizeLedger` 仍同步）。最陰的漏法＝`res.json(service())` 忘了 await——**不炸、默默回 `{}`**；tsc 只抓得到「讀屬性」的漏，寫入 fire-and-forget 要靠自查。
    ②**Express handler 一律包 `wrapRoute`（statement/ib 慣例：帶 status 錯回原味 JSON）或 `asyncRoute`（core/crud/securities 慣例：一切交全域錯誤中介）**——Express 4 不接 async handler 的 rejection，裸的 async handler 拋錯＝unhandled rejection、請求掛死。兩個包裝器語意不同，別混用（會改變既有錯誤口徑）。
@@ -162,6 +162,7 @@
 
 以下日期為 UTC；原話照錄。括號外的背景與解讀依 2026-10-03 經 William 指示採用的交接，與原話分開標示。
 
+- **PR 上限｜2026-10-12 UTC 本人更新**：「PR 上限改為各專案分別計算：理財最多兩支、套件最多兩支，草稿也算。這次本人指示取代先前跨專案合計兩支的解讀與代裁；仍須避免與 Claude 的工作衝突。請留痕後繼續原任務。」[本人留痕](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6126118007)。
 - **C31｜2026-10-02 UTC**：「從現在開始可以動用後端，因為Claude那邊暫停實作了。現在由你實作。」
 - **C33｜2026-10-02 UTC**：「那等我累積多一點改變你在跑程序。改變都先留在本機，之後再進入主幹。」
 - **C34｜2026-10-01 UTC**：「我不知道Claude會怎麼審查，但只要管背後程式的部分，前面的畫面交給我。我如果不滿意會再開新的PR修改。」
