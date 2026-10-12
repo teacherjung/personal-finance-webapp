@@ -32,12 +32,13 @@ function restoreFixtureAccess(dir) {
 /** @param {string} file @param {Record<string,string|undefined>} env */
 function run(file, env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--test', '--import', OBSERVER, file], { cwd: ROOT, env });
+    const child = spawn(process.execPath, ['--test', '--import', OBSERVER, '--test-reporter', OBSERVER, file], { cwd: ROOT, env });
     let output = '';
-    child.stdout.on('data', (part) => { output += part; });
+    let report = '';
+    child.stdout.on('data', (part) => { output += part; report += part; });
     child.stderr.on('data', (part) => { output += part; });
     child.once('error', reject);
-    child.once('close', (code, signal) => resolve({ code, signal, output }));
+    child.once('close', (code, signal) => resolve({ code, signal, output, report }));
   });
 }
 
@@ -60,10 +61,16 @@ describe('掃描考題自有夾具的生命週期', { concurrency: 2 }, () => {
         assert.equal(result.signal, null, '正常或故意斷言失敗必須走完收尾，不能被終止');
         assert.ok(existsSync(log), '觀察器沒有回報實際建立結果');
         events = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+        const summaries = result.report.trim().split('\n').map((line) => JSON.parse(line)).filter((e) => e.type === 'test:summary');
+        const summary = summaries.at(-1);
+        assert.ok(summary?.counts, '官方考題摘要沒有回報，不能把缺少 hook 當作全部跳過');
+        const allSkipped = summary.success === true && summary.counts.tests > 0
+          && summary.counts.skipped === summary.counts.tests;
         const roots = events.filter((e) => e.root).map((e) => e.root);
         assert.ok(roots.length, '未觀察到任何實際 mkdtemp；不能當作清理成功');
         assert.deepEqual(roots.filter((root) => existsSync(root)), [], '考題完成後仍留有實際建立的根');
-        assert.ok(events.some((e) => e.afterEachObserved), '考題生命週期 hook 沒有執行，不能推論平台未執行夾具');
+        assert.ok(events.some((e) => e.afterEachObserved) || allSkipped,
+          '考題生命週期 hook 沒有執行，且官方事件未證明全部跳過');
         const control = events.find((e) => e.control);
         assert.ok(control, '沒有獨立未登記對照');
         assert.ok(existsSync(control.control), '收尾刪掉了未登記對照根');

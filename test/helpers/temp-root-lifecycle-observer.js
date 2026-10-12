@@ -63,3 +63,16 @@ if (log && scope && process.env.NODE_TEST_CONTEXT?.startsWith('child')) {
     syncBuiltinESMExports();
   });
 }
+
+// 用官方事件讀考題是否全部跳過，不解析會隨 Node 版本變動的人類回報文字。
+export default async function* reporter(/** @type {AsyncIterable<any>} */ source) {
+  for await (const event of source) {
+    if (event.type === 'test:summary') {
+      yield JSON.stringify({ type: event.type, counts: event.data.counts, success: event.data.success }) + '\n';
+    } else if (event.type === 'test:fail') {
+      const error = event.data.details?.error;
+      yield JSON.stringify({ type: event.type, name: event.data.name,
+        error: String(error), cause: String(error?.cause) }) + '\n';
+    }
+  }
+}
