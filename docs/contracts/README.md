@@ -128,7 +128,7 @@
 - `lib/ai-parse-card.js`（批二＝信用卡 AI 的答案卷／提示詞／fail-closed 驗收／接地／驗算閘——等式閘＋逐筆加總閘、具名調整 `adjustments`）〔P1b-1 AI 解析引擎（2026-08-12，★3 拍板＝Anthropic）〕
 - `lib/ai-parse.js`（純模組＝答案卷 schema／提示詞／fail-closed 驗收／文字組裝，零外連）〔P1b-1 AI 解析引擎（2026-08-12，★3 拍板＝Anthropic）〕
 - `lib/ai-transport.js`（**唯一**打 AI 供應商的檔：傳輸＋真引擎工廠；入外連登記閘 hosted-auth ALLOWED＋server.js OUTBOUND_ENDPOINTS）〔P1b-1 AI 解析引擎（2026-08-12，★3 拍板＝Anthropic）〕
-- `lib/bank-alias.js`（Stage 4：機構名正規化——身分尺只認台新、去重鍵／定存鍵的祖父比對形、疑似重複的寬鬆尺）
+- `lib/bank-alias.js`（Stage 4：機構名正規化——台新與合庫限定別名、去重鍵／定存鍵的祖父比對形、疑似重複的寬鬆尺）
 - `lib/bank-statement.js`
 - `lib/card-identity.js`（信用卡帳單的機構身分判準：證據只取「**第一筆交易列之前**」的表頭列、逐列比對、樣式錨定在列開頭＋否證器＋輸出不變量）
 - `lib/derive.js`（`pairRefunds`／`consumptionByMonth`——**與前端、投資多重命中**）
@@ -193,7 +193,7 @@
 - `test/ai-pipeline-interception.test.js`（P1b-3 續集：同 23 型打全管線＝接地＋合計＋閘，與 §八「全管線重測」小節互扣）〔疑似重複提醒（2026-08-12）〕
 - `test/ai-time-deposit.test.js`（AI 路線的定存欄：三條界線）
 - `test/bank-accounts-asof-ui.test.js`
-- `test/bank-alias.test.js`（Stage 4：機構名正規化——身分尺只認台新、去重鍵／定存鍵的祖父比對形、疑似重複的寬鬆尺）
+- `test/bank-alias.test.js`（Stage 4：機構名正規化——台新與合庫限定別名、去重鍵／定存鍵的祖父比對形、疑似重複的寬鬆尺）
 - `test/bank-preview-layout.test.js`
 - `test/bank-raw-text.test.js`（Stage 2：帳單原文摘要／備註兩欄留底）
 - `test/bank-statement.test.js`（合成座標列）

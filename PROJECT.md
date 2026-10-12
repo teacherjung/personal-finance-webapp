@@ -58,6 +58,8 @@
 
 ## 重要決定（已拍板，勿重議）
 
+- **合庫匯入補強（2026-10-12）**：William 同意帳單末碼少於四位不直接判本人轉帳、合庫短長名稱同家、檢查進度不宣稱完整驗算；四位以上規則及其他银行不放寬。原話与操作化見[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/678#issuecomment-6116958755)。
+
 - **銀行收支文案裁示（2026-10-05）**：#655 r3 第 6 項所指的 `「收支說明」是什麼？` 跳窗已由 #657 移除；William 回「A」，同意結清該文案審改項（[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/655#issuecomment-5987417002)）。第 7 項選擇保留面向使用者的「帳單原文」用詞（[裁示](https://github.com/teacherjung/personal-finance-webapp/pull/655#issuecomment-5987477663)）。**以下為 Codex 的操作化與技術劃界**：這不代表逐字保留空白；部分解析路徑會整理空白，技術文件與型別註解已改以「保存解析結果」及實際用途說明，完成紀錄見[後續補強 #664](https://github.com/teacherjung/personal-finance-webapp/pull/664)。銀行收支另依 William 回報記錄[使用者驗收完成](https://github.com/teacherjung/personal-finance-webapp/pull/657#issuecomment-5987477941)，該驗收對應原畫面變更；r3 前五項技術待辦另由上述後續補強處理，未將其自動算成使用者驗收。
 
 - **共同規則入口整併（2026-10-03）**：依 William 指派的交接，AGENTS.md 保留錢的絕對邊界、鐵則、路由與常設指示；細節依入口路由表讀正本。Claude 專用入口刪除，專案入口上限 28,000 UTF-8 bytes。本專案協作附則移到 `docs/project-collaboration.md`，套件後續同步以該檔為目標；下文歷史記錄提到的舊位置，以入口路由查新位置。施工計畫與搬移對照＝`docs/agents-entry-plan.md`。

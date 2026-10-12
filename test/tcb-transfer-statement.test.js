@@ -6,11 +6,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { build } from './helpers/build-pdf.js';
+import { progressText } from '../public/modules/progress-text.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'finance-tcb-'));
 process.env.STORE_FILE = join(dir, 'store.db');
 const { parseBankStatement } = await import('../lib/bank-statement.js');
-const { previewBankStatement, applyBankStatement, assertAiBankReconciled } = await import('../lib/services/bank-import.js');
+const { previewBankStatement, applyBankStatement, assertAiBankReconciled, previewBankTxForDb, importBankTxToDb } = await import('../lib/services/bank-import.js');
 const { getDb, saveDb, emptyDb } = await import('../lib/repo.js');
 after(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -209,4 +210,54 @@ test('合庫結尾後的說明文字不成交易', async () => {
 test('合庫外幣概要標題附字仍拒收，不只認獨立標題格', async () => {
   const p = change(pages(), '【黃金存摺】', { s: '【外幣類】合成說明' });
   await assert.rejects(() => parseBankStatement(pdf(p)), { code: 'bank_unrecognized' });
+});
+
+test('合庫三碼相同的他行收款戶不直接判內轉：正式預覽與匯入一致', async () => {
+  await saveDb(emptyDb());
+  const encoded = b64(change(pages(), target, { s: '822-9002000***363' }));
+  const stages = [];
+  const preview = await previewBankStatement(encoded, undefined, undefined, { onStage: frame => stages.push(frame) });
+  assert.equal(preview.transactions.rows[0].type, 'expense');
+  assert.equal(preview.reconcile.level, 'weak');
+  assert.equal(progressText(stages.find(f => f.s === 'verify')), '正在檢查可驗算的資料…');
+  assert.equal(progressText(stages.find(f => f.s === 'build_preview')), '檢查完成，正在整理預覽…');
+  const applied = await applyBankStatement(encoded);
+  assert.equal(applied.transactions.imported, 1);
+  const db = await getDb();
+  assert.equal(db.transactions.length, 1);
+  assert.equal(db.transactions[0].type, 'expense');
+});
+
+for (const from of ['accounts', 'accountCurrency']) test(`本人末碼證據 ${from}：少於四碼不認，四碼與六碼維持完整末碼比對`, () => {
+  for (const suffix of ['3', '63', '363', '3363', '003363']) {
+    for (const direction of ['in', 'out']) {
+      const masked = `9001000***${suffix}`;
+      const own = { suffix, masked, balance: 100, currency: 'TWD', label: '綜合存款', note: '' };
+      const parsed = { bank: '合作金庫銀行', accounts: from === 'accounts' ? [own] : [],
+        accountCurrency: from === 'accountCurrency' ? { [masked]: 'TWD' } : {},
+        transactions: [{ ...expected, acctMasked: masked, acctSuffix: suffix, direction, note: `822-9002000***${suffix}` }] };
+      const db = emptyDb();
+      const want = suffix.length >= 4 ? 'transfer' : direction === 'out' ? 'expense' : 'income';
+      assert.equal(previewBankTxForDb(db, parsed).rows[0].type, want, `${suffix} ${direction}`);
+      assert.equal(importBankTxToDb(db, parsed).imported, 1);
+      assert.equal(db.transactions[0].type, want, `${suffix} ${direction}`);
+    }
+  }
+});
+
+test('合庫短名既有帳戶：正式 PDF 匯入不裂戶，重匯不增加交易', async () => {
+  const db = emptyDb();
+  db.accounts = [{ id: 'tcb-alias-existing', name: '合成既有合庫戶', bank: '合作金庫', type: 'cash', class: '現金', currency: 'TWD', accountNo: source, balance: 5000 }];
+  await saveDb(db);
+  const encoded = b64(pages());
+  const applied = await applyBankStatement(encoded);
+  assert.equal(applied.transactions.imported, 1);
+  const after = await getDb();
+  assert.equal(after.accounts.length, 1);
+  assert.equal(after.accounts[0].id, 'tcb-alias-existing');
+  assert.equal(after.accounts[0].bank, '合作金庫');
+  assert.equal(after.accounts[0].balance, 7890.12);
+  assert.equal(after.transactions[0].account, '合成既有合庫戶');
+  assert.equal((await applyBankStatement(encoded)).transactions.imported, 0);
+  assert.deepEqual((await getDb()).transactions, after.transactions);
 });
