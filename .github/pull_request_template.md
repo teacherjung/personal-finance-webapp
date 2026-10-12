@@ -6,15 +6,13 @@
 - **這支若完全失敗，最糟失去什麼**：<一句話>
 
 <!--
-四欄是機器讀的（雲端「協作欄位」檢查與合併指令都跑 tools/gates/check-collab-fields.js）：
-它只讀說明**開頭那一段**——第一個 HTML 註解／引用／表格之前——所以四欄要留在最上面、前面不要放任何東西。
-角色填識別值（settings.json 的 participants：William／Claude／Codex）；實作者與複審者不可同一位（RULES A2、E1）；沒有逐支指定就照 settings.json 的預設分工（RULES A1）。
-「預計修改的檔案」全部列出、太多可以寫資料夾，讓後開工的 Session 查得到誰在改哪些檔（RULES D3）。「最糟失去什麼」一句話，決定這支的流程重量（PR 分級見 docs/development-workflow.md「PR 分級與契約」節）。
+欄位與填法＝RULES A1、A2、D3、D4、E1 及 templates/pr-body.md；開頭四欄的位置限制見 tools/gates/check-collab-fields.js。
+本專案角色識別值與預設分工＝settings.json 的 participants 與預設分工；技術驗證補充見 docs/development-workflow.md。
 -->
 
 ## 改了什麼
 
-<!-- 逐處列；每輪複審的逐條對帳（四選一：屬實·已修／屬實·進待辦／誤報／待裁）與結論留言連結（RULES F7）。 -->
+<!-- 逐條對帳與結論連結照 RULES F7、templates/pr-body.md。 -->
 
 ## 怎麼驗收
 

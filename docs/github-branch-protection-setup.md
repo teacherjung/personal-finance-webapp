@@ -32,7 +32,7 @@
 | └ **Require approvals**（`required_approving_review_count`） | **0** | ✅ 已取消（2026-08-02 William 執行；2026-08-05 API 覆核） |
 | └ Dismiss stale reviews | ⬜ 關 | ✅ |
 | Require status checks to pass | ✅ 開 | ✅ |
-| └ 必過的 check | `上線用的 Node（.node-version）`＋`協作欄位（實作者 ≠ 獨立審查者）`（2026-08-05 覆核時的名字；2026-09-28 ④ 起 job 改名成「協作欄位（實作者 ≠ 複審者）」，這一格等擁有者在平台換完、唯讀重讀後另補） | ✅ 兩個都在（2026-08-05 API 覆核） |
+| └ 必過的 check | `上線用的 Node（.node-version）`＋`協作欄位（實作者 ≠ 複審者）` | ✅ 兩個都在（2026-10-12 唯讀 API 重讀；取代 2026-08-05 記的舊名） |
 | └ **Require branches to be up to date**（`strict`） | ⬜ **關** | ✅ 已與 B 節設計意圖一致（2026-08-05 API 覆核） |
 | Require linear history | ✅ 開 | ✅ |
 | Require conversation resolution | ✅ 開 | ✅ |
@@ -165,11 +165,7 @@ Settings → Branches → 編輯 `main` 的規則：
 - `.github/workflows/collab-fields.yml` — 協作欄位閘的 job（**刻意分開一個檔**：
   它看的是 PR 說明，所以必須訂閱 `edited` 事件；而程式碼那三關不該因為改幾個字的說明就重跑）
 - `tools/gates/check-collab-fields.js` — 協作欄位閘（RULES E1；CI 與 `tools/merge.js` **跑同一支**；舊的 `scripts/check-pr-collab-fields.js` 已於 2026-09-18 搬家第 7 步刪除）
-- `tools/gates/check-stacked.js` — 堆疊閘（RULES H2；由 `tools/merge.js` 執行、未進 CI）
-- `tools/gates/check-checks-really-ran.js` — 真考卷閘（RULES H3；由 `tools/merge.js` 執行；skipped/冒名/舊場次重跑都不算綠——下一節的第二層）
-- `tools/gates/check-review-verdicts.js` — 複審結論聯集閘（RULES F4、F5；由 `tools/merge.js` 執行、未進 CI）
-- `tools/gates/check-cross-merge.js` — 跨PR試合併閘（RULES H4；由 `tools/merge.js` 執行、未進 CI；備臨時樹那句＝`settings.json` 的 checks.prepareWorktree）
-- `tools/merge.js`＋`settings.json` 的 gates — 合併程序（RULES H1〜H4）
+- 合併條件與程序＝RULES H1〜H6；啟用的閘、跑法與射程見 `settings.json` 的 gates、`PROJECT-SETTINGS.md` 與 `MACHINES.md`，本節不另列一份。
 - `RULES.md` A 節 — 唯一不變量與角色分工
 
 ## 草稿期 skipped 與 required checks（2026-08-15 立；2026-08-29 半鬆綁後 skipped＝異常）
