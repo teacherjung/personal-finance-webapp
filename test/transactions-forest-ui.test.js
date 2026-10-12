@@ -39,20 +39,22 @@ test('信用卡費接線（字面釘：只掃原始碼字串；分堆結果的�
     '本月筆數必須直接使用含退款的 rows.length');
   assert.match(source, /退款歸屬暫時讀不到/);
   assert.match(source, /unmatchedRefundsForMonth/);
-  for (const id of ['uploadStmt', 'stmtBatches', 'monthSel', 'lensInfo', 'unmatchedInfo']) {
+  for (const id of ['uploadStmt', 'stmtBatches', 'monthSel']) {
     assert.match(source, new RegExp(`id="${id}"`));
   }
+  assert.match(source, /id="lensInfo\$\{suffix\}"/);
+  assert.match(source, /id="unmatchedInfo\$\{suffix\}"/);
   for (const attr of ['data-edit', 'data-del', 'data-store']) {
     assert.match(source, new RegExp(attr));
   }
   assert.match(source, /bindSortClicks\(view\(\), listSort, renderTransactions\)/);
-  assert.match(source, /if \(seq !== currentRouteSeq\(\)\) return/);
+  assert.match(source, /if \(seq !== currentRouteSeq\(\) \|\| generation !== renderGeneration\) return/);
   assert.match(source, /class="credit-workspace"/);
   assert.match(source, /本月尚無信用卡消費/);
   assert.match(source, /src="assets\/guide-return-neutral\.webp"/);
 });
 
-test('信用卡費樣式：篩選卡沿用銀行收支版型，寬桌機加寬分類、窄桌機換列且長金額不裁切', () => {
+test('信用卡費基礎樣式：保留手機篩選、摘要與分類排列，長金額不裁切', () => {
   const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8');
   const controlRules = [...css.matchAll(/\.credit-controls \{([^}]+)\}/g)].map(match => match[1]);
   const desktopControls = controlRules[0] || '';
@@ -70,4 +72,20 @@ test('信用卡費樣式：篩選卡沿用銀行收支版型，寬桌機加寬�
   assert.match(css, /@media \(max-width: 640px\) \{[\s\S]*\.credit-overview-grid \{ grid-template-columns: 1fr; gap: 7px; \}/);
   assert.match(css, /\.credit-stat \{[\s\S]*grid-template-columns: minmax\(0, 1fr\) auto/);
   assert.match(css, /\.credit-empty-state img/);
+});
+
+test('信用卡桌機樣式：年月沿用銀行收支選單，色條在摘要上緣，分類排到明細之後', () => {
+  const source = readFileSync(join(ROOT, 'public/modules/transactions.js'), 'utf8');
+  const css = readFileSync(join(ROOT, 'public/styles.css'), 'utf8');
+  const desktop = css.slice(css.indexOf('@media (min-width: 821px)', css.indexOf('/* ---------- 信用卡費')),
+    css.indexOf('@media (max-width: 640px)', css.indexOf('/* ---------- 信用卡費')));
+  assert.match(source, /class="credit-period-desktop cashflow-period-selects"/);
+  assert.match(source, /class="credit-ledger-head credit-mobile-only"/);
+  assert.match(desktop, /\.credit-workspace \.credit-mobile-only \{ display: none; \}/);
+  assert.match(desktop, /\.credit-stat::before \{ inset: 0 0 auto; width: auto; height: 6px; \}/);
+  assert.match(source, /categoryPanelHtml\('credit-mobile-only', ''\)/);
+  assert.match(source, /categoryPanelHtml\('credit-desktop-only', 'Desktop'\)/);
+  assert.doesNotMatch(desktop, /\.credit-ledger-section \{ order:/);
+  assert.doesNotMatch(desktop, /\.credit-category-panel \{\s*order:/);
+  assert.match(desktop, /\.credit-ledger th \{ border-bottom: 2px solid var\(--frame\); \}/);
 });

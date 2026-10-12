@@ -229,6 +229,11 @@ test('銀行收支樣式：桌機四張可互動摘要卡、手機篩選、帳�
   for (const [column, width] of [[3, '32%'], [4, '9%'], [5, '16%'], [7, '90px']]) {
     assert.match(desktopSummaryStyle, new RegExp(`\\.cashflow-ledger th:nth-child\\(${column}\\) \\{ width: ${width.replace('%', '\\%')}; \\}`));
   }
+  const desktopLedgerStyle = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    .match(/@media \(min-width: 821px\) \{\s*\.cashflow-ledger-section \{[\s\S]*?^\}/m)?.[0] || '';
+  assert.match(desktopLedgerStyle,
+    /\.cashflow-ledger-section \.cashflow-ledger table \{ table-layout: fixed; min-width: 1080px; \}/,
+    '切換金流後明細欄寬由固定表格配置，不被資料列文字推動');
   assert.match(desktopSummaryStyle, /\.cashflow-stat-action \{[^}]*display: block/);
   assert.doesNotMatch(desktopSummaryStyle, /\.cashflow-period-desktop \.cashflow-flow-control/);
   assert.match(css, /@media \(min-width: 821px\) \{[\s\S]*\.cashflow-ledger-section \.cashflow-controls \{[^}]*display: none/);

@@ -311,14 +311,7 @@ export async function renderDashboard() {
 
   view().innerHTML = `
     <section class="forest-overview" aria-label="理財中心總覽">
-      <div class="forest-message-stage">
-        <span class="forest-message-kicker">理財中心</span>
-        <h1 id="forestDashboardTitle" aria-live="polite" aria-atomic="true">
-          <span class="forest-quote-mark" aria-hidden="true">“</span>
-          <span id="forestDashboardMessage">看清資產全貌，再決定今天要處理什麼。</span>
-          <span class="forest-quote-mark" aria-hidden="true">”</span>
-        </h1>
-      </div>
+      <h1 class="forest-overview-heading">總覽</h1>
       <div class="forest-scene-summary">
         <div class="forest-networth">
           <span>淨資產</span>
