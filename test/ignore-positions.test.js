@@ -116,7 +116,8 @@ for (const target of TARGETS) for (const mode of MODES) {
     assert.match(actual, /\.[0-9a-f]{12}\.grok-bump-tmp$/, '實際產名必須符合已核定格式');
     ignored(s, actual, tempPattern(target), mode);
     visible(s, target, mode);
-    for (const wrong of [tempName(target, 'a'.repeat(11)), tempName(target, 'a'.repeat(13)), tempName(target, 'g'.repeat(12)),
+    const singleInvalid = Array.from({ length: 12 }, (_, i) => tempName(target, `${NONCE.slice(0, i)}g${NONCE.slice(i + 1)}`));
+    for (const wrong of [tempName(target, 'a'.repeat(11)), tempName(target, 'a'.repeat(13)), tempName(target, 'g'.repeat(12)), ...singleInvalid,
       `${target}.grok-bump-tmp`, `${tempName(target)}-other`, tempName(`${target}.other`),
       `nested/${tempName(target)}`, `elsewhere/${tempName(basename(target))}`]) {
       s.file(wrong); visible(s, wrong, mode);

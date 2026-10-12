@@ -12,4 +12,6 @@ ESLint 的探針糾察維持由既有 PDF 接縫考題驗證；獨立加入探�
 
 PDF 家族正例依 [第一輪後的追加代裁](https://github.com/teacherjung/personal-finance-webapp/pull/684#issuecomment-6134086085) 用真正 mkdtemp 產名；固定 fixture 名不能代替真殘骸的匹配。四個家族各做固定名收窄突變，指定行為題須紅、還原綠，不以宣告未同步的紅代替。位置、深度、型別與大小寫劃界仍保留；升版產名的舊註解同支改為原因與指路，不新增正式接縫或匯出。
 
+升版 nonce 的反例在每個位置分別放一個非十六進位的 g，其餘保持合法；兩個目標各自每一格放寬為可收 g 時，指定行為題須紅、還原綠。這項證據只涵蓋該單格放寬突變，不宣稱窮舉所有可能的字元類改法。
+
 本項也在 PROJECT 歸位 [#683 第三輪發現 2](https://github.com/teacherjung/personal-finance-webapp/pull/683#issuecomment-6132842497)：整組 describe 跳過會多收 suite 明細、往安全方向紅；位置為暫存回報器及生命週期考題，FILES 任一支開始使用 describe 時才補強。
