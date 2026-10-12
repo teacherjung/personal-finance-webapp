@@ -21,7 +21,7 @@ const FILES = [
   'test/grok-scan-flow-incident.test.js',
 ];
 
-/** 外層失敗時仍只處理本場記錄的根；不跟捷徑進入目標。 @param {string} dir */
+/** 突變可能留下不可列舉的目錄；量完殘留後仍須收回本場夾具。 @param {string} dir */
 function restoreFixtureAccess(dir) {
   if (!existsSync(dir) || !lstatSync(dir).isDirectory()) return;
   chmodSync(dir, 0o700);
@@ -82,7 +82,7 @@ describe('掃描考題自有夾具的生命週期', { concurrency: 2 }, () => {
           t.skip('本平台未執行 victim 初始化路徑，未驗證該故障收尾');
           return;
         }
-        // 能力探測在模組載入時建立且立即清掉；它不證明受保護的考題夾具走過。
+        // 一建就清掉的根不能證明受保護路徑走過；夾具須在場才有收尾機會。
         if (!events.some((e) => e.fixtureRootsPresent > 0)) {
           assert.equal(result.code, 0, result.output);
           t.skip('本平台未執行留下自有夾具的路徑，未驗證該路徑的收尾');
