@@ -4,9 +4,9 @@
 
 交接原第 9 項要求備份建立後的檔案權限能持續維持。隔離 SQLite 試驗確認，直接 `VACUUM INTO` 依預設權限建立檔案；先以 `openSync(tmp, 'wx', 0o600)` 建立空檔後，SQLite 可以寫入完整快照並保留該權限。
 
-本輪裁示者由擁有者指定為 GPT-6.1 Sol（極高）。[施工範圍裁示](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6125172022) 選 A：四條既有快照路徑一起修，寫入前排他建立私有暫存檔；新每日備份目錄 0700。舊資料權限與缺證據的歷史憑證掃描另留交接，不據此宣稱已完成。
+本輪裁示者由擁有者指定為 GPT-6.1 Sol（極高）（Codex 轉述，授權原話見下列裁示留言）。[施工範圍裁示](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6125172022) 選 A：四條既有快照路徑一起修，寫入前排他建立私有暫存檔；新每日備份目錄 0700。舊資料權限與缺證據的歷史憑證掃描另留交接，不據此宣稱已完成。
 
-[施工排隊裁示](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6125172559) 維持全體最多兩支；本支的已重現備份權限缺口是「不得已」個案，需先等套件至少一支合併，核對不重疊後開草稿，再改程式。後續待辦不自動援用這個例外。
+本支開立當時的[施工排隊裁示](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6125172559) 維持全體最多兩支；本支的已重現備份權限缺口是「不得已」個案，需先等套件至少一支合併，核對不重疊後開草稿，再改程式。該例外不自動套用後續待辦。後續 PR 上限改依 [William 本人 2026-10-12 更新](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6126118007)：理財與套件各最多兩支，草稿也算；取代前述跨專案合計的解讀與代裁。
 
 ## 範圍與做法
 
@@ -14,7 +14,7 @@
 - `lib/services/backup.js`：新每日備份目錄的建立參數為 0700；已存在的目錄沿用，不批次收緊其權限。
 - 維持開庫搬家、啟動與每日備份的觸發時機。失敗時不刪舊目的備份、清理暫存檔；啟動與搬家依既有警告處置，手動快照仍拋錯，每日服務仍記失敗狀態。安全建立失敗不能退回直接寬權限寫入。
 - 不新增使用者操作前備份，不改備份保存天數、帳本內容、欄位、雲端儲存或工具權限。
-- 本支未處理現存 DB、WAL、SHM、歷史備份或既有目錄的權限；主目錄只查 metadata，不讀財務內容。未核實的歷史憑證掃描保持待辦。
+- 本支未處理首次建立 data/ 與主資料庫的權限，以及現存 DB、WAL、SHM、歷史備份或既有目錄的權限；主目錄只查 metadata，不讀財務內容。未核實的歷史憑證掃描保持待辦。
 
 ## 驗證與通過條件
 
