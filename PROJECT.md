@@ -56,7 +56,7 @@
 - （合庫其他存款種類，#678 r2 發現 3）台幣概要含非綜合存款列時整份拒收／`lib/bank-statement.js` 與 `docs/tcb-transfer-statement-plan.md`／首次遇到此類帳單需匯入時，先請 William 決定跳過該種類或分開列管 — **未分配**
 - （合庫備註行距，#678 掃描發現 5）合成的 14 點列距與跨 12 點備註會讓備註靠近下一筆；尚無銀行版型佐證其歸屬／`lib/bank-statement.js` 與 `test/tcb-transfer-statement.test.js`／取得實際密排或多行備註版型時，以可公開合成案例核對行距與歸位限制 — **未分配**
 
-- （合庫名稱範圍，#678 r3 發現 4）合庫正式全名或英文名不在已核准別名中，遇到此類機構戳可能另建帳戶／`lib/bank-alias.js` 與 `test/bank-alias.test.js`／首次出現這類機構戳時，核對法人同一性並請 William 裁示是否增列；本支不增列名稱 — **未分配**
+- （合庫名稱範圍，#678 r3 發現 4）合庫正式全名、英文名、簡稱「合庫」及中間帶空白的寫法不在已核准別名中，遇到此類機構戳可能另建帳戶；三碼本人證據門檻也用同一把身分尺認合庫，這些寫法會沿用主幹的短末碼判斷，裁別名時須一併檢查分類影響（#678 r4 發現 1）／`lib/bank-alias.js`、`lib/services/bank-import.js`、`test/bank-alias.test.js` 與 `test/tcb-transfer-statement.test.js`／首次出現這類機構戳時，核對法人同一性並請 William 裁示是否增列；本支不增列名稱 — **未分配**
 
 ## 重要決定（已拍板，勿重議）
 
