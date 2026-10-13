@@ -162,6 +162,7 @@
 
 以下日期為 UTC；原話照錄。括號外的背景與解讀依 2026-10-03 經 William 指示採用的交接，與原話分開標示。
 
+- **Claude 複審模型｜2026-10-13 UTC 本人更新**：「複審幫我改用Opus模型」。[本人對話指示留痕（Codex 轉述）](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6137507759)。
 - **PR 上限｜2026-10-12 UTC 本人更新**：「PR 上限改為各專案分別計算：理財最多兩支、套件最多兩支，草稿也算。這次本人指示取代先前跨專案合計兩支的解讀與代裁；仍須避免與 Claude 的工作衝突。請留痕後繼續原任務。」[本人留痕](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6126118007)。
 - **C31｜2026-10-02 UTC**：「從現在開始可以動用後端，因為Claude那邊暫停實作了。現在由你實作。」
 - **C33｜2026-10-02 UTC**：「那等我累積多一點改變你在跑程序。改變都先留在本機，之後再進入主幹。」
