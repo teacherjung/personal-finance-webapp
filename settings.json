@@ -661,8 +661,8 @@
  "reviewers": [
   {
    "participant": "Claude",
-   "strongest": "claude-fable-5-1",
-   "second": "claude-opus-5-5",
+   "strongest": "claude-opus-5-5",
+   "second": "claude-fable-5-1",
    "maxEffort": "max",
    "autoMode": "Ultracode",
    "source": "Claude CLI",
