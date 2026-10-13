@@ -116,6 +116,59 @@ for (const method of ['PUT', 'POST']) test(`儲存 ${method} 後讀取失敗：�
   assert.doesNotMatch(text('#cashflowReadError'), /資料已儲存/, '成功重讀後的一般失敗不再沿用舊寫入警示');
 });
 
+for (const beforeConfirmation of [false, true]) test(`舊快照表單在寫入確認${beforeConfirmation ? '前' : '後'}開啟：重讀後仍須重新開啟才能送出`, async () => {
+  failReads = true;
+  const pending = beforeConfirmation ? deferred() : null;
+  holdWrite = pending;
+  await submit('PUT');
+  if (pending) await click('#modal-root [data-cancel]');
+  await click(`tbody [data-edit="${serial}-a"]`);
+  assert.equal(document.getElementById('f_amount').value, '21000');
+  document.getElementById('f_summary').value = '本題只改摘要';
+  if (pending) { pending.resolve(); await settle(); }
+  holdWrite = null;
+  assert.equal(rows.find(x => x.id === `${serial}-a`).amount, 35000);
+  assert.equal(writes().length, 1);
+  assert.match(text('#cashflowReadError'), /資料已儲存/);
+  const staleForm = el('#modal-root form');
+  staleForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(writes().length, 1, '舊值不能再次送出到櫃檯');
+  assert.equal(rows.find(x => x.id === `${serial}-a`).amount, 35000);
+  assert.equal(el('#modal-root form'), staleForm);
+  assert.match(text('#toast-root'), /資料已更新.*重新讀取後再編輯/);
+  failReads = false;
+  await renderCashflow();
+  assert.equal(el('#cashflowReadError'), null);
+  staleForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(writes().length, 1, '列表重讀不能把舊表單變成新資料');
+  assert.equal(rows.find(x => x.id === `${serial}-a`).amount, 35000);
+  await click('#modal-root [data-cancel]');
+  await click(`tbody [data-edit="${serial}-a"]`);
+  assert.equal(document.getElementById('f_amount').value, '35000');
+  document.getElementById('f_summary').value = '本題重開後的摘要';
+  el('#modal-root form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(writes().length, 2);
+  assert.equal(rows.find(x => x.id === `${serial}-a`).amount, 35000);
+  assert.equal(rows.find(x => x.id === `${serial}-a`).summary, '本題重開後的摘要');
+});
+
+test('舊快照在新增確認後仍不得再送出編輯', async () => {
+  failReads = true;
+  await submit('POST');
+  assert.equal(rows.find(x => x.id === `${serial}-new`).amount, 35000);
+  assert.equal(writes().length, 1);
+  await click(`tbody [data-edit="${serial}-a"]`);
+  document.getElementById('f_summary').value = '本題新增之後的舊表單';
+  el('#modal-root form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(writes().length, 1);
+  assert.equal(rows.find(x => x.id === `${serial}-new`).amount, 35000);
+  assert.notEqual(rows.find(x => x.id === `${serial}-a`).summary, '本題新增之後的舊表單');
+});
+
 test('非預設年月、金流、排序：每個失敗操作均回復成功畫面與內部狀態', async () => {
   assert.deepEqual(snapshot().period, ['2025', '03', '2025', '03']);
   assert.deepEqual(snapshot().ids, [`${serial}-b`, `${serial}-a`]);

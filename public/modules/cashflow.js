@@ -26,6 +26,7 @@ import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 let monthFilter = monthKey();
 let flowFilter = 'all';   // 金流篩選：all / income / expense / transfer
 let renderGeneration = 0;
+let editRevision = 0;
 /** @type {number | null} 已確認寫入的頁面；讀取失敗不撤銷這件事。 */
 let savedReloadNav = null;
 const listSort = { key: 'date', dir: 'desc' };
@@ -69,6 +70,7 @@ function showCashflowReadError(message, nav, generation) {
 }
 
 export async function renderCashflow() {
+  const dataRevision = editRevision;
   const seq = currentRouteSeq();
   const generation = ++renderGeneration;
   const nav = currentNavSeq();
@@ -217,7 +219,7 @@ export async function renderCashflow() {
     flowFilter = /** @type {HTMLElement} */ (b).dataset.flow || 'all'; renderCashflow();
   });
   bindSortClicks(view(), listSort, renderCashflow);
-  view().querySelectorAll('[data-edit]').forEach(b => /** @type {HTMLElement} */ (b).onclick = () => openCashflowForm(all.find(t => t.id === /** @type {HTMLElement} */ (b).dataset.edit), accounts, all));
+  view().querySelectorAll('[data-edit]').forEach(b => /** @type {HTMLElement} */ (b).onclick = () => openCashflowForm(all.find(t => t.id === /** @type {HTMLElement} */ (b).dataset.edit), accounts, all, dataRevision));
   view().querySelectorAll('[data-del]').forEach(b => /** @type {HTMLElement} */ (b).onclick = () => {
     const t = all.find(x => x.id === /** @type {HTMLElement} */ (b).dataset.del);
     confirmDelete(`${flowOf(t).label} ${money(t.amount)}`, () => api('/transactions/' + t.id, { method: 'DELETE' }));
@@ -577,8 +579,8 @@ async function openBankBatchManager() {
   render(batches);
 }
 
-/** @param {any=} tx @param {any[]=} accounts @param {any[]=} all 全部現金流交易（算「同類還有幾筆」用） */
-function openCashflowForm(tx, accounts = [], all = []) {
+/** @param {any=} tx @param {any[]=} accounts @param {any[]=} all 全部現金流交易（算「同類還有幾筆」用） @param {number=} dataRevision */
+function openCashflowForm(tx, accounts = [], all = [], dataRevision = editRevision) {
   const nav = currentNavSeq();
   // 金流別由既有 type 推導（編輯）或預設收入（新增）
   const initFlow = tx ? (tx.type === 'income' ? 'income' : tx.type === 'transfer' ? 'transfer' : 'expense') : 'income';
@@ -646,6 +648,10 @@ function openCashflowForm(tx, accounts = [], all = []) {
       catSel.onchange = () => { subSel.innerHTML = subOptionsFor(flowSel.value, catSel.value, ''); };
     },
     onSubmit: async (data) => {
+      // 列表重讀不會換掉已開啟表單的欄位，不能因提示消失就准它送回舊值。
+      if (tx && dataRevision !== editRevision) {
+        throw new Error('資料已更新；請關閉編輯視窗，重新讀取後再編輯。');
+      }
       const flow = data.flow;
       const type = flow === 'income' ? 'income' : flow === 'transfer' ? 'transfer' : 'expense';
       /** @type {Record<string, any>} */ const body = {
@@ -671,10 +677,12 @@ function openCashflowForm(tx, accounts = [], all = []) {
         const hasBankOriginal = typeof tx.bankSummary === 'string' && typeof tx.bankNote === 'string';
         if (r.appliedText && body.applySameSummary) changes.push(`摘要同步 ${r.appliedText.summary} 筆${hasBankOriginal ? '，未來相同帳單原文匯入也適用' : ''}`);
         if (r.appliedText && body.applySameRemark) changes.push(`備註同步 ${r.appliedText.remark} 筆${hasBankOriginal ? '，未來相同帳單原文匯入也適用' : ''}`);
+        editRevision++;
         if (nav !== currentNavSeq()) return;
         toast(changes.length ? `已儲存；${changes.join('；')}` : '已儲存');
       } else {
         await api('/transactions', { method: 'POST', body });
+        editRevision++;
         if (nav !== currentNavSeq()) return;
         toast('已儲存');
       }
