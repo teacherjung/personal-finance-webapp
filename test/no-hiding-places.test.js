@@ -50,9 +50,9 @@ const ALLOWED_GITIGNORE = [
   '*.bak',                              // 備份檔
   '.claude/settings.local.json',        // 工具產生的本機設定
   'node_modules',                       // 相依套件（別人的程式碼）
-  '.codex-reviews/',                    // 審查工具的殘留輸出
-  'tmp/',                               // 暫存
-  'output/',                            // 產生的檔案
+  '/.codex-reviews/',                   // 本層審查工具的殘留輸出
+  '/tmp/',                              // 本層暫存
+  '/output/',                           // 本層產生的檔案
   '*.log',                              // 執行紀錄
   '.DS_Store',                          // macOS 產生的
   '**/.DS_Store',                       // 同上
@@ -60,10 +60,15 @@ const ALLOWED_GITIGNORE = [
   '/skills-lock.json',                  // 同上
   '/meeting.sh',                        // William 個人的檔案（他明說不收）
   '/meeting_0724_1414.md',              // 同上
-  // 工具產生的：`scripts/grok-bump.js` 寫檔時的同目錄暫存檔（先寫暫存、再 rename 蓋過去，
-  // 所以目標不會被寫到一半）。正常路徑上它一定被清掉；清不掉時那支會印出殘留位置。
-  // 這一行是為了**不讓它被 git add 收進去**——不是拿來藏我們自己寫的程式（#636 r3 #5）。
-  '*.grok-bump-tmp',
+  // 升版用同目錄暫存再 rename；限正式目標與產名格式，避免殘骸擋住其他位置的檔案。
+  // 名稱的大小寫另由 Git 設定影響，兩種模式的行為由 ignore-positions 考題驗。
+  "/scripts/grok-scan.js.[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].grok-bump-tmp",
+  "/test/grok-scan-flow-preflight.test.js.[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].grok-bump-tmp",
+  // PDF 考題用探針驗接縫與打包邊界；硬中止的殘骸應擋 Git 誤提交，ESLint 仍要糾察。
+  '/test-doubles/_probe_*/',
+  '/test-doubles-evil-*/',
+  '/lib/_seam_probe_*/',
+  '/public/_seam_probe_*/',
   // 考題產生的：`test/xlsx-isolate.test.js` 的探針目錄。它**必須**寫在 `lib/` 與 `public/` 底下
   // ——那一題就是要證明 xlsx 護欄的範圍涵蓋前端，全寫在 lib/ 底下的話護欄被縮窄也看不出來
   // （該題註解裡 Codex #374 r4 Low 寫著理由）。正常路徑上開頭與 finally 各清一次；
