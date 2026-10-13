@@ -30,7 +30,7 @@ let editRevision = 0;
 /** @type {number | null} 已確認寫入的頁面；讀取失敗不撤銷這件事。 */
 let savedReloadNav = null;
 const listSort = { key: 'date', dir: 'desc' };
-/** @type {{month: string, flow: string, sort: {key: string, dir: string}} | null} */
+/** @type {{month: string, flow: string, sort: {key: string, dir: string}, nav: number, revision: number, error: string} | null} */
 let renderedState = null;
 const FLOW_INFO = [
   ['income', '收入', `<p>這裡的收入，是所選月份在銀行收支中列為「收入」的紀錄，例如薪資、股息或利息。</p>
@@ -69,6 +69,14 @@ function showCashflowReadError(message, nav, generation) {
   };
 }
 
+function showPendingCashflowWrite() {
+  const nav = currentNavSeq();
+  if (renderedState?.nav !== nav || !view().querySelector('.cashflow-workspace') || renderedState.revision === editRevision) return;
+  savedReloadNav = nav;
+  const detail = renderedState.error ? `。載入失敗：${renderedState.error}` : '';
+  showCashflowReadError(`資料已儲存，畫面尚未更新${detail}`, nav, renderGeneration);
+}
+
 export async function renderCashflow() {
   const dataRevision = editRevision;
   const seq = currentRouteSeq();
@@ -82,6 +90,7 @@ export async function renderCashflow() {
   } catch (e) {
     if (seq === currentRouteSeq() && generation === renderGeneration) {
       if (view().querySelector('.cashflow-workspace') && renderedState) {
+        renderedState.error = e.message;
         // 原生選單先改值才發出請求；失敗時，控制項與狀態須回到仍在畫面上的那份資料。
         monthFilter = renderedState.month;
         flowFilter = renderedState.flow;
@@ -230,8 +239,10 @@ export async function renderCashflow() {
       : [...view().querySelectorAll(selector)].find(el => /** @type {HTMLElement} */ (el).dataset.flow === focusedControl.dataset.flow);
     replacement?.focus({ preventScroll: true });
   }
-  renderedState = { month: monthFilter, flow: flowFilter, sort: { ...listSort } };
+  renderedState = { month: monthFilter, flow: flowFilter, sort: { ...listSort }, nav, revision: dataRevision, error: '' };
   savedReloadNav = null;
+  // 讀取開始後才確認的寫入，可能尚未包含在這份回覆裡。
+  showPendingCashflowWrite();
 }
 
 function rowHtml(t) {
@@ -678,12 +689,12 @@ function openCashflowForm(tx, accounts = [], all = [], dataRevision = editRevisi
         if (r.appliedText && body.applySameSummary) changes.push(`摘要同步 ${r.appliedText.summary} 筆${hasBankOriginal ? '，未來相同帳單原文匯入也適用' : ''}`);
         if (r.appliedText && body.applySameRemark) changes.push(`備註同步 ${r.appliedText.remark} 筆${hasBankOriginal ? '，未來相同帳單原文匯入也適用' : ''}`);
         editRevision++;
-        if (nav !== currentNavSeq()) return;
+        if (nav !== currentNavSeq()) { showPendingCashflowWrite(); return; }
         toast(changes.length ? `已儲存；${changes.join('；')}` : '已儲存');
       } else {
         await api('/transactions', { method: 'POST', body });
         editRevision++;
-        if (nav !== currentNavSeq()) return;
+        if (nav !== currentNavSeq()) { showPendingCashflowWrite(); return; }
         toast('已儲存');
       }
       savedReloadNav = nav;
