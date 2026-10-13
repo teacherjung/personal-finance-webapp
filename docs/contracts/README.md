@@ -375,6 +375,7 @@
 - `lib/store.js`
 - `lib/types.js`
 - `public/modules/backup-alert.js`
+- `scripts/check-node-version.js`
 - `server.js`
 - `test-doubles/fake-supabase.js`
 - `test/backup-alert.test.js`

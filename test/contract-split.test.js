@@ -356,7 +356,11 @@ const BODY_LABEL = '**記得同步這裡**：';
 const TRIGGER_LABEL = '**改這裡**：';
 
 /** repo 路徑的機械抽取正規式（README 小節的檔案行與契約內文共用同一支；認得到什麼、認不到什麼見 README 雲端與安全小節的備註）。 */
-const REPO_PATH = /(?:lib|public-site|public|test-doubles|test|data|db|\.github\/workflows)\/[A-Za-z0-9_./-]+\.[a-z]+|server\.js|package(?:-lock)?\.json/;
+const REPO_PATH = /(?:lib|public-site|public|test-doubles|test|data|db|\.github\/workflows)\/[A-Za-z0-9_./-]+\.[a-z]+|scripts\/check-node-version\.js|server\.js|package(?:-lock)?\.json/;
+/** @param {string} text */
+function mentionedPaths(text) {
+  return new Set([...text.matchAll(new RegExp('`(' + REPO_PATH.source + ')`', 'g'))].map(x => x[1]));
+}
 /**
  * README 小節裡「一行一檔」的合法寫法：`- \`<完整路徑>\`` 開頭，**而且整行只准這一個 repo 路徑 code span**——
  * 後面只能接括號說明／〔標籤〕，裡面不得再出現 \`另一個路徑\`（Codex #567 r2 High①：沒有行尾錨、又只擷取第一個 match，
@@ -610,6 +614,7 @@ const MANIFEST = {
       'lib/store.js',
       'lib/types.js',
       'public/modules/backup-alert.js',
+      'scripts/check-node-version.js',
       'server.js',
       'test-doubles/fake-supabase.js',
       'test/backup-alert.test.js',
@@ -1715,13 +1720,26 @@ test('⭐ 拆分護欄｜契約頁首必須精確指向**自己**的 README 節�
 
 test('拆分護欄｜契約內文提到的 repo 路徑，都要在 files 裡（提到新檔就強迫更新 manifest）', () => {
   for (const [file, m] of Object.entries(MANIFEST)) {
-    const mentioned = new Set([...read(file)
-      .matchAll(/`((?:lib|public-site|public|test-doubles|test|data|db|\.github\/workflows)\/[A-Za-z0-9_./-]+\.[a-z]+|server\.js|package(?:-lock)?\.json)`/g)].map((x) => x[1]));
+    const mentioned = mentionedPaths(read(file));
     const missing = [...mentioned].filter((f) => !m.files.includes(f));
     assert.deepEqual(missing, [],
       `${file} 的內文點名了這些檔案，但 manifest 的 files 沒有：\n  ${missing.join('\n  ')}\n`
       + '⚠️ 這是**下限**不是上限：契約用函式名或 API 路徑點到的檔案考題看不出來，\n'
       + '   那些仍然要靠人加進 files（Codex #384 r1／r2 兩輪各抓到一批）。');
+  }
+});
+
+test('契約路徑抽取｜精確收版本檢查器，錯拼、偽副檔名與第二路徑仍拒絕', () => {
+  const file = 'scripts/check-node-version.js';
+  const section = line => ['### 甲', '契約：[a.md](a.md)', line].join('\n');
+  assert.deepEqual(sectionFiles(section('- `' + file + '`'), '甲'), [file]);
+  assert.deepEqual([...mentionedPaths('共用入口為 `' + file + '`。')], [file]);
+  for (const invalid of ['scripts/check-node-versoin.js', 'scripts/check-node-version.jsx', 'scripts/check-node-version.js.bak', 'other/scripts/check-node-version.js']) {
+    assert.throws(() => sectionFiles(section('- `' + invalid + '`'), '甲'));
+    assert.deepEqual([...mentionedPaths('`' + invalid + '`')], []);
+  }
+  for (const line of ['* `' + file + '`', '  - `' + file + '`', '- `' + file + '` server.js', '- `lib/x.js`（`' + file + '`）', '- `' + file + '`、`lib/x.js`']) {
+    assert.throws(() => sectionFiles(section(line), '甲'), line);
   }
 });
 

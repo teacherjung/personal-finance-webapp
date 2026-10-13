@@ -25,14 +25,89 @@ function prepare(t, existing = false, name = 'store.db') {
     d.close(); chmodSync(file, 0o644);
     oldBytes = readFileSync(file);
   }
-  const run = phase => {
+  const run = (phase, version = '') => {
     const r = spawnSync(process.execPath, ['test/helpers/store-permission-case.js'], {
-      cwd: ROOT, env: { ...gitEnv(), NOTEASY_HOSTED: '', STORE_FILE: file, STORE_PERMISSION_CASE: phase }, encoding: 'utf8', maxBuffer: 2e6,
+      cwd: ROOT, env: { ...gitEnv(), NOTEASY_HOSTED: '', STORE_FILE: file, STORE_PERMISSION_CASE: phase, STORE_PERMISSION_VERSION: version }, encoding: 'utf8', maxBuffer: 2e6,
     });
     assert.equal(r.status, 0, r.stdout + r.stderr);
     return JSON.parse(r.stdout);
   };
   return { root, parent, file, oldBytes, run };
+}
+
+for (const phase of ['readonly-file', 'readonly-directory']) {
+  test(`健康庫唯讀｜${phase} 原生故障兩次保留主檔與備份，不給刪檔指引`, POSIX_ONLY, t => {
+    const c = prepare(t, true), backup = c.file + '.bak';
+    writeFileSync(backup, 'synthetic readonly backup ' + phase);
+    chmodSync(c.file, phase === 'readonly-file' ? 0o444 : 0o600);
+    if (phase === 'readonly-directory') chmodSync(dirname(c.file), 0o500);
+    let r;
+    try { r = c.run(phase); }
+    finally { chmodSync(dirname(c.file), 0o700); chmodSync(c.file, 0o600); }
+    assert.equal(r.errors.length, 2);
+    for (const error of r.errors) {
+      assert.ok(error);
+      assert.equal(error.errcode & 0xff, 8, '原生 SQLite 必須真的回報唯讀錯誤');
+      assert.match(error.message, /請保留現有資料檔與備份/);
+      assert.doesNotMatch(error.message, /刪掉|改名|檔案可能損毀/);
+    }
+    assert.equal(r.firstSQL, 2, '每次呼叫都重開並重新遇到故障');
+    assert.equal(r.closed, 2, '每條失敗連線都由正式程式關閉');
+    assert.deepEqual(r.values, []);
+    assert.deepEqual(readFileSync(c.file), c.oldBytes);
+    assert.equal(readFileSync(backup, 'utf8'), 'synthetic readonly backup ' + phase);
+  });
+}
+
+for (const [phase, corrupt] of [
+  ['sql-11', true], ['sql-26', true], ['sql-267', true],
+  ['sql-10', false], ['sql-999', false], ['sql-no-code', false], ['sql-text-code', false],
+  ['quick-bad', true], ['quick-throws', false], ['quick-missing', false], ['quick-empty', false],
+]) {
+  test(`開庫錯誤分類｜${phase} ${corrupt ? '保留明確損毀還原指引' : '未證損毀只要求保留檔案'}`, t => {
+    const c = prepare(t, true), backup = c.file + '.bak';
+    writeFileSync(backup, 'synthetic classification backup ' + phase);
+    const r = c.run(phase);
+    assert.equal(r.hits, 2, '每次受測呼叫都命中指定故障');
+    assert.equal(r.errors.length, 2);
+    assert.equal(r.firstSQL, 2);
+    assert.equal(r.closed, 2);
+    assert.deepEqual(r.values, []);
+    for (const error of r.errors) {
+      assert.ok(error);
+      if (corrupt) {
+        assert.match(error.message, /刪掉 store.db、store.db-wal、store.db-shm/);
+        assert.match(error.message, /把 store.db.bak 改名為 store.db/);
+      } else {
+        assert.match(error.message, /請保留現有資料檔與備份/);
+        assert.doesNotMatch(error.message, /刪掉|改名|檔案可能損毀/);
+      }
+    }
+    assert.equal(readFileSync(backup, 'utf8'), 'synthetic classification backup ' + phase);
+  });
+}
+
+// 注入版本只驗正式櫃檯的入口決策；SQLite 版本相容性仍靠實際 CI runtime。
+for (const [version, supported] of [['22.23.0', false], ['23.0.0', false], ['24.0.0-nightly', false], ['unknown', false], ['22.23.1', true], ['24.0.0', true]]) {
+  test(`櫃檯版本入口｜${version} ${supported ? '接受並讀寫' : '在建立檔案與SQL前拒絕'}`, t => {
+    const c = prepare(t), r = c.run(supported ? 'version-allow' : 'version-reject', version);
+    if (supported) {
+      assert.deepEqual(r.errors, [null]);
+      assert.equal(r.firstSQL, 1);
+      assert.deepEqual(history(c.file), [{ id: 'main-permission-version-allow', month: '2026-10', amount: 479 }]);
+    } else {
+      assert.equal(r.errors.length, 2);
+      for (const error of r.errors) {
+        assert.ok(error);
+        assert.ok(error.message.includes(version));
+        assert.match(error.message, /不支援|支援範圍/);
+      }
+      assert.equal(existsSync(c.parent), false, '版本不合不可先建目錄或主檔');
+      assert.deepEqual(r.events, []);
+      assert.equal(r.firstSQL, 0);
+      assert.deepEqual(r.values, []);
+    }
+  });
 }
 function history(file) {
   const d = new DatabaseSync(file, { readOnly: true });

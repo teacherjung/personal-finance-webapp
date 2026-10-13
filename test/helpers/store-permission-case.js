@@ -8,13 +8,16 @@ async function runCase() {
   const phase = process.env.STORE_PERMISSION_CASE;
   const file = process.env.STORE_FILE;
   if (!file) throw new Error('缺少隔離主檔路徑');
+  if (process.env.STORE_PERMISSION_VERSION) Object.defineProperty(process.versions, 'node', { value: process.env.STORE_PERMISSION_VERSION });
   process.umask(0);
   const native = { open: fs.openSync, close: fs.closeSync, exists: fs.existsSync, mkdir: fs.mkdirSync };
   const exec = DatabaseSync.prototype.exec;
+  const prepare = DatabaseSync.prototype.prepare;
+  const close = DatabaseSync.prototype.close;
   const log = console.log;
   const mainDescriptors = new Set();
-  const report = { hits: 0, events: [], beforeSQL: [], errors: [], values: [], alive: [], afterClose: [], firstSQL: 0 };
-  let connection;
+  const report = { hits: 0, events: [], beforeSQL: [], errors: [], values: [], alive: [], afterClose: [], firstSQL: 0, closed: 0 };
+  const connections = new Set();
   let attempt = 0;
   const modes = () => ['', '-wal', '-shm'].map(suffix => {
     const name = file + suffix;
@@ -74,18 +77,41 @@ async function runCase() {
     return present;
   };
   DatabaseSync.prototype.exec = function (sql) {
-    if (!connection) {
-      connection = this;
+    if (!connections.has(this)) {
+      connections.add(this);
       report.firstSQL++;
       report.beforeSQL.push({ modes: modes(), size: fs.statSync(file).size, reservationEvents: report.events.length });
     }
+    if (phase.startsWith('sql-')) {
+      report.hits++;
+      const errcode = phase === 'sql-no-code' ? undefined : phase === 'sql-text-code' ? '11' : Number(phase.slice(4));
+      throw Object.assign(new Error('synthetic quick_check exception'), { errcode });
+    }
     return exec.call(this, sql);
+  };
+  DatabaseSync.prototype.prepare = function (sql) {
+    if (sql === 'PRAGMA quick_check' && phase.startsWith('quick-')) {
+      return { get() {
+        report.hits++;
+        if (phase === 'quick-throws') throw new Error('quick_check: synthetic exception, not a result');
+        if (phase === 'quick-missing') return undefined;
+        if (phase === 'quick-empty') return {};
+        return { quick_check: 'synthetic broken page' };
+      } };
+    }
+    return prepare.call(this, sql);
+  };
+  DatabaseSync.prototype.close = function () {
+    const result = close.call(this);
+    if (connections.has(this)) report.closed++;
+    return result;
   };
   console.log = () => {};
   syncBuiltinESMExports();
   try {
     const repo = await import('../../lib/repo.js');
-    const failing = ['mkdir', 'create', 'close', 'race', 'new-removed', 'existing-removed', 'cantopen'].includes(phase);
+    const failing = ['mkdir', 'create', 'close', 'race', 'new-removed', 'existing-removed', 'cantopen', 'readonly-file', 'readonly-directory', 'version-reject'].includes(phase)
+      || phase.startsWith('sql-') || phase.startsWith('quick-');
     for (attempt = 0; attempt < (failing ? 2 : 1); attempt++) {
       // 持續故障每輪重建機會；不借前次的主檔或連線當本輪前置。
       if (attempt && ['close', 'race'].includes(phase)) fs.rmSync(file, { force: true });
@@ -102,9 +128,11 @@ async function runCase() {
   } finally {
     fs.openSync = native.open; fs.closeSync = native.close;
     fs.existsSync = native.exists; fs.mkdirSync = native.mkdir;
-    DatabaseSync.prototype.exec = exec; console.log = log;
+    DatabaseSync.prototype.exec = exec; DatabaseSync.prototype.prepare = prepare; DatabaseSync.prototype.close = close; console.log = log;
     syncBuiltinESMExports();
-    if (connection) connection.close();
+    for (const connection of connections) {
+      try { close.call(connection); } catch { /* 受測開庫故障可能已關閉；這裡只清理探針持有的連線。 */ }
+    }
     for (const fd of mainDescriptors) native.close(fd);
   }
   report.afterClose = modes();
