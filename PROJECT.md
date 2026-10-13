@@ -67,6 +67,11 @@
 - （暫存回報解析，#683 r2 發現）子行程 stdout 空白時先在 JSON.parse 報 SyntaxError，沒有到缺摘要斷言；仍擋下、不構成假綠／`test/scan-fixture-cleanup.test.js`／下次修改摘要解析時，先濾空行再由缺摘要斷言說明原因 — **未分配**
 - （暫存整組跳過，#683 r3 發現 2）整個 describe 帶 skip 時，回報器把 suite 的跳過也收進明細，與官方個別題數不合而往安全方向紅；[原探針及處置](https://github.com/teacherjung/personal-finance-webapp/pull/683#issuecomment-6132842497)／`test/helpers/temp-root-lifecycle-reporter.js`、`test/scan-fixture-cleanup.test.js`／FILES 任一支開始使用 describe 時，帶事件 details.type 並區分 suite 明細，補真行為與有效突變 — **未分配**
 
+- （複審模型說明，#687掃描第2項）登記第二模型供角色依F11選用，產生器只代入strongest，不是CLI自動fallback功能／複審降檔流程或模型表操作說明／下次修改該說明時明示界線；本人已確認Opus額度耗盡依既有程序改用Fable並回報 — **未分配**
+- （模型驗證日期，#687掃描第4項）Claude reviewers.verified空值留待下一次登記變更時填實際CLI日期與證據，不影響本次已驗的選模／settings.json及模型登記／下次變更複審模型登記時；原始發現與處置見[#687](https://github.com/teacherjung/personal-finance-webapp/pull/687) — **未分配**
+
+- （CI版本靜態覆蓋，#688 r1第2項及掃描）前瞻Node考題只驗主版下限，沒有排除不支援的23／`test/deploy-config.test.js`／雲端復工或調整CI前瞻版本時，改用既有支援判斷並補有效反例；現行CI的22.23.1與26均在支援範圍，本支不修改部署工作 — **未分配**
+
 ### 交接工程待辦（文件精簡續作時歸位）
 
 來源：2026-10-08 與 10-10 的倉庫外交接清單；本輪只歸位，未重新重現各項缺陷、未批准擴大施工。各條保留原號、值得做的時機、位置、代價與來源記號，開工前再查當時主幹；手機與雲端項目仍依 AGENTS.md 常設指示暫停。原第 20 項的檢查名稱已於本輪唯讀核對後補正；原第 21 項的決定已歸入下節。
@@ -80,7 +85,7 @@
 - （交接原第 24 項）訂閱清單每一列右邊的圖示鈕（例如「標記考慮停用」）用 Enter 按下去後清單重畫、焦點掉回頁面本身，鍵盤使用者要從頭 Tab（10/10 Claude 代驗 #648 時看到）｜值得做：下次動訂閱清單或整理全站焦點時｜放：訂閱清單重畫後的焦點歸還｜代價：小修加一題（Fable 10/10 代裁加的） — **未分配**
 - （交接原第 7 項）UI 驗收矩陣兩句要核：鍵盤那列補「自動化碰不到原生選單、不宣稱鍵盤已驗」；UI7 那行「仍缺完整鍵盤流程」在 #648 之後可能過時｜值得做：下次本來就要動矩陣時｜放：docs/ui-acceptance-matrix.md｜代價：兩句（S081、S200） — **未分配**
 - （交接原第 8 項）匯入時把過期的指紋寫回去、該做的整理被跳過（#649 r2 重現過的真缺陷，`lib/services/statement-import.js` 的 `normalizeBranches(false)` 之後寫 `storeRulesHash` 那段）｜值得做：下次動匯入功能時另案修｜放：匯入服務＋一題考題｜代價：小改加一題（S090） — **未分配**
-- （交接原第 9 項）data/ 資料夾的檔權限收緊要有機制維持：9/23 收成只有本人可讀，10/07 量到 26 檔只剩 15 檔，新產生的備份回到預設｜值得做：現在｜放：四條既有快照路徑在寫入前建立 0600 暫存檔、新每日備份目錄 0700，行為契約與考題見資料與儲存契約「本機快照的檔案權限」｜代價：一支備份權限 PR（S106、S187、S112） — **新快照機制＝[#681](https://github.com/teacherjung/personal-finance-webapp/pull/681)**。範圍由 William 本次授權的 GPT-6.1 Sol 代裁（[留痕](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6125172022)，不是 William 本人原話）。**仍未結清**：現存 DB／WAL／SHM、舊備份與既有目錄權限，以及首次建立 data/ 與主資料庫的權限；9/23「公開版本紀錄掃過、鑰匙沒進過公開倉庫」的原始證據。不得將新快照機制通過當成後兩者已完成。
+- （交接原第 9 項）data/ 資料夾的檔權限收緊要有機制維持：9/23 收成只有本人可讀，10/07 量到 26 檔只剩 15 檔，新產生的備份回到預設｜值得做：現在｜放：四條既有快照路徑在寫入前建立 0600 暫存檔、新每日備份目錄 0700，行為契約與考題見資料與儲存契約「本機快照的檔案權限」｜代價：一支備份權限 PR（S106、S187、S112） — **新快照機制＝[#681](https://github.com/teacherjung/personal-finance-webapp/pull/681)**。範圍由 William 本次授權的 GPT-6.1 Sol 代裁（[留痕](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6125172022)，不是 William 本人原話）。首次建立資料目錄及主檔的機制接由 [#688](https://github.com/teacherjung/personal-finance-webapp/pull/688) 處理，範圍與驗證見[施工計畫](docs/store-private-creation-plan.md)。現存檔案的一次性元資料操作另有倉庫外私有前後清單與逐項留痕；本檔不替真實檔案狀態背書。**仍未核實**：9/23「公開版本紀錄掃過、鑰匙沒進過公開倉庫」的原始證據；新機制與現存操作分開核，歷史證據仍未核實。
 - （交接原第 10 項）Codex 開工作樹的工具（mcp__codex_app__…）被錢邊界攔截器擋下、沒登記｜值得做：再被擋一次時，登記前先問 William｜放：錢邊界連接器名單＋考題｜代價：改名單加考題（S157） — **未分配**
 - （交接原第 11 項）雲端版寫入撞到版本時前端靜默吞掉，使用者不知道沒存進去（9/29 稽核：資料本身安全、無遺失）｜值得做：回頭做線上版時（10/07 常設指示：雲端版先暫停）｜放：前端寫入的錯誤處理｜代價：盤點 33 個寫入點（S161） — **未分配**
 - （交接原第 25 項）雲端版考題「資料層不得偷偷用 service_role」只抓得到字面寫法，9/26 協作-工讀生稽核的「已證實撐不住」表記為「service_role 的等價寫法」｜值得做：雲端版復工時（10/07 常設指示「目前雲端版都先暫停作業」）｜放：test/hosted-store-pg.test.js 第 260 行那題｜代價：一題考題（Fable 10/10 代裁加的） — **未分配**
@@ -98,6 +103,8 @@
 - （交接原第 23 項）Claude 設定檔裡 8 個已刪腳本名還沒清，拿掉要連考題斷言一起改｜值得做：下次動 .claude/settings.json 時，先問 William｜放：.claude/settings.json 與對應考題｜代價：小（S023；#646 說明「沒放進這一支的」那段） — **未分配**
 
 ## 重要決定（已拍板，勿重議）
+
+- **理財Claude複審模型（2026-10-13）**：William原話（Codex轉述）「複審幫我改用Opus模型」；[#687](https://github.com/teacherjung/personal-finance-webapp/pull/687) 已將本專案Claude首選改為Opus5.5、推理max且不開自動模式，原Fable留第二模型。本人另答「只改理財專案（沿用目前範圍）」及「照既有程序改用 Fable，並回報」（[範圍原話](https://github.com/teacherjung/personal-finance-webapp/pull/687#issuecomment-6138573528)、[額度後備原話](https://github.com/teacherjung/personal-finance-webapp/pull/687#issuecomment-6138574264)）；操作化是依既有F11，在Opus額度耗盡時選Fable並回報，並未新增CLI自動切換程式。
 
 - **雨天、陰天森林素材保留（2026-09-28）**：William 原話（Claude 轉述）：「2. 雨天、陰天兩張圖：留著。（存在哪到時候跟我說，我想要也順便整理歷史素材）」。素材位置為 `prototype/forest-ui-lab/assets/`；[裁示留痕](https://github.com/teacherjung/personal-finance-webapp/pull/646#issuecomment-5874997391)。
 - **研究頁裁決文件的既有段落處置（2026-09-29）**：對 `docs/stock-research-page-rulings.md` 第三節既有持股資訊段落，William 原話（Claude 轉述）：「d）不處理」；[裁示留痕](https://github.com/teacherjung/personal-finance-webapp/pull/646#issuecomment-5874997632)。這是該段既有內容的個案處置，不能據此放寬 AGENTS.md 的敏感資料規則。

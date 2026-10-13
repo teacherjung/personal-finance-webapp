@@ -375,16 +375,19 @@
 - `lib/store.js`
 - `lib/types.js`
 - `public/modules/backup-alert.js`
+- `scripts/check-node-version.js`
 - `server.js`
 - `test-doubles/fake-supabase.js`
 - `test/backup-alert.test.js`
 - `test/backup-file-permissions.test.js`
 - `test/daily-backup.test.js`
 - `test/helpers/backup-permission-case.js`
+- `test/helpers/store-permission-case.js`
 - `test/hosted-import-overwrite.test.js`
 - `test/hosted-store-pg.test.js`
 - `test/repo-async.test.js`
 - `test/server.test.js`
+- `test/store-file-permissions.test.js`
 - `test/vault-and-backup-integrity.test.js`（寫入櫃檯 fail-loud／備份的原子替換與殘骸清理／**「不得再長出操作前自動備份」的裁決題**／損毀 fail-closed）
 
 ### 雲端與安全
