@@ -18,7 +18,7 @@ export function parseNodeVersion(value) {
 /** @param {string} value */
 export function isSupportedNodeVersion(value) {
   // parse 可讀預發行標記；engines 的正式版本範圍不因此納入預發行版。
-  if (String(value).includes('-')) return false;
+  if (String(value).split('+')[0].includes('-')) return false;
   const current = parseNodeVersion(value);
   const minimum = parseNodeVersion(MIN_NODE_VERSION);
   const next = parseNodeVersion(NEXT_NODE_VERSION);

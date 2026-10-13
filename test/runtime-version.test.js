@@ -15,6 +15,7 @@ const CASES = [
   ['22.23.1', true], ['22.99.0', true], ['23.0.0', false], ['23.99.99', false],
   ['24.0.0', true], ['26.0.0', true],
   ['22.23.1-nightly', false], ['24.0.0-nightly', false], ['22.23.1+build', true],
+  ['22.23.1+build-with-hyphen', true],
 ];
 
 test('Node 支援 22.23.1 起的 22 系列及 24 起，排除 23 與預發行版', () => {
