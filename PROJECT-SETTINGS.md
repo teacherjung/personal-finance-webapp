@@ -207,7 +207,7 @@ PR說明的「實作者」「複審者」兩欄、結論標頭與自評的角色
 
 | 複審者 | 最強模型 | 次強模型（額度用完才用） | 最高推理 | 不開的自動模式 |
 |---|---|---|---|---|
-| Claude | claude\-fable\-5\-1 | claude\-opus\-5\-5 | max | Ultracode |
+| Claude | claude\-opus\-5\-5 | claude\-fable\-5\-1 | max | Ultracode |
 | Codex | gpt\-6\-astra | gpt\-6\-sol | max | ultra（這一檔會自動派助手） |
 
 | 複審者 | 怎麼起（含放行哪些考題指令） | 機器擋得住的 | 只靠提示的、已知缺口 | 驗過的日期 |
