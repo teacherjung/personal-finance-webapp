@@ -1,5 +1,5 @@
 // @ts-check
-// 複審結論聯集閘：本專案的登記與文件守表題（2026-09-18 搬家第 7 步起只剩這四題）。
+// 複審結論聯集閘：本專案的登記與文件守表題（2026-09-18 搬家第 7 步起改守專案側）。
 //
 // 起因是一場**真實事故**：#383 上出現兩份都自稱「Claude 複審」、結論相反的留言（GitHub 上兩則都是 `teacherjung`）。
 // 危險的不是有兩份，是**看起來一樣有效而結論相反**，於是「最後一則說通過」等於放行。
@@ -11,9 +11,12 @@
 // ⚠️ 誠實劃界：文件題只證明「規則寫在該寫的地方、沒有被靜靜刪掉」，證明不了任何人真的照著打字（那要靠審查）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, copyFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { gitEnv } from '../lib/git-env.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -31,11 +34,85 @@ test('合併程序真的把聯集閘登記成一道（settings.json 的 gates；
   assert.equal(gate.state, '已啟用', '聯集閘登記成「' + gate.state + '」——執行器只跑已啟用的閘，正式審查會被靜靜漏跑');
   assert.ok(existsSync(join(ROOT, 'tools/gates/check-review-verdicts.js')), '登記的閘檔不存在＝登記了也跑不到');
   // 登記的規矩條號要指回結論標頭那兩條（RULES F4、F5）——閘與規矩對不上，讀登記表的人會找錯條
-  assert.match(String(gate.rules || ''), /F4/, '聯集閘的登記沒有指回 RULES F4（標頭形狀）');
-  assert.match(String(gate.rules || ''), /F5/, '聯集閘的登記沒有指回 RULES F5（只有同一位能解除、放行只認指定那一位）');
+  assert.match(String(gate.rules || ''), /(?:^|[^A-Za-z0-9_])F4(?![A-Za-z0-9_])/, '聯集閘的登記沒有指回 RULES F4（標頭形狀）');
+  assert.match(String(gate.rules || ''), /(?:^|[^A-Za-z0-9_])F5(?![A-Za-z0-9_])/, '聯集閘的登記沒有指回 RULES F5（只有同一位能解除、放行只認指定那一位）');
   // 合併指令本身要登記著（沒有 mergeCommand 的話執行器停在閘後、不會合併——那時「閘在合併前」是空話）
   assert.ok(settings.mergeCommand && settings.mergeCommand.command, 'settings.json 沒有登記 mergeCommand');
 });
+
+// 必須實改登記、重跑原題，才能抓到「純函式對、正式斷言仍用子字串」的接線缺口。
+// 複製本檔後只選原登記題，避免驗證題再呼叫自己；TAP 題名、題數與原因須同時對上。
+const registrationCases = [
+  ['現值', 'A2、F4、F5', null],
+  ['不鎖 A2', 'F4、F5', null],
+  ['倒序及其他條號', 'F5、J1、F4', null],
+  ['空白', ' F4 F5 ', null],
+  ['逗號', 'F4,F5', null],
+  ['中文標點', 'F4；F5。', null],
+  ['括號', '(F4)[F5]', null],
+  ['換行', 'F4\nF5', null],
+  ['近似條號與合法引用並存', 'AF4 F40 _F4 F5x F50 F5_；F4、F5', null],
+  ['中文鄰字', '前F4後、前F5後', null],
+  ['非 ASCII 鄰字', 'éF4K、ſF5é', null],
+  ['F4 缺失', 'A2、F5', 'F4'],
+  ['F4 數字延伸', 'F40、F5', 'F4'],
+  ['F4 字母前綴', 'AF4、F5', 'F4'],
+  ['F4 字母後綴', 'F4x、F5', 'F4'],
+  ['F4 底線前綴', '_F4、F5', 'F4'],
+  ['F4 底線後綴', 'F4_、F5', 'F4'],
+  ['F4 小寫', 'f4、F5', 'F4'],
+  ['F5 缺失', 'A2、F4', 'F5'],
+  ['F5 數字延伸', 'F4、F50', 'F5'],
+  ['F5 字母前綴', 'F4、AF5', 'F5'],
+  ['F5 字母後綴', 'F4、F5x', 'F5'],
+  ['F5 底線前綴', 'F4、_F5', 'F5'],
+  ['F5 底線後綴', 'F4、F5_', 'F5'],
+  ['F5 小寫', 'F4、f5', 'F5'],
+];
+
+for (const [name, rules, missing] of registrationCases) {
+  test('聯集閘完整引用｜實際登記｜' + name, () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'review-reference-'));
+    try {
+      for (const file of ['package.json', 'settings.json', 'test/review-verdicts.test.js',
+        'lib/git-env.js', 'tools/gates/check-review-verdicts.js']) {
+        const destination = join(fixture, file);
+        mkdirSync(dirname(destination), { recursive: true });
+        copyFileSync(join(ROOT, file), destination);
+      }
+      const settings = JSON.parse(readFileSync(join(fixture, 'settings.json'), 'utf8'));
+      const gate = settings.gates.find((g) => Array.isArray(g.args)
+        && g.args.includes('tools/gates/check-review-verdicts.js'));
+      assert.ok(gate, '夾具必須沿用實際聯集閘登記');
+      gate.rules = rules;
+      writeFileSync(join(fixture, 'settings.json'), JSON.stringify(settings));
+      const env = gitEnv();
+      // 沿用父考卷的 child-v8 標記會被 Node 當成遞迴呼叫而省略原題，退出碼卻仍為零。
+      delete env.NODE_TEST_CONTEXT;
+      const result = spawnSync(process.execPath, ['--test', '--test-reporter=tap',
+        '--test-name-pattern=^合併程序真的把聯集閘登記成一道', 'test/review-verdicts.test.js'],
+      { cwd: fixture, env, encoding: 'utf8', timeout: 10000, maxBuffer: 2e6 });
+      assert.equal(result.signal, null, result.stderr);
+      assert.match(result.stdout, /^(?:ok|not ok) \d+ - 合併程序真的把聯集閘登記成一道/mu,
+        '原登記題的結果必須出現');
+      assert.match(result.stdout, /^# tests 1$/mu, '必須只執行原登記題');
+      assert.match(result.stdout, /^# skipped 0$/mu, '不得用跳過冒充驗證');
+      if (missing) {
+        assert.equal(result.status, 1, missing + ' 應拒絕卻通過');
+        assert.match(result.stdout, new RegExp('登記沒有指回 RULES ' + missing, 'u'),
+          '必須紅在指定條號，不接受別的斷言或工具失敗');
+        assert.match(result.stdout, /^# fail 1$/mu);
+      } else {
+        assert.equal(result.status, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /^# pass 1$/mu);
+        assert.match(result.stdout, /^# fail 0$/mu);
+      }
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+    assert.equal(existsSync(fixture), false, '自身夾具必須收掉');
+  });
+}
 
 test('套件範本與規矩本文要寫下「只有同一位能解除」與自報來歷的格式（切換日起改綁 templates/verdict-header.md 與 RULES F4／F5；#54 起解除規則搬到 F5）', () => {
   // ⚠️ **剝掉 HTML 註解再比對**（Codex #385 r1 Medium⑤）：
