@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { EXPECTED_GROK_SHA256, EXPECTED_GROK_VERSION } from '../scripts/grok-scan.js';
-import { REQUIRED_TOKENS, SAFE_DATE, SAFE_FOR_SOURCE, bump, countBytes, createExclusiveTemp, jsSyntaxErrors, readPins } from '../scripts/grok-bump.js';
+import { REQUIRED_TOKENS, SAFE_DATE, SAFE_FOR_SOURCE, assertLine, bump, countBytes, createExclusiveTemp, jsSyntaxErrors, readPins } from '../scripts/grok-bump.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** @type {string[]} */ const roots = [];
@@ -598,37 +598,105 @@ test('失敗報告｜暫存檔清不掉時，不可以還說「也沒有別的�
 // ⚠️ 真正的寫入仍然由原生的 `writeSync` 寫進本次排他取得的 fd——沒有換路徑、沒有並行、沒有動系統設定。
 
 for (const [名稱, 哪個檔] of /** @type {[string, string[]][]} */ ([['常數檔', SCAN], ['考題 fixture', PRE]])) {
-  test(`短寫入｜${名稱}只寫了前段（不拋錯） → 尾端不相干的內容不准被截掉`, async () => {
+  test(`短寫入｜${名稱}按目標 fd 注入，兩檔完整位元組都保存`, async () => {
     const oldB = body(), newB = body({ filler: 'NEWER' });
     const repo = fakeRepo({ version: '1.2.3', sha256: sha(oldB) });
-    // 在四處**之後**放一段不相干的東西：被截尾就看得出來（而且截掉之後語法還是合法的）
-    const 尾巴 = `\n// PRESERVE_TAIL\nexport const TAIL_MARKER = 'keep-me';\n`;
+    // 只截長註解才保留語法與 pin 的可讀性，完整內容斷言才是這題的判斷點。
+    const 尾巴 = `\nexport const TAIL_MARKER = 'keep-me';\n// PRESERVE_TAIL ${'synthetic-tail-'.repeat(12)}\n`;
     for (const rel of [SCAN, PRE]) writeFileSync(join(repo, ...rel), readFileSync(join(repo, ...rel), 'utf8') + 尾巴);
-    // ESM 的 namespace 是唯讀的，所以拿 CJS 那一份來換（`syncBuiltinESMExports()` 會把它同步給具名匯出）
+    const wantScan = Buffer.from(`// 前面還有別的\nexport const EXPECTED_GROK_VERSION = '1.3.0';\n/** 註解 */\nexport const EXPECTED_GROK_SHA256 = '${sha(newB)}';\nexport {};\n${尾巴}`);
+    const wantPre = Buffer.from(`  assert.equal(EXPECTED_GROK_VERSION, '1.3.0', 'grok CLI 1.3.0（2026-01-02 重驗轉送器目的地後升的）');\n  assert.equal(EXPECTED_GROK_SHA256, '${sha(newB)}', 'grok-1.3.0-macos-aarch64 的 sha256');\n${尾巴}`);
     const fsCjs = createRequire(import.meta.url)('node:fs');
-    const 原 = fsCjs.writeSync;
-    /** @type {number|null} */ let 砍到 = null;
+    const 原 = { open: fsCjs.openSync, close: fsCjs.closeSync, write: fsCjs.writeSync };
+    /** @type {Map<number, string>} */ const targetsByFd = new Map();
+    /** @type {string[]} */ const injected = [];
+    const targets = [join(repo, ...SCAN), join(repo, ...PRE)];
+    const wantedTarget = join(repo, ...哪個檔);
+    const suffix = '.grok-bump-tmp';
+    fsCjs.openSync = (/** @type {string} */ path, /** @type {string|number} */ flags, /** @type {unknown[]} */ ...rest) => {
+      const fd = 原.open(path, flags, ...rest);
+      if (flags === 'wx') for (const target of targets) {
+        if (dirname(path) === dirname(target) && path.startsWith(target + '.') && path.endsWith(suffix)
+          && /^[0-9a-f]{12}$/.test(path.slice(target.length + 1, -suffix.length))) targetsByFd.set(fd, target);
+      }
+      return fd;
+    };
+    fsCjs.closeSync = (/** @type {number} */ fd) => {
+      try { return 原.close(fd); } finally { targetsByFd.delete(fd); }
+    };
     fsCjs.writeSync = (/** @type {number} */ fd, /** @type {Buffer|string} */ buf, /** @type {unknown[]} */ ...rest) => {
-      const b = Buffer.isBuffer(buf) ? buf : Buffer.from(String(buf), 'utf8');
-      if (砍到 === null && b.length > 80) { 砍到 = b.length - 40; return 原(fd, b.subarray(0, 砍到)); }
-      return 原(fd, buf, ...rest);
+      const actualTarget = targetsByFd.get(fd);
+      if (actualTarget === wantedTarget && injected.length === 0) {
+        assert.ok(Buffer.isBuffer(buf), '指定首次寫入必須是正式路徑的 Buffer');
+        assert.equal(rest[0] ?? 0, 0, '注入從完整 Buffer 的起點開始');
+        assert.equal(rest[1] ?? buf.length, buf.length, '注入機會必須涵蓋完整 Buffer');
+        injected.push(actualTarget);
+        const n = 原.write(fd, buf.subarray(0, buf.length - 40));
+        assert.equal(n, buf.length - 40, '真正底層只寫指定前段');
+        return n;
+      }
+      return 原.write(fd, buf, ...rest);
     };
     syncBuiltinESMExports();
     try {
       const r = await bump({ grokHome: fakeGrokHome({ version: '1.3.0', body: newB }), repo, write: true, today: '2026-01-02' });
       assert.equal(r.code, 0, r.lines.join('\n'));
-    } finally { fsCjs.writeSync = 原; syncBuiltinESMExports(); }
-    const 寫完的 = readFileSync(join(repo, ...哪個檔), 'utf8');
-    assert.match(寫完的, /PRESERVE_TAIL/, `${名稱}的尾巴被截掉了——短寫入沒有被補完`);
-    assert.match(寫完的, /TAIL_MARKER = 'keep-me'/);
-    assert.match(readFileSync(join(repo, ...SCAN), 'utf8'), /EXPECTED_GROK_VERSION = '1\.3\.0'/, '該改的還是要改到');
-    // 兩個檔都要完整：拿獨立組出來的預期內容比整份
-    for (const rel of [SCAN, PRE]) {
-      const t = readFileSync(join(repo, ...rel), 'utf8');
-      assert.ok(t.endsWith(尾巴), `${rel.join('/')} 的結尾不完整`);
+    } finally {
+      fsCjs.openSync = 原.open; fsCjs.closeSync = 原.close; fsCjs.writeSync = 原.write;
+      syncBuiltinESMExports();
     }
+    assert.deepEqual(injected, [wantedTarget], '每題只在指定檔真正注入一次');
+    assert.deepEqual(readFileSync(join(repo, ...SCAN)), wantScan, '常數檔完整預期內容');
+    assert.deepEqual(readFileSync(join(repo, ...PRE)), wantPre, '考題 fixture 完整預期內容');
   });
 }
+
+for (const [pin, rel] of /** @type {[string, string[]][]} */ ([
+  ['version', SCAN], ['sha256', SCAN], ['testVersion', PRE], ['testSha', PRE],
+])) {
+  test(`寫後 pin 核對｜真 rename 後 ${pin} 留舊合法值，必由該值比較拒絕`, async () => {
+    const oldB = body(), newB = body({ filler: 'NEWER' });
+    const oldValues = { version: '1.2.3', sha256: sha(oldB), testVersion: '1.2.3', testSha: sha(oldB) };
+    const newValues = { version: '1.3.0', sha256: sha(newB), testVersion: '1.3.0', testSha: sha(newB) };
+    const repo = fakeRepo({ version: oldValues.version, sha256: oldValues.sha256 });
+    const target = join(repo, ...rel);
+    const name = pin === 'version' || pin === 'testVersion' ? 'EXPECTED_GROK_VERSION' : 'EXPECTED_GROK_SHA256';
+    const needle = pin.startsWith('test') ? `assert.equal(${name}, '${newValues[pin]}',` : `export const ${name} = '${newValues[pin]}';`;
+    const replacement = needle.replace(`'${newValues[pin]}'`, `'${oldValues[pin]}'`);
+    const fsCjs = createRequire(import.meta.url)('node:fs');
+    const originalRename = fsCjs.renameSync;
+    let hits = 0;
+    fsCjs.renameSync = (/** @type {string} */ from, /** @type {string} */ to) => {
+      const result = originalRename(from, to);
+      if (to === target) {
+        hits++;
+        const source = readFileSync(to, 'utf8');
+        assert.equal(source.split(needle).length - 1, 1, '注入必須找到真 rename 成功後的新值');
+        writeFileSync(to, source.replace(needle, replacement));
+      }
+      return result;
+    };
+    syncBuiltinESMExports();
+    let r;
+    try { r = await bump({ grokHome: fakeGrokHome({ version: '1.3.0', body: newB }), repo, write: true, today: '2026-01-02' }); }
+    finally { fsCjs.renameSync = originalRename; syncBuiltinESMExports(); }
+    assert.equal(hits, 1, '指定目標確實成功 rename 並注入一次');
+    for (const file of [SCAN, PRE]) assert.deepEqual(jsSyntaxErrors(file.join('/'), readFileSync(join(repo, ...file), 'utf8')), [], '注入後語法正常');
+    const after = readPins(repo);
+    for (const key of Object.keys(newValues)) assert.equal(after[key].value, key === pin ? oldValues[key] : newValues[key], '只有本題 pin 留舊值，其餘新值仍可定位');
+    assert.equal(r.code, 2, '寫後核對必須拒絕指定舊值');
+    assert.ok(r.lines.join('\n').includes(`寫完再讀回來，${pin} 是「${oldValues[pin]}」不是「${newValues[pin]}」`), '失敗必須來自指定 pin 的值比較');
+  });
+}
+
+for (const [part, bad] of [['value', `a'b`], ['value', 'a\\b'], ['msg', `a'b`], ['msg', 'a\\b']]) {
+  test(`assertLine 公開守衛｜${part} 的 ${bad.includes("'") ? '引號' : '反斜線'} 拒收`, () => {
+    assert.throws(() => assertLine('  ', 'VALUE', part === 'value' ? bad : 'safe', part === 'msg' ? bad : 'message'), /含有引號或反斜線/);
+  });
+}
+test('assertLine 公開輸出｜合法值與說明的完整句', () => {
+  assert.equal(assertLine('  ', 'VALUE', 'safe', 'message'), `  assert.equal(VALUE, 'safe', 'message');`);
+});
 
 // ——— r6 #1：暫存檔用固定檔名 → 既有的連結會把寫入導到別的檔 ———
 
