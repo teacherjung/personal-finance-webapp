@@ -4,7 +4,7 @@
   "description": "個人理財網頁 — 本機優先、隱私安全的財務掌握工具",
   "type": "module",
   "engines": {
-    "node": ">=22.13.0"
+    "node": "^22.23.1 || >=24.0.0"
   },
   "scripts": {
     "start": "node server.js",
