@@ -11,6 +11,8 @@ let rows = [];
 let calls = [];
 let readQueue = [];
 let failReads = false;
+let failWrites = false;
+let legacyText = false;
 let holdWrite = null;
 let holdBeforeWrite = null;
 let serial = 0;
@@ -29,7 +31,7 @@ async function select(id, value) {
   await settle();
 }
 async function click(selector) { assert.ok(el(selector), selector); el(selector).click(); await settle(); }
-async function navigate(hash) { window.history.replaceState(null, '', hash); await app.router(); await settle(); }
+async function navigate(hash) { window.location.hash = hash; await settle(); }
 function fixture() {
   return [
     ['a', '2025-03-04', 'expense', 21000], ['b', '2025-03-11', 'expense', 1000],
@@ -48,6 +50,8 @@ async function boot() {
     if (path.startsWith('/api/transactions') && method !== 'GET') {
       const body = JSON.parse(init.body);
       if (holdBeforeWrite) await holdBeforeWrite.promise;
+      if (failWrites) return json({ error: '本題寫入失敗' }, 503);
+      if (legacyText) { delete body.summary; delete body.remark; }
       let stored;
       if (method === 'PUT') { stored = { ...rows.find(x => x.id === path.split('/').at(-1)), ...body }; rows = rows.map(x => x.id === stored.id ? stored : x); }
       else { stored = { id: `${serial}-new`, ledger: 'cashflow', ...body }; rows.push(stored); }
@@ -69,7 +73,7 @@ async function boot() {
 }
 beforeEach(async () => {
   windowErrors = [];
-  serial++; rows = fixture(); calls = []; readQueue = []; failReads = false; holdWrite = null; holdBeforeWrite = null;
+  serial++; rows = fixture(); calls = []; readQueue = []; failReads = false; failWrites = false; legacyText = false; holdWrite = null; holdBeforeWrite = null;
   await boot();
   document.getElementById('modal-root').replaceChildren();
   await navigate('#cards'); await navigate('#cashflow');
@@ -232,29 +236,31 @@ for (const method of ['PUT', 'POST']) for (const comeBack of [false, true]) test
   finally { wait.resolve(); holdBeforeWrite = null; await settle(); }
 });
 
-for (const method of ['PUT', 'POST']) test(`${method} 表單開著離頁返回後才儲存：立即提示，唯讀重試後可用新資料再編輯`, async () => {
+for (const method of ['PUT', 'POST']) test(`${method} 表單開著離頁返回：失效提示保留輸入，不能送出，關閉重讀重開可用`, async () => {
   if (method === 'PUT') await click(`tbody [data-edit="${serial}-a"]`);
-  else { await click('#addCf'); document.getElementById('f_date').value = '2025-03-18'; document.getElementById('f_summary').value = '本題離頁新增'; }
-  const form = el('#modal-root form');
-  await navigate('#cards'); await navigate('#cashflow');
-  const before = workspaceWithoutNotice(), count = reads();
+  else { await click('#addCf'); document.getElementById('f_date').value = '2025-03-18'; }
   document.getElementById('f_amount').value = '35000';
+  document.getElementById('f_summary').value = '本題未送出的輸入';
+  const form = el('#modal-root form');
+  await navigate('#cards');
+  assert.match(text('#cashflowFormInvalid'), /換頁.*失效/);
+  assert.match(text('#cashflowFormInvalid'), /關閉.*重新讀取.*重新開啟/);
+  assert.equal(el('#modal-root [data-cancel]').disabled, false);
+  await navigate('#cashflow');
+  const before = workspaceWithoutNotice(), count = reads();
   form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(writes().length, 0); assert.equal(rows.find(x => x.id === `${serial}-a`).amount, 21000);
+  assert.equal(workspaceWithoutNotice(), before); assert.equal(reads(), count);
+  assert.equal(el('#modal-root form'), form);
+  assert.equal(document.getElementById('f_summary').value, '本題未送出的輸入');
+  assert.equal(document.getElementById('f_amount').value, '35000');
+  assert.equal(el('#modal-root button[type="submit"]').disabled, true);
+  await click('#modal-root [data-cancel]');
+  await renderCashflow();
+  await submit(method);
   const id = `${serial}-${method === 'PUT' ? 'a' : 'new'}`;
   assert.equal(writes().length, 1); assert.equal(rows.find(x => x.id === id).amount, 35000);
-  assert.equal(workspaceWithoutNotice(), before); assert.equal(reads(), count);
-  assert.match(text('#cashflowReadError'), /資料已儲存，畫面尚未更新/);
-  assert.equal(el('#modal-root form'), form);
-  await click('#modal-root [data-cancel]');
-  await click('#retryCashflowRead');
-  assert.equal(writes().length, 1); assert.equal(reads(), count + 1); assert.equal(el('#cashflowReadError'), null);
-  if (method === 'POST') await click('.cashflow-stat-action[data-flow="income"]');
-  await click(`tbody [data-edit="${id}"]`);
-  assert.equal(document.getElementById('f_amount').value, '35000');
-  document.getElementById('f_summary').value = '本題重讀後再編輯';
-  el('#modal-root form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
-  assert.equal(writes().length, 2); assert.equal(rows.find(x => x.id === id).amount, 35000);
-  assert.equal(rows.find(x => x.id === id).summary, '本題重讀後再編輯');
+  assert.equal(el('#modal-root form'), null);
 });
 
 test('返回頁在寫入確認前開始的讀取晚回：持續提示直到新重讀，舊表單仍須重開', async () => {
@@ -338,4 +344,152 @@ test('讀取成功前已切到別頁：較晚完成的讀取不得改動新頁',
   const before = document.getElementById('view').innerHTML;
   try { wait.resolve(); await pending; assert.equal(document.getElementById('view').innerHTML, before); }
   finally { wait.resolve(); await pending; }
+});
+
+
+test('寫入等待時換頁後失敗：換頁即提示失效，保留輸入與取消，不等舊 catch 解鎖', async () => {
+  const wait = deferred(); holdBeforeWrite = wait; failWrites = true;
+  try {
+    await submit('PUT'); assert.equal(writes().length, 1);
+    const form = el('#modal-root form');
+    await navigate('#cards'); await navigate('#cashflow');
+    assert.match(text('#cashflowFormInvalid'), /換頁.*失效/);
+    assert.equal(document.getElementById('f_amount').value, '35000');
+    wait.resolve(); await settle();
+    assert.equal(writes().length, 1); assert.equal(rows.find(x => x.id === `${serial}-a`).amount, 21000);
+    assert.equal(el('#modal-root form'), form); assert.match(text('#cashflowFormInvalid'), /重讀結果/);
+    assert.doesNotMatch(text('#toast-root'), /已儲存/);
+    assert.equal(el('#modal-root [data-cancel]').disabled, false);
+    await click('#modal-root [data-cancel]'); assert.equal(el('#modal-root form'), null);
+  } finally { wait.resolve(); holdBeforeWrite = null; await settle(); }
+});
+
+test('換頁失效的舊表單事件不能停用後開的新表單', async () => {
+  await click(`tbody [data-edit="${serial}-a"]`);
+  const oldForm = el('#modal-root form');
+  await navigate('#cards'); await navigate('#cashflow');
+  await click('#modal-root [data-cancel]');
+  await click(`tbody [data-edit="${serial}-b"]`);
+  document.getElementById('f_summary').value = '本題新窗保留值';
+  const fresh = el('#modal-root form');
+  oldForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(el('#modal-root form'), fresh);
+  assert.equal(document.getElementById('f_summary').value, '本題新窗保留值');
+  assert.equal(el('#modal-root button[type="submit"]').disabled, false);
+  assert.equal(el('#cashflowFormInvalid'), null); assert.equal(writes().length, 0);
+  fresh.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(writes().length, 1); assert.equal(rows.find(x => x.id === `${serial}-b`).summary, '本題新窗保留值');
+});
+
+test('同頁 router 重畫不使手動表單失效，寫入失敗仍可修正再送', async () => {
+  await click(`tbody [data-edit="${serial}-a"]`);
+  document.getElementById('f_summary').value = '本題背景重畫輸入';
+  const form = el('#modal-root form');
+  await app.router(); await settle();
+  assert.equal(el('#cashflowFormInvalid'), null); failWrites = true;
+  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(writes().length, 1); assert.match(text('#toast-root'), /本題寫入失敗/);
+  assert.equal(el('#modal-root button[type="submit"]').disabled, false);
+  failWrites = false;
+  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(writes().length, 2); assert.equal(rows.find(x => x.id === `${serial}-a`).summary, '本題背景重畫輸入');
+});
+
+for (const part of ['summary', 'remark']) test(`回音缺少 ${part}：寫入金額已改，舊快照失效但不報全部儲存，唯讀重讀後重開`, async () => {
+  legacyText = true;
+  await click(`tbody [data-edit="${serial}-a"]`);
+  document.getElementById('f_amount').value = '35000';
+  document.getElementById('f_' + part).value = '本題未確認文字';
+  const first = el('#modal-root form'), before = snapshot();
+  first.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(writes().length, 1); assert.equal(rows.find(x => x.id === `${serial}-a`).amount, 35000);
+  assert.notEqual(rows.find(x => x.id === `${serial}-a`)[part], '本題未確認文字');
+  assert.deepEqual(snapshot(), before); assert.equal(reads(), 0);
+  assert.equal(el('#modal-root form'), first); assert.equal(document.getElementById('f_' + part).value, '本題未確認文字');
+  assert.match(text('#toast-root'), /摘要或備註未儲存/); assert.doesNotMatch(text('#toast-root'), /已儲存/);
+  assert.match(text('#cashflowReadError'), /尚未確認.*重新讀取/); assert.doesNotMatch(text('#cashflowReadError'), /資料已儲存/);
+  first.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(writes().length, 1);
+  await click('#modal-root [data-cancel]'); await click(`tbody [data-edit="${serial}-a"]`);
+  assert.equal(document.getElementById('f_amount').value, '21000');
+  document.getElementById('f_summary').value = '本題第二張舊窗';
+  const stale = el('#modal-root form');
+  stale.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(writes().length, 1); assert.equal(rows.find(x => x.id === `${serial}-a`).amount, 35000);
+  failReads = true; await click('#retryCashflowRead');
+  assert.match(text('#cashflowReadError'), /尚未確認.*載入失敗/); assert.doesNotMatch(text('#cashflowReadError'), /資料已儲存/);
+  failReads = false; await click('#retryCashflowRead'); assert.equal(el('#cashflowReadError'), null);
+  stale.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(writes().length, 1); assert.equal(rows.find(x => x.id === `${serial}-a`).amount, 35000);
+  await click('#modal-root [data-cancel]'); legacyText = false;
+  await click(`tbody [data-edit="${serial}-a"]`);
+  assert.equal(document.getElementById('f_amount').value, '35000');
+  document.getElementById('f_' + part).value = '本題新版確認文字';
+  el('#modal-root form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(writes().length, 2); assert.equal(rows.find(x => x.id === `${serial}-a`).amount, 35000);
+  assert.equal(rows.find(x => x.id === `${serial}-a`)[part], '本題新版確認文字');
+  assert.equal(el('#modal-root form'), null); assert.match(text('#toast-root'), /已儲存/);
+});
+
+for (const legacy of [false, true]) test(`回傳列已新但讀取開始早於${legacy ? '不完整' : '完整'}寫入確認：仍須新讀取才清提示`, async () => {
+  const wait = deferred(); holdWrite = wait; legacyText = legacy;
+  try {
+    await click(`tbody [data-edit="${serial}-a"]`);
+    document.getElementById('f_amount').value = '35000'; document.getElementById('f_summary').value = '本題新文字';
+    el('#modal-root form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+    assert.equal(rows.find(x => x.id === `${serial}-a`).amount, 35000);
+    await click('#modal-root [data-cancel]'); await navigate('#cards'); await navigate('#cashflow');
+    assert.match(el(`tbody [data-edit="${serial}-a"]`).closest('tr').textContent, /35,000/);
+    const before = workspaceWithoutNotice(), count = reads();
+    wait.resolve(); await settle();
+    assert.equal(writes().length, 1); assert.equal(reads(), count); assert.equal(workspaceWithoutNotice(), before);
+    assert.match(text('#cashflowReadError'), legacy ? /尚未確認/ : /資料已儲存/);
+    if (legacy) assert.doesNotMatch(text('#cashflowReadError'), /資料已儲存/);
+    await click('#retryCashflowRead'); assert.equal(el('#cashflowReadError'), null);
+    assert.equal(writes().length, 1); assert.equal(reads(), count + 1);
+  } finally { wait.resolve(); holdWrite = null; await settle(); }
+});
+
+for (const fails of [false, true]) test(`跨頁後新窗接管：舊請求${fails ? '失敗' : '成功'}不得修改新窗輸入或停用按鈕`, async () => {
+  const wait = deferred(); holdBeforeWrite = wait; failWrites = fails;
+  try {
+    await submit('PUT'); await navigate('#cards'); await navigate('#cashflow');
+    await click('#modal-root [data-cancel]'); await click(`tbody [data-edit="${serial}-b"]`);
+    document.getElementById('f_summary').value = '本題新窗專屬輸入';
+    const form = el('#modal-root form');
+    wait.resolve(); await settle();
+    assert.equal(writes().length, 1);
+    assert.equal(rows.find(x => x.id === `${serial}-a`).amount, fails ? 21000 : 35000);
+    assert.equal(el('#modal-root form'), form);
+    assert.equal(document.getElementById('f_summary').value, '本題新窗專屬輸入');
+    assert.equal(el('#modal-root button[type="submit"]').disabled, false);
+    assert.equal(el('#cashflowFormInvalid'), null);
+  } finally { wait.resolve(); holdBeforeWrite = null; await settle(); }
+});
+
+test('未換頁但已關閉的舊表單事件不能借新表單的欄位寫入', async () => {
+  await click(`tbody [data-edit="${serial}-a"]`);
+  const old = el('#modal-root form');
+  await click('#modal-root [data-cancel]'); await click(`tbody [data-edit="${serial}-b"]`);
+  const fresh = el('#modal-root form'); document.getElementById('f_summary').value = '本題原位新窗';
+  old.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(writes().length, 0); assert.equal(el('#modal-root form'), fresh);
+  assert.equal(document.getElementById('f_summary').value, '本題原位新窗');
+  assert.equal(el('#modal-root button[type="submit"]').disabled, false);
+});
+
+test('未確認回音後另筆新增成功：仍須保留不完整提示，不能用完整成功覆蓋', async () => {
+  legacyText = true;
+  await click(`tbody [data-edit="${serial}-a"]`);
+  document.getElementById('f_summary').value = '本題尚未確認文字';
+  document.getElementById('f_amount').value = '35000';
+  el('#modal-root form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(writes().length, 1); assert.equal(rows.find(x => x.id === `${serial}-a`).amount, 35000);
+  await click('#modal-root [data-cancel]'); legacyText = false; failReads = true;
+  await submit('POST');
+  assert.equal(writes().length, 2); assert.equal(rows.find(x => x.id === `${serial}-new`).amount, 35000);
+  assert.match(text('#cashflowReadError'), /尚未確認.*載入失敗/);
+  assert.doesNotMatch(text('#cashflowReadError'), /資料已儲存/);
+  failReads = false; await click('#retryCashflowRead');
+  assert.equal(writes().length, 2); assert.equal(el('#cashflowReadError'), null);
 });
