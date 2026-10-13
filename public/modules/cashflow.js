@@ -26,6 +26,8 @@ import { defaultWithTimeout, MODE_TIMEOUT_MS } from './backup-export.js';
 let monthFilter = monthKey();
 let flowFilter = 'all';   // 金流篩選：all / income / expense / transfer
 let renderGeneration = 0;
+/** @type {number | null} 已確認寫入的頁面；讀取失敗不撤銷這件事。 */
+let savedReloadNav = null;
 const listSort = { key: 'date', dir: 'desc' };
 /** @type {{month: string, flow: string, sort: {key: string, dir: string}} | null} */
 let renderedState = null;
@@ -46,9 +48,31 @@ function flowOf(t) {
   return { label: '支出', cls: 'neg', sign: '−' };
 }
 
+/** @param {string} message @param {number} nav @param {number} generation */
+function showCashflowReadError(message, nav, generation) {
+  let notice = byId('cashflowReadError');
+  if (!notice) {
+    notice = document.createElement('div');
+    notice.id = 'cashflowReadError';
+    notice.className = 'hint cashflow-desktop-only';
+    notice.setAttribute('role', 'alert');
+    const workspace = view().querySelector('.cashflow-workspace');
+    workspace.insertBefore(notice, workspace.querySelector('.cashflow-summary'));
+  }
+  notice.innerHTML = `<span>${esc(message)}</span> <button type="button" class="btn-ghost" id="retryCashflowRead">重新讀取</button>`;
+  byId('retryCashflowRead').onclick = () => {
+    if (nav !== currentNavSeq() || generation !== renderGeneration || !notice.isConnected) return;
+    byId('retryCashflowRead').disabled = true;
+    // 只重新取資料；寫入已完成，不把表單的送出動作保存成重試 callback。
+    renderCashflow();
+  };
+}
+
 export async function renderCashflow() {
   const seq = currentRouteSeq();
   const generation = ++renderGeneration;
+  const nav = currentNavSeq();
+  if (savedReloadNav !== nav) savedReloadNav = null;
   let responses;
   try {
     responses = await Promise.all([
@@ -62,7 +86,10 @@ export async function renderCashflow() {
         Object.assign(listSort, renderedState.sort);
         for (const id of ['yearSel', 'yearSelDesktop']) byId(id).value = monthFilter.slice(0, 4);
         for (const id of ['monthSel', 'monthSelDesktop']) byId(id).value = monthFilter.slice(5, 7);
-        toast(`載入失敗：${e.message}`, true);
+        const message = savedReloadNav === nav
+          ? `資料已儲存，畫面尚未更新。載入失敗：${e.message}` : `載入失敗：${e.message}`;
+        showCashflowReadError(message, nav, generation);
+        toast(message, true);
       } else view().innerHTML = `<div class="hint" role="alert">載入失敗：${esc(e.message)}</div>`;
     }
     return;
@@ -202,6 +229,7 @@ export async function renderCashflow() {
     replacement?.focus({ preventScroll: true });
   }
   renderedState = { month: monthFilter, flow: flowFilter, sort: { ...listSort } };
+  savedReloadNav = null;
 }
 
 function rowHtml(t) {
@@ -551,6 +579,7 @@ async function openBankBatchManager() {
 
 /** @param {any=} tx @param {any[]=} accounts @param {any[]=} all 全部現金流交易（算「同類還有幾筆」用） */
 function openCashflowForm(tx, accounts = [], all = []) {
+  const nav = currentNavSeq();
   // 金流別由既有 type 推導（編輯）或預設收入（新增）
   const initFlow = tx ? (tx.type === 'income' ? 'income' : tx.type === 'transfer' ? 'transfer' : 'expense') : 'income';
   // 同類一起改（Q2乙）：編輯銀行交易時，若同一把學習鑰匙（摘要＋對方帳號）還有別筆，給勾選框整批一起改。
@@ -642,11 +671,14 @@ function openCashflowForm(tx, accounts = [], all = []) {
         const hasBankOriginal = typeof tx.bankSummary === 'string' && typeof tx.bankNote === 'string';
         if (r.appliedText && body.applySameSummary) changes.push(`摘要同步 ${r.appliedText.summary} 筆${hasBankOriginal ? '，未來相同帳單原文匯入也適用' : ''}`);
         if (r.appliedText && body.applySameRemark) changes.push(`備註同步 ${r.appliedText.remark} 筆${hasBankOriginal ? '，未來相同帳單原文匯入也適用' : ''}`);
+        if (nav !== currentNavSeq()) return;
         toast(changes.length ? `已儲存；${changes.join('；')}` : '已儲存');
       } else {
         await api('/transactions', { method: 'POST', body });
+        if (nav !== currentNavSeq()) return;
         toast('已儲存');
       }
+      savedReloadNav = nav;
       renderCashflow();
     }
   });

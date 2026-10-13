@@ -689,6 +689,7 @@ const MANIFEST = {
       'public/modules/transactions.js',
       'public/styles.css',
       'test/ai-consent.test.js',   // 固定動作列（.sticky-actions）的考題住這裡＝與收支／雲端多重命中
+      'test/cashflow-reload.test.js',
       'test/daily-values.test.js',
       'test/goal-tracking-ui.test.js',
       'test/goal-tracking.test.js',
