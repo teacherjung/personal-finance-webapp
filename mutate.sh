@@ -799,7 +799,7 @@ check 'CE. AGENTS.md 另開一節放第二張同步點表（表頭字樣拆成�
 mutate 'CF. AGENTS.md 的路由表多一列帶契約索引連結' <<'PY'
 import pathlib
 p=pathlib.Path("AGENTS.md"); ls=p.read_text(encoding="utf-8").split("\n")
-k=[n for n,l in enumerate(ls) if l.startswith("| 查協作機器與專案登記 |")]
+k=[n for n,l in enumerate(ls) if l.startswith("|查協作機器與專案登記|")]
 assert len(k)==1 and not any("[契約：" in l for l in ls)
 ls.insert(k[0]+1, "| 改 SEC 指標 | [契約：投資與 SEC・SEC 官方指標挑值](docs/contracts/investment-sec.md#sec-官方指標挑值) |")
 p.write_text("\n".join(ls), encoding="utf-8")
