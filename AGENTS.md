@@ -9,18 +9,18 @@
 3. 開工前跑一次 `node tools/pending-rulings.js`（不帶參數；RULES D1）；本專案的值與留痕方式見協作附則「審查回饋處置」。
 4. 實作者、複審者、發審者依 [協作附則](docs/project-collaboration.md) 操作。合併時在釘住受審版本的樹根目錄跑 `node tools/merge.js <編號> --merger <識別值>`；合併地點、失敗處置及驗收依附則。結論標頭見 [範本](templates/verdict-header.md)。
 
-| 何時讀 | 正本 |
+|何時讀|正本|
 |---|---|
-| 開工、送審、合併、回報 | [本專案協作附則](docs/project-collaboration.md)：工作樹、審查、界線表、七段＋進度摘要、掃描 |
-| 驗證、寫考題、分級、文件分工 | [開發驗證與契約](docs/development-workflow.md) |
-| 瞭解架構、資料與發展方向 | [專案概觀](docs/project-overview.md) |
-| 工具權限、攔截器、安裝與驗收 | [錢的機械層手續](docs/money-guard-operations.md)；[兩張樣式表](docs/money-guard-two-pattern-tables.md) |
-| 修改程式、查同步點 | [領域契約路由表](docs/contracts/README.md)；[同步點清單](docs/sync-index.md) |
-| 畫面、格式與共用元件 | [UI 現行慣例](docs/ui-conventions.md)；優先遵守下方常設指示 |
-| 投資相關程式 | [投資領域語意](docs/investment-semantics.md)及命中的領域契約 |
-| 新欄位、寫入與資料歸屬 | [欄位所有權](docs/field-ownership.md)及資料與儲存契約 |
-| 動 Notion | [Notion 操作手冊](docs/notion-spec-playbook.md) |
-| 查協作機器與專案登記 | [MACHINES.md](MACHINES.md)、[PROJECT-SETTINGS.md](PROJECT-SETTINGS.md)；設定正本 `settings.json` |
+|開工、送審、合併、回報|[本專案協作附則](docs/project-collaboration.md)：工作樹、審查、界線表、七段＋進度摘要、掃描|
+|驗證、寫考題、分級、文件分工|[開發驗證與契約](docs/development-workflow.md)|
+|瞭解架構、資料與發展方向|[專案概觀](docs/project-overview.md)|
+|工具權限、攔截器、安裝與驗收|[錢的機械層手續](docs/money-guard-operations.md)；[兩張樣式表](docs/money-guard-two-pattern-tables.md)|
+|修改程式、查同步點|[領域契約路由表](docs/contracts/README.md)；[同步點清單](docs/sync-index.md)|
+|畫面、格式與共用元件|[UI 現行慣例](docs/ui-conventions.md)；優先遵守下方常設指示|
+|投資相關程式|[投資領域語意](docs/investment-semantics.md)及命中的領域契約|
+|新欄位、寫入與資料歸屬|[欄位所有權](docs/field-ownership.md)及資料與儲存契約|
+|動 Notion|[Notion 操作手冊](docs/notion-spec-playbook.md)|
+|查協作機器與專案登記|[MACHINES.md](MACHINES.md)、[PROJECT-SETTINGS.md](PROJECT-SETTINGS.md)；設定正本 `settings.json`|
 
 - 回報依 RULES J1、J2 與 `templates/progress-report.md`，進度摘要依 J5；本專案多的與沿革在協作附則「回報」節；適用實作者、複審者與發審者。
 - 複審後掃依 RULES G1–G4 與協作附則；沒有合併閘檢查是否完成，掃描發射者須自行確認並留紀錄。
@@ -162,6 +162,7 @@
 
 以下日期為 UTC；原話照錄。括號外的背景與解讀依 2026-10-03 經 William 指示採用的交接，與原話分開標示。
 
+- **2026-10-14 UTC**：「需要裁示請直接問GPT6.1 Sol」
 - **複審模型｜2026-10-13 UTC**：「複審幫我改用Opus模型」（#679／6137507759）。
 - **PR 上限｜2026-10-12 UTC 本人更新**：「PR 上限改為各專案分別計算：理財最多兩支、套件最多兩支，草稿也算。這次本人指示取代先前跨專案合計兩支的解讀與代裁；仍須避免與 Claude 的工作衝突。請留痕後繼續原任務。」[本人留痕](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6126118007)。
 - **C31｜2026-10-02 UTC**：「從現在開始可以動用後端，因為Claude那邊暫停實作了。現在由你實作。」
