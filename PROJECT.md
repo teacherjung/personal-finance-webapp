@@ -45,6 +45,8 @@
 
 工具與流程的待辦（不排優先序；開工印待辦 `tools/backlog-touch.js` 只讀 `- ` 開頭的條目；每條＝一句話／放在哪裡／什麼情況下值得做）：
 
+- （裁示對象說明，#690 r1 發現 2）常設原話「需要裁示請直接問GPT6.1 Sol」與協作附則「直接問 William」等敘述未釐清適用範圍／`AGENTS.md` 常設指示與 `docs/project-collaboration.md`「審查」「審查回饋處置」「界線表」／取得委任範圍的明確裁示，或下一次修改詢問裁示的說明時，先確認哪些情況仍須本人決定，再同步文字；本支只照錄原話，不據此擴張委任或改寫擁有者專屬權限 — **未分配**
+
 - （掃描工具，2026-10-11 #673 掃描第 2 題前半，屬實·進待辦）掃描收輸出的上限算的是字元、失敗訊息卻寫 bytes，跨線那一段整段收下（最多多一次讀取），stderr 共用同一個旗標／`scripts/grok-scan.js` 收輸出那一段（訊息單位改成「字元」；要的話改成先收進陣列最後一次接起來）／下一支動到收輸出那一段時 — **未分配**
 - （掃描工具，2026-10-11 #675 r1；複審後掃第 4 題補全）建盒子時 `git archive` 會照屬性檔挑過濾器（smudge）並執行本機 git 設定裡定義的程式，沒有旗標關得掉（diff 那一半 #675 已關）；屬性來源不只受審版本的 `.gitattributes`，還有全域（core.attributesFile、$XDG_CONFIG_HOME/git/attributes、~/.config/git/attributes）、系統層、$GIT_DIR/info/attributes；export-ignore、export-subst 不需要過濾器定義，也會讓盒子跟受審版本不一致（少檔或改字）／`scripts/grok-scan.js` 建盒那一段（可能的做法：改用 ls-tree＋cat-file 逐檔寫出、不經過濾與屬性）／這台機器裝了 git-lfs 或任何自訂過濾器、或本機任一層出現屬性檔時，或下一支動到建盒那一段時 — **未分配**
 - （掃描工具考題，2026-10-11 #675 r2 Codex 測試待辦）掃描那一族考題只驗 git 呼叫的答案與原始碼形狀，沒有直接觀測子行程收到的 `GIT_*`／`test/grok-scan-flow-repo.test.js`、`test/helpers/grok-scan-flow-fixtures.js`／下次變更 Git 呼叫或抽換環境清理方式時 — **未分配**
