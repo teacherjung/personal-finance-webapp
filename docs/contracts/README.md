@@ -110,6 +110,7 @@
 - `public/modules/transactions.js`〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
 - `public/styles.css`（`.cb-ok`／`.cb-over` 寫死與 `theme.js` 同色的 hex——CSS 無法 import JS）
 - `test/ai-consent.test.js`（`openInfo({actionsHtml})` 的固定動作列考題——**與收支、雲端多重命中**）〔籃C 補搬點名檔〕
+- `test/cashflow-reload.test.js`（銀行收支重讀失敗、唯讀重試與跨頁競態）
 - `test/daily-values.test.js`
 - `test/goal-tracking-ui.test.js`（頁面模組＝**與各自領域多重命中**）〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
 - `test/goal-tracking.test.js`〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
