@@ -422,7 +422,7 @@ test('考題檔｜這一族**每一支**源碼都不留破口形狀的字面（�
   // ⚠️ **驗的是成員身分、不是數量**（#581 r1）：只驗「至少幾個」的話，把某一支改名到前綴之外、
   //    同時另外多一支符合前綴的檔案，數量還是夠，而那支被改名的檔就沒人看管了。
   //    ⇒ 五支同族的名字寫死在這裡：要拆分或改名，**必先來改這一行**（變更必經考題）。
-  const EXPECTED = ['preflight', 'credentials', 'breach', 'incident', 'redaction', 'repo']
+  const EXPECTED = ['preflight', 'credentials', 'breach', 'incident', 'redaction', 'repo', 'review']
     .map((k) => `test/grok-scan-flow-${k}.test.js`)
     .concat('test/helpers/grok-scan-flow-fixtures.js');
   // ⚠️ **照實劃界（Grok #581 掃後 3）**：這個集合是「檔名走 `grok-scan-flow-` 前綴的那些」。

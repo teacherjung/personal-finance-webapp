@@ -14,6 +14,11 @@
    "role": "AI 乙",
    "id": "Codex",
    "account": "teacherjung"
+  },
+  {
+   "role": "AI 丙",
+   "id": "Grok",
+   "account": "teacherjung"
   }
  ],
  "accountRule": "只採計登記在參與者表裡的貼文帳號貼的 ❓／⚖️／🚫；沒登記的帳號貼的不採計為有效留痕——它貼的 ❓ 不入待裁，它貼的 ⚖️／🚫 不能替已採計的問題收口（原題繼續待裁），形狀合規的會另列成疑似。⚖️ 另外要由裁示者那一位的帳號貼。結論閘只認識別值、不認帳號。多方共用同一個帳號時，機器分不出是誰親自貼的——那是這套機制的邊界，不是保證。",
@@ -43,6 +48,10 @@
   {
    "tool": "William 本人（畫面驗收／產品裁決）",
    "string": "William 本人"
+  },
+  {
+   "tool": "Grok CLI 隔離盒起的正式複審",
+   "string": "Grok CLI"
   }
  ],
  "locations": [
@@ -1037,6 +1046,19 @@
    "machine": "幾乎沒有：審查樹與系統暫存區都寫得進；使用者層放行規則命中的指令在沙箱外跑；樣板帶 approval_policy＝never，申請提權一律不准（不帶就照本機設定檔自動核准）",
    "promptOnly": "唯讀、不轉正式、不合併、只貼一則留言，全靠提示；退出 0 不代表通過、也不代表留言已貼成功（啟動失敗會退非零），發審的一方要自己去 PR 看留言在不在；設定檔預設推理是 low，指令漏帶就靜默降級；唯讀沙箱配 --add-dir 突變副本（2026-10-07 實測）連副本、暫存區、網路都被擋，不能拿來讓審查樹唯讀",
    "verified": ""
+  },
+  {
+   "participant": "Grok",
+   "strongest": "grok-4.7",
+   "second": "未設定",
+   "maxEffort": "xhigh",
+   "autoMode": "自動選模",
+   "source": "Grok CLI",
+   "launch": "暫用安排依 docs/project-collaboration.md「複審模型」；送審產生器印出下列固定模型、推理與材料路徑。",
+   "command": "node {reviewTree}/scripts/grok-review.js --model {model} --effort {effort} --review-tree {reviewTree} --mutation-copy {mutationCopy} --prompt-file {promptFile} --out-file {outFile} --change {change} --project {project}",
+   "machine": "借用 grok-scan.js 的 OS 隔離、試探、執行檔釘值、假鑰匙中繼與掃後比對；正式用途另核材料與原文雜湊。GitHub 憑證不進盒，前端不代貼結論。",
+   "promptOnly": "受審材料不改檔靠提示與前後雜湊核對；突變只改盒內副本。盒內沒有原倉庫的 .git，版本以外層核過的清單表示。輸出零不代表通過或已貼文。",
+   "verified": "2026-10-15 合成材料與假 runner 行為題；真模型執行與逐字貼文另以每輪 PR 證據核對。"
   }
  ],
  "reviewLaunch": {

@@ -1,0 +1,176 @@
+// @ts-check
+// 假 Grok 只驗正式複審材料與安全流程；不證明真模型的審查品質。
+import { after, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdtempSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { runScan } from '../scripts/grok-scan.js';
+import { cleanupTempRoots, fakeCanary, fakeGrok, fakeRelay, isolated, keep, promptFile, SANDBOX_OK, SKIP_AFTER_CANARY, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
+
+after(cleanupTempRoots);
+const hash = (/** @type {string | Buffer} */ value) => createHash('sha256').update(value).digest('hex');
+const identity = { project: 'owner/repo', change: '17', reviewer: 'Grok', source: 'Grok CLI', round: 1 };
+
+/** @param {Record<string, any>} [options] */
+async function reviewRun(options = {}) {
+  const repo = tinyRepo({ firstCommitFiles: { '.gitattributes': 'tree-only.txt export-ignore\n', 'RULES.md': 'base rules\n' } });
+  const inst = fakeGrok({ model: 'grok-4.7', ...options.fake });
+  if (options.versionProbe) {
+    const bin = join(inst, 'bin', 'grok');
+    const body = readFileSync(bin, 'utf8');
+    const target = 'if [ "$1" = "--version" ]; then';
+    assert.ok(body.includes(target));
+    writeFileSync(bin, body.replace(target, `${target} ${options.versionProbe};`));
+  }
+  if (options.shell) {
+    const bin = join(inst, 'bin', 'grok');
+    const body = readFileSync(bin, 'utf8');
+    assert.ok(body.includes("printf '%s' \"FAKE-REPLY\""));
+    writeFileSync(bin, body.replace("printf '%s' \"FAKE-REPLY\"", options.shell + "\nprintf '%s' \"FAKE-REPLY\""));
+  }
+  const iso = isolated();
+  const logs = [];
+  let box = '';
+  let observed;
+  const result = await runScan(/** @type {any} */ ({ base: repo.base, head: repo.head, promptFile: promptFile('F3-UNCHANGED-PROMPT'), repo: repo.dir,
+    purpose: 'review', model: 'grok-4.7', effort: 'xhigh', review: { ...identity, previousHead: repo.base }, ...options.args }),
+  { ...iso, ...withGrok(inst), relayScript: fakeRelay(), ...options.deps, log: (line) => {
+    logs.push(line);
+    if (line.startsWith('盒子：')) box = line.slice('盒子：'.length);
+    if (line.startsWith('複審開始：') && existsSync(join(box, 'review-manifest.json'))) {
+      observed = {
+        manifest: JSON.parse(readFileSync(join(box, 'review-manifest.json'), 'utf8')),
+        material: readFileSync(join(box, 'materials.md'), 'utf8'),
+        base: readFileSync(join(box, 'base', 'a.txt'), 'utf8'),
+        head: readFileSync(join(box, 'src', 'a.txt'), 'utf8'),
+        mutation: readFileSync(join(box, 'mutation', 'a.txt'), 'utf8'),
+        archivedOut: readFileSync(join(box, 'src', 'tree-only.txt'), 'utf8'),
+      };
+    }
+  } });
+  return { result, observed, repo, box, iso, logs };
+}
+
+test('正式複審拒絕未指定模型或推理；不借掃描預設值補空格', async () => {
+  for (const args of [{ model: undefined }, { effort: undefined }, { purpose: 'unknown' }, { review: { ...identity, source: 'Claude CLI' } }]) {
+    const { result, logs } = await reviewRun({ args });
+    assert.equal(result.code, 2, '修正 runner 的用途與複審參數檢查後重跑本檔');
+    assert.ok(!logs.some((line) => line.startsWith('盒子：')), '修正建盒前檢查後重跑本檔');
+  }
+});
+
+test('正式材料的 git 子行程收到的環境不含 GIT 家族，dirty GIT_DIR 不會換掉受審版本', async () => {
+  const repo = tinyRepo();
+  const fake = fakeGrok({ model: 'grok-4.7' });
+  const root = keep(mkdtempSync(join(tmpdir(), 'review-git-env-')));
+  const observed = join(root, 'received.jsonl');
+  const wrapper = `#!${process.execPath}\nconst fs=require('node:fs'); const cp=require('node:child_process'); fs.appendFileSync(${JSON.stringify(observed)},JSON.stringify({args:process.argv.slice(2),keys:Object.keys(process.env).filter(k=>k.startsWith('GIT_'))})+'\\n'); const r=cp.spawnSync('/usr/bin/git',process.argv.slice(2),{env:process.env}); process.stdout.write(r.stdout); process.stderr.write(r.stderr); process.exit(r.status??2);\n`;
+  writeFileSync(join(root, 'git'), wrapper, { mode: 0o755 });
+  const before = { PATH: process.env.PATH, GIT_DIR: process.env.GIT_DIR, GIT_FUTURE_REVIEW_CANARY: process.env.GIT_FUTURE_REVIEW_CANARY };
+  try {
+    process.env.PATH = root + ':' + before.PATH;
+    process.env.GIT_DIR = join(root, 'wrong-repository');
+    process.env.GIT_FUTURE_REVIEW_CANARY = 'must-not-reach-child';
+    const result = await runScan({ base: repo.base, head: repo.head, repo: repo.dir, promptFile: promptFile(), purpose: 'review', model: 'grok-4.7', effort: 'xhigh', review: identity }, { ...isolated(), ...withGrok(fake), relayScript: fakeRelay(), log: () => {} });
+    const rows = readFileSync(observed, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.ok(rows.some((row) => row.args.includes('ls-tree') && row.args.includes('-rz')), '修正複審材料 git 呼叫後重跑本檔');
+    assert.ok(rows.some((row) => row.args.includes('cat-file') && row.args.includes('blob')), '修正 blob 讀取接線後重跑本檔');
+    for (const row of rows) assert.deepEqual(row.keys, [], '修正該 git 呼叫的 gitEnv 後重跑本檔');
+    if (SANDBOX_OK) { assert.equal(result.code, 0, result.summary.join('\n')); assert.equal(result.review?.head, repo.head); }
+  } finally {
+    for (const [key, value] of Object.entries(before)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
+
+test('正式複審保留基底、受審與突變材料，原文與 manifest 可核對', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const { result, observed, repo, box, iso } = await reviewRun({ shell: 'printf mutation-only > ../mutation/a.txt' });
+  assert.equal(result.code, 0, result.summary.join('\n'));
+  assert.ok(observed, '修正 runner 的正式材料建立後重跑本檔');
+  assert.equal(observed.base, 'hello\n');
+  assert.equal(observed.head, 'hello world\n');
+  assert.equal(observed.mutation, observed.head);
+  assert.equal(observed.archivedOut, 'TREE-ONLY-PUBLIC-VALUE\n');
+  assert.ok(observed.material.includes('F3-UNCHANGED-PROMPT'));
+  assert.ok(!observed.material.includes('不要跑整套 npm test'));
+  assert.equal(observed.manifest.head, repo.head);
+  assert.equal(observed.manifest.base, repo.base);
+  assert.equal(observed.manifest.snapshots.head.files['a.txt'].sha256, hash(observed.head));
+  assert.equal(observed.manifest.snapshots.mutation.files['a.txt'].sha256, hash(observed.mutation));
+  assert.ok(result.review, '修正 runner 的成功收據後重跑本檔');
+  assert.equal(result.review.reply, 'FAKE-REPLY');
+  assert.equal(result.review.replySha256, hash(result.review.reply));
+  assert.equal(result.review.source, 'Grok CLI');
+  assert.equal(result.review.head, repo.head);
+  assert.equal(result.review.manifestSha256, hash(JSON.stringify(observed.manifest, null, 2) + '\n'));
+  assert.equal(existsSync(box), false);
+  const saved = JSON.parse(readFileSync(join(iso.resultsRoot, readdirSync(iso.resultsRoot)[0], 'review-result.json'), 'utf8'));
+  assert.equal(saved.replySha256, result.review.replySha256);
+});
+
+test('正式複審把本輪明確指定的模型與推理傳進 CLI，不拿掃描設定代替', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const { result } = await reviewRun({ args: { model: 'grok-4.6', effort: 'high' }, fake: { model: 'grok-4.6' }, shell: 'printf "%s\\n" "$@"' });
+  assert.equal(result.code, 0, result.summary.join('\n'));
+  assert.ok(result.review, '修正 runner 正式複審回傳後重跑本檔');
+  assert.ok(result.review.reply.includes('--model\ngrok-4.6\n'));
+  assert.ok(result.review.reply.includes('--reasoning-effort\nhigh\n'));
+});
+
+test('正式複審在第一個盒內程序之前備妥材料與突變相依副本', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const files = ['src/a.txt', 'base/a.txt', 'mutation/a.txt', 'src/node_modules/eslint/package.json', 'mutation/node_modules/eslint/package.json', 'materials.md', 'review-manifest.json'];
+  const versionProbe = files.map((file) => `[ -f ${file} ]`).join(' && ') + ' || exit 93';
+  const { result } = await reviewRun({ versionProbe });
+  assert.equal(result.code, 0, result.summary.join('\n'));
+  assert.ok(result.review, '修正第一個盒內程序前的建置順序後重跑本檔');
+});
+
+for (const [label, shell] of [
+  ['受審檔', 'printf changed > a.txt'],
+  ['基底檔', 'printf changed > ../base/a.txt'],
+  ['新增檔', 'printf added > new.txt'],
+  ['manifest', 'printf changed > ../review-manifest.json'],
+  ['原始差異', 'printf changed > ../full.diff'],
+  ['提示材料', 'printf changed > ../materials.md'],
+]) test(`正式複審在執行後發現${label}被改，不產生正式結果`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const { result, iso, box } = await reviewRun({ shell });
+  assert.equal(result.code, 2, '修正 runner 的快照前後比對後重跑本檔');
+  assert.equal(result.review, undefined);
+  assert.deepEqual(readdirSync(iso.resultsRoot), []);
+  assert.equal(existsSync(box), false);
+});
+
+test('正式複審安全鏈失敗、沒有原文或模型足跡時不產生正式結果', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  for (const options of [{ deps: { runCanary: fakeCanary(1) } }, { fake: { reply: '' } }, { fake: { noToolFootprint: true } }, { fake: { status: 1 } }, { fake: { model: undefined } }, { fake: { model: 'grok-4.6' } }]) {
+    const { result, iso } = await reviewRun(options);
+    assert.equal(result.code, 2, result.summary.join('\n'));
+    assert.equal(result.review, undefined);
+    assert.deepEqual(readdirSync(iso.resultsRoot), []);
+  }
+});
+
+for (const [label, options] of [
+  ['JSONL 截斷', { fake: { sessionLines: ['{"model_id":"grok-4.6"'] } }],
+  ['JSON 截斷', { shell: `printf '%s' '{"model_id":"grok-4.6"' > "$ws/fake-session/model.json"` }],
+  ['JSONL 非 UTF-8', { shell: `printf '{"model_id":"grok-4.7","note":"\\377"}' > "$ws/fake-session/model.jsonl"` }],
+  ['JSON 非 UTF-8', { shell: `printf '{"model_id":"grok-4.7","note":"\\377"}' > "$ws/fake-session/model.json"` }],
+  ['JSON 空內容', { shell: ': > "$ws/fake-session/model.json"' }],
+]) {
+  test(`正式複審拒收損毀模型紀錄：${label}，有效工具與模型足跡不能掩蓋它`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+    const { result, iso, box } = await reviewRun(options);
+    assert.equal(result.code, 2, '修正正式用途的模型日誌完整性檢查後重跑本檔');
+    assert.equal(result.review, undefined);
+    assert.deepEqual(readdirSync(iso.resultsRoot), []);
+    assert.equal(existsSync(box), false);
+    assert.ok(result.summary.some((line) => line.includes('模型紀錄無法完整解碼或解析')), '需走到模型日誌完整性檢查，不能借前置失敗冒充拒收');
+  });
+
+  test(`掃描保留損毀模型紀錄的既有判準：${label}`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+    const { result, iso, box } = await reviewRun({ ...options, args: { purpose: 'scan' } });
+    assert.equal(result.code, 0, result.summary.join('\n'));
+    assert.equal(result.review, undefined);
+    assert.equal(readdirSync(iso.resultsRoot).length, 1);
+    assert.equal(existsSync(box), false);
+    assert.ok(result.summary.some((line) => line.includes('模型=grok-4.7')));
+  });
+}
