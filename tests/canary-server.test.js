@@ -217,7 +217,7 @@ test('④這個名字只有逐字拒絕清單擋得住（不在清單上＝放�
   assert.equal(withIt.deny, true);
   assert.match(withIt.why, /在拒絕清單上/u);
   // 這份夾具不是全放行：同一份清單擋得住家族網裡的（不靠逐字清單那一條）。
-  // 登記制之後 mcp__ 名字只有碰禁區連接器白名單上的工具靠家族網決定擋不擋，所以把它放上白名單、看雙保險擋不擋
+  // 把合成動作名放進唯讀白名單，是為了讓這個夾具能量到後面的家族網。
   const viaAllowlist = { ...MONEY, allowlist: [...MONEY.allowlist, 'submit_order'] };
   const d = decide('mcp__broker-x__submit_order', viaAllowlist);
   assert.equal(d.deny, true);

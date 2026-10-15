@@ -1,6 +1,6 @@
 {
   "repo": "teacherjung/ai-collab-kit",
-  "version": "3950482d0656bf78e7ff0d16ff9101b8e609b3ec",
+  "version": "2e910675ad5b4244bb5848185138efa379f0157d",
   "syncedAt": "2026-10-16",
   "entries": [
     {
@@ -155,7 +155,7 @@
     },
     {
       "mode": "100644",
-      "blob": "8ba14338eeb3169b02e8f3822b0d9a9ae0e8f6a2",
+      "blob": "3769de05e01905e9a263e9cf0e75aeae74de3035",
       "path": "tests/canary-server.test.js"
     },
     {
