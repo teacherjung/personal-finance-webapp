@@ -15,6 +15,8 @@
 //
 // ⚠️ 沒有任何一道閘登記成「已啟用」時，這支指令**不放行**（退出碼 2）。
 //    一支什麼都沒檢查就按下合併鍵的指令，比沒有這支指令更危險。
+//
+// 跑完在輸出後面印這一步相關的規矩原文（合了印 H6、沒合印 H1；見 rulesAfter）：只多印，不改退出碼。
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
@@ -23,6 +25,7 @@ const { read: readSettings } = require('./build-settings.js');
 const { gitEnv } = require('./git-env.js');
 const { ask, PlatformError } = require('./platform.js');
 const { fieldValue, canonicalRole, rolesOf } = require('./gates/check-collab-fields.js');
+const { ruleFooter } = require('./build-rules.js');
 
 const UNSET = '未設定';
 const ENABLED = '已啟用';
@@ -190,6 +193,14 @@ function mergeRun(changeId, { settings = readSettings(), run = runCommand, platf
   return { code: 0, lines };
 }
 
+/**
+ * 跑完印哪幾條規矩原文（按需印條文，build-rules.js 的 ruleFooter）：合了，下一步是驗收（H6）；
+ * 沒合（擋下或查不清楚），先問紅的是哪一題、不跳過閘（H1）。只接在輸出後面，不改退出碼。
+ */
+function rulesAfter(code) {
+  return code === 0 ? ['H6'] : ['H1'];
+}
+
 /** 指令列：<變更編號> [--merger <識別值>]。 */
 function parseArgs(argv) {
   const out = { changeId: undefined, merger: undefined };
@@ -205,8 +216,8 @@ if (require.main === module) {
   let result;
   try { result = mergeRun(changeId, { merger }); }
   catch (e) { result = { code: 2, lines: [`合併指令：沒預期到的錯誤（${(e && e.code) || (e && e.message) || '不明'}）——沒有按合併鍵。`] }; }
-  process.stdout.write(`${result.lines.join('\n')}\n`);
+  process.stdout.write(`${[...result.lines, ...ruleFooter(rulesAfter(result.code))].join('\n')}\n`);
   process.exit(result.code);
 }
 
-module.exports = { mergeRun, runCommand, parseArgs, UNSET, ENABLED, TOKENS };
+module.exports = { mergeRun, runCommand, parseArgs, rulesAfter, UNSET, ENABLED, TOKENS };

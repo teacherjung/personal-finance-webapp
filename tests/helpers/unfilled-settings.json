@@ -76,7 +76,7 @@
    "where": "未設定"
   },
   {
-   "item": "「指示檔」與「常設指示」寫在哪（兩方每次開工都會自動整份讀進去的那一份）",
+   "item": "「指示檔」與「常設指示」寫在哪（各方開工時會自動讀進去的那一份；每一家讀多少照它的限制，見位置欄）",
    "rules": "K6",
    "where": "未設定"
   },
@@ -103,6 +103,7 @@
   "maxEffort": "未設定",
   "isolation": {
    "provider": "未設定",
+   "lender": "未設定",
    "wrap": [],
    "boxRoot": "未設定",
    "forbidden": []
@@ -184,6 +185,7 @@
    "computer-use",
    "openaiDeveloperDocs"
   ],
+  "allowedTools": [],
   "allowlist": [
    "get_account_balances",
    "get_account_orders",
@@ -369,6 +371,19 @@
    "scan": "不掃"
   }
  },
+ "fastLane": {
+  "ai": {
+   "files": [
+    "未設定"
+   ],
+   "commentOnly": [
+    "未設定"
+   ],
+   "never": [
+    "未設定"
+   ]
+  }
+ },
  "reviewers": [
   {
    "participant": "未設定",
@@ -501,7 +516,7 @@
    "verified": ""
   },
   {
-   "name": "禁區攔截器（判斷一份，兩家 AI 的鉤子都呼叫它）",
+   "name": "禁區攔截器（判斷一份，接上鉤子的每一家 AI 都呼叫它；沒接的那一家＝靠自覺）",
    "rules": "B1",
    "state": "已安裝未啟用",
    "verified": ""
@@ -597,8 +612,8 @@
    "verified": ""
   },
   {
-   "name": "共用檔清單（釘住套件版本；專案改到套件的檔要記例外）",
-   "rules": "E7、K1",
+   "name": "共用檔清單（釘住套件版本；套件的檔只在套件改，同步前先查專案有沒有自己改過）",
+   "rules": "D5、K1",
    "state": "已安裝未啟用",
    "verified": ""
   },

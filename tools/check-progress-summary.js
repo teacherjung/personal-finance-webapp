@@ -15,6 +15,7 @@
 //   ③證據欄引的「附件第 N 條」在附件裡找得到（已結束那一節引的也查）；「45〜47」「1 〜 3」這種範圍會展開；
 //     附件可以另放一份檔（--attachments <附件檔>，擁有者 2026-10-07 裁「三件」的第三件：附件搬出摘要本檔、本文只留指標）：
 //     條號從那份檔讀（有「## 附件」那一節就讀那一節，沒有就整份讀；那一節出現兩次＝查不了），本檔的附件那一節這時可以只留指標、也可以沒有；同一個條號兩邊都有＝列出來；
+//     同一節（本檔那一節、附件檔）裡同一個條號出現兩次以上＝列出來，內容接起來查、不蓋掉（理財 #672 r5 第 1 條：蓋掉的話前一條引的 PR 不查、超長也漏量）；
 //     「附件第 … 條」裡拆不開、倒過來、不是 1〜MAX_REF 的整數、一個範圍超過 MAX_RANGE 條的，列成問題、不會卡住；
 //   ④到哪一步寫了「已合併」：引到的附件裡要找得到 PR（github.com 的完整網址——主機與路徑都要對，別站網址裡夾著 github.com 不算；
 //     或 --repos 登記過的「套件 #N」這種寫法，別名要整個對上、不可以被較短的別名搶走）；切段只看空白、不看任何標點（擁有者 2026-10-08 裁
@@ -27,11 +28,11 @@
 //     「已留」要有解析得出的附件條號、滿 30 天該刪；本週成果那一節：只認「- 月/日」與它底下縮排的子項目，其餘列出；
 //     子項目上面要有合法的日期行（沒有＝孤立、整組多縮排兩格＝日期行也縮了，都列出來，不讓成果躲過七天；r4 R2）；日期超過七天該刪。
 //   ⑥沒動的線（擁有者 2026-10-10 裁 a，進度摘要設計報告第一批）：暫停中的則，整理時間（文字最後改的那一刻）超過 STALE_PAUSED_DAYS 天＝列（第 15 天起），不是刪、給擁有者決定關掉還是叫回；
-//     施工中、等複審、等驗收、等裁示四種狀態的則（STALE_STATES），核實時間超過 STALE_VERIFIED_DAYS 天＝列（第 8 天起；Codex 唸出來才不會是上週的狀態）；暫停中的不重複列核實，
+//     施工中、等複審、等驗收、等裁示四種狀態的則（STALE_STATES），核實時間超過 STALE_VERIFIED_DAYS 天＝列（第 8 天起；唸摘要的那一方唸出來才不會是上週的狀態）；暫停中的不重複列核實，
 //     寫在進行中的「已結束」與不在選單的狀態不算（前者該搬去已結束那一節、後者已另列）；只比月日、未來的日期不算；月日從 STAMP 重讀、讀不出（例如一位數的月）＝已列成缺欄、不算天數；
 //     --strict 時這兩種跟其餘問題一樣算；「再改時間」＝核實與整理兩個時間都改成現在（只改核實會撞到「核實晚於整理」那一條）；
 //   ⑧大小與孤兒附件（擁有者 2026-10-10 授權 Fable 代裁 Q8；只列不擋、都用位元組算、換行先統一成 LF）：本文（整份減掉「本週成果」與「附件」兩節——本週成果是機器照那一週合了幾支印的、
-//     寫的人控制不了）超過 BODY_MAX_BYTES＝列；附件（另放一份檔就量整份檔，放本檔就量那一節）超過 ATTACH_MAX_BYTES＝列；一條附件（從原文量，條號那一行起到下一條前、空行不算）
+//     寫的人控制不了）超過 BODY_MAX_BYTES＝列；附件（另放一份檔就量整份檔，放本檔就量那一節）超過 ATTACH_MAX_BYTES＝列；一條附件（從原文量，條號那一行起到下一條前、空行不算；同號的每一條各量各的）
 //     超過 ATTACH_ITEM_MAX_BYTES＝列（從原文量：空行以外每一行原樣都算，含分隔線與條號的前導零；只放去哪查，逐輪經過留在 PR 說明；#72 r1 R2）；本文與附件那一節只算真的存在的換行（#72 r1 R1）；沒有任何一則引用的附件條＝列（附件那一節以外的引用都算，只被別的附件條引用不算；
 //     附件條跟它的線一起到期：已結束那一行滿 30 天刪時它引的附件條一起刪，刪前先確認裡面沒有還沒貼出去的原話或還沒歸位的決定）。
 //   ⑦最近誰提交（擁有者 2026-10-10 裁「那三件小事就做」的第三件）：摘要在 git 倉庫裡（那一層是個小倉庫）就印最近 RECENT_HOURS 小時改過本檔的提交（--recent <小時> 改窗口，只收非負整數）；
@@ -218,16 +219,30 @@ function findSections(sections, heading) {
   return sections.filter((s) => s.heading.startsWith(heading));
 }
 
-/** 附件：編號 → 那一條的全文（含接在後面、沒有編號的續行）。 */
-function parseAttachments(lines) {
+/**
+ * 附件：編號 → 那一條的全文（含接在後面、沒有編號的續行）。同一節裡同一個條號出現第二次＝記進 dups（呼叫端列成問題），
+ * 內容接在前一條後面、不蓋掉（理財 #672 r5 第 1 條：蓋掉的話前一條引的 PR 就不查了）。
+ */
+function parseAttachments(lines, dups = []) {
   const out = new Map();
   let current = null;
   for (const line of lines) {
     const m = /^(\d+)\. (.*)$/u.exec(line);
-    if (m) { current = Number(m[1]); out.set(current, m[2]); continue; }
+    if (m) {
+      current = Number(m[1]);
+      if (out.has(current)) { dups.push(current); out.set(current, `${out.get(current)}\n${m[2]}`); } else out.set(current, m[2]);
+      continue;
+    }
     if (current !== null && line.trim()) out.set(current, `${out.get(current)}\n${line}`);
   }
   return out;
+}
+
+/** 同一節裡重號的條號列成問題：每個條號說一次、附出現幾次。 */
+function dupProblems(dups, where) {
+  const count = new Map();
+  for (const n of dups) count.set(n, (count.get(n) || 1) + 1);
+  return [...count].map(([n, k]) => `附件第 ${n} 條在${where}出現 ${k} 次，分不出哪一條算數（每一條的大小照量、引到的 PR 照查；改成不同的條號，或併成一條）`);
 }
 
 /** 進行中的線：每一則＝標題行＋到下一則之前的行；第一則之前的非空行是 stray，要列出來（r1 R1：縮排的標題以前被靜靜丟掉）。 */
@@ -416,13 +431,14 @@ function checkSizes(text, attachmentsText, attachments) {
   if (attachBytes > ATTACH_MAX_BYTES) problems.push(`大小：附件${attachmentsText !== null ? '檔' : '那一節'} ${attachBytes} 位元組，超過上限 ${ATTACH_MAX_BYTES}：先縮超過一條上限的、刪跟線一起到期的`);
   // 一條附件從原文量（#72 r1 R2：用解析後重組的文字會漏掉分隔線、條號的前導零，而且有沒有「## 附件」標題結果不同）：
   // 條號那一行起到下一條前，空行以外的每一行都算（原樣、含分隔線），行與行之間的換行算一個位元組
-  const sizes = new Map();
+  // 每一條原始條目各量各的（理財 #672 r5 第 1 條：用條號當 key 的話，同號的後一條會蓋掉前一條，超長的那條就漏量了）
+  const sizes = [];
   const measure = (raw) => {
     let cur = null;
     for (const line of raw) {
       const m = /^(\d+)\. /u.exec(line);
-      if (m) { cur = Number(m[1]); sizes.set(cur, bytesOf(line)); continue; }
-      if (cur !== null && line.trim()) sizes.set(cur, sizes.get(cur) + 1 + bytesOf(line));
+      if (m) { cur = { n: Number(m[1]), b: bytesOf(line) }; sizes.push(cur); continue; }
+      if (cur !== null && line.trim()) cur.b += 1 + bytesOf(line);
     }
   };
   measure(inlineLines);
@@ -436,7 +452,7 @@ function checkSizes(text, attachmentsText, attachments) {
       measure(next < 0 ? rest : rest.slice(0, next));
     }
   }
-  for (const [n, b] of sizes) {
+  for (const { n, b } of sizes) {
     if (b > ATTACH_ITEM_MAX_BYTES) problems.push(`附件第 ${n} 條 ${b} 位元組，超過一條的上限 ${ATTACH_ITEM_MAX_BYTES}：只留去哪查（網址、版本碼、留言編號、檔名），逐輪經過留在 PR 說明，全文可以搬到 Archive`);
   }
   const cited = new Set(parseRefs(refText.join('\n')).numbers);
@@ -462,20 +478,23 @@ function evaluate(text, { now, prStates = {}, repos = {}, offline = false, attac
     if (found.length > 1) return { unsure: `「${name}」那一節出現 ${found.length} 次，分不出哪一節算數` };
   }
   if (!now || !(now.year >= 2000) || !(now.month >= 1 && now.month <= 12) || !(now.day >= 1 && now.day <= 31)) return { unsure: '今天的日期讀不出來' };
-  const inline = attachmentSections.length ? parseAttachments(attachmentSections[0].lines) : new Map();
+  const inlineDups = [];
+  const inline = attachmentSections.length ? parseAttachments(attachmentSections[0].lines, inlineDups) : new Map();
   const attachments = new Map(inline);
-  const problems = [];
+  const problems = dupProblems(inlineDups, '摘要本檔的附件那一節');
   let fromFile = 0;
   if (attachmentsText !== null) {
     // 附件檔：有「## 附件」那一節就讀那一節，沒有就整份讀（檔頭、說明都不是條目，parseAttachments 只認「N. 」開頭的行）
     const fileSections = findSections(splitSections(attachmentsText), SECTIONS.attachments);
     // 附件檔裡那一節出現兩次＝跟本檔一樣查不了，不自己挑第一節（r1 R1）
     if (fileSections.length > 1) return { unsure: `附件檔裡「${SECTIONS.attachments}」那一節出現 ${fileSections.length} 次，分不出哪一節算數` };
-    const extra = fileSections.length ? parseAttachments(fileSections[0].lines) : parseAttachments(normalize(attachmentsText).split('\n'));
+    const fileDups = [];
+    const extra = parseAttachments(fileSections.length ? fileSections[0].lines : normalize(attachmentsText).split('\n'), fileDups);
+    problems.push(...dupProblems(fileDups, '附件檔'));
     fromFile = extra.size;
     for (const [n, body] of extra) {
       if (attachments.has(n)) problems.push(`附件第 ${n} 條在摘要本檔與附件檔都有，分不出哪一條算數（本檔那一節應該只留指標）`);
-      attachments.set(n, body);
+      attachments.set(n, attachments.has(n) ? `${attachments.get(n)}\n${body}` : body);
     }
   }
   const ctx = { now, prStates, repos, offline, attachments };

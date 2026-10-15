@@ -13,7 +13,7 @@
 //   換帳號＝編號不同，把新帳號的編號補進 servers／safeServers（碰錢那一欄的舊編號留著：考題要求至少包含範本、舊編號在新帳號比不到、
 //   留著無害；不碰錢那一欄不比、可以拿掉；拒絕清單那兩支下單工具的名字也綁著舊編號，要照新編號補一份）；
 //   正本與手續＝套件 README「搬進一個專案」第 1 步。name 保持「未設定」（settings.test.js ⑨ 釘著，新專案填名字才算接上攔截器）；
-//   每個專案擋的方向那六個清單至少要包含這一份（放行方向三欄不比）、範本自己的筆數與正本「預設字彙表」表格也釘著＝tests/forbidden-defaults.test.js。
+//   每個專案擋的方向那六個清單至少要包含這一份（放行方向的欄位不比）、範本自己的筆數與正本「預設字彙表」表格也釘著＝tests/forbidden-defaults.test.js。
 // ⚠️ 守不到的：新寫的考題不經過這裡、又直接跑本倉庫的工具（或呼叫純函式時不給設定、吃到預設讀真設定）——
 //   這一條由 tests/filled-settings.test.js 在「每一欄都填了假值」的複本裡整卷重跑來抓（照設定叫外面＝錄音機記到＝紅）；考題沒走到的分支仍靠複審。
 'use strict';
@@ -32,15 +32,23 @@ const unfilled = () => JSON.parse(fs.readFileSync(UNFILLED_FILE, 'utf8'));
 /**
  * 搭一份複本、在裡面跑一支工具，跑完就收掉。回 spawnSync 的結果。
  * @param {string} relTool 相對套件根目錄的工具路徑，例如 'tools/gates/check-stacked.js'
+ * files：另外要從本倉庫照搬進複本根目錄的檔（相對路徑，例如 ['rules.json']）；預設只有 tools/ 與設定，
+ * 所以工具在複本裡讀不到規矩資料——要看「讀不到時工具照常」的考題就不給。
+ * seed：跑之前寫進複本的檔（{ 相對路徑: 內容 }，例如假閘、假平台指令、預先放好的哨兵）。
+ * after：跑完、複本收掉之前叫一次 after(複本目錄)，回傳值放在結果的 after 欄（考題拿它看工具有沒有寫檔）。
  */
-function runInCopy(relTool, args = [], { settings = unfilled(), input } = {}) {
+function runInCopy(relTool, args = [], { settings = unfilled(), input, files = [], seed = {}, after } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kit-copy-'));
   try {
     fs.cpSync(path.join(KIT_ROOT, 'tools'), path.join(dir, 'tools'), { recursive: true });
+    for (const rel of files) fs.copyFileSync(path.join(KIT_ROOT, rel), path.join(dir, rel));
+    for (const [rel, content] of Object.entries(seed)) fs.writeFileSync(path.join(dir, rel), content);
     fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(settings));
     const env = gitEnv();
     delete env.NODE_TEST_CONTEXT;
-    return spawnSync(process.execPath, [path.join(dir, relTool), ...args], { cwd: dir, env, input, encoding: 'utf8' });
+    const result = spawnSync(process.execPath, [path.join(dir, relTool), ...args], { cwd: dir, env, input, encoding: 'utf8' });
+    if (after) result.after = after(dir);
+    return result;
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

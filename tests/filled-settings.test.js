@@ -22,7 +22,8 @@
 //   所以巢狀那一輪固定走「不帶」那條路，而且這一題核對它真的走了（五題跳過、原因寫出來）。帶案例簿時的完整檢查由外層那一輪做
 //   （套件自己的倉庫）；在不帶案例簿的專案裡，外層同樣是跳過。
 // 共用檔清單：反過來，複本**照使用專案的樣子帶一份**（空白範本那一列是已安裝未啟用，假設定把它翻成已啟用；複本 git init 之後
-//   先跑 kit-lock.js --write 寫清單；--write 要讀套件倉庫，所以在旁邊另建一個只放共用檔的假套件倉庫、提交一次當那一版），
+//   先跑 kit-lock.js --write 寫清單；--write 要讀套件倉庫，所以在旁邊另建一個只放共用檔的假套件倉庫、提交一次當那一版；
+//   --write 只收套件主幹上的版本，所以假套件另放一份只寫主幹名的設定、把 origin/<主幹> 指到那一顆），
 //   所以巢狀那一輪真的走「工作樹對清單」那一題；套件倉庫自己是上游、外層那一輪是跳過。
 // ⚠️ 守不到的：考題沒走到的分支；考題自己寫死、既不讀設定也不叫 gh 的外部呼叫；
 //   假 gh 只攔「保留測試環境 PATH 的 gh 呼叫」——用絕對路徑叫 gh、或經過會重建 PATH 的 shell（例如 sh -lc）就攔不到，
@@ -58,7 +59,7 @@ function fakeFilled({ log, box, zones }) {
   s.mainBranch = 'main';
   s.defaultDivision = { implementer: 'Alpha', reviewer: 'Beta' };
   s.owner = 'Boss';
-  s.scanner = { tool: '假的掃描者', assignedBy: 'Alpha', tieBreak: '無', fallback: '無', strongest: '假的最強', maxEffort: '假的最高', isolation: { provider: '專案自建', wrap: [...recorder(log, 'isolation'), '{box}'], boxRoot: box, forbidden: zones } };
+  s.scanner = { tool: '假的掃描者', assignedBy: 'Alpha', tieBreak: '無', fallback: '無', strongest: '假的最強', maxEffort: '假的最高', isolation: { provider: '專案自建', lender: '未設定', wrap: [...recorder(log, 'isolation'), '{box}'], boxRoot: box, forbidden: zones } };
   s.platform = {
     name: 'Fake', project: 'fake/repo', clearEnv: ['GH_REPO'],
     operations: Object.fromEntries(Object.entries(OPERATIONS).map(([name, op]) => [name, [...recorder(log, `op:${name}`), ...op.params.map((p) => `{${p}}`)]])),
@@ -120,7 +121,8 @@ test('整份考卷在「每一欄都填了假值」的設定底下跑：全綠�
     fs.mkdirSync(kitSrc);
     for (const p of SHARED_PATHS) if (fs.existsSync(path.join(copy, p))) fs.cpSync(path.join(copy, p), path.join(kitSrc, p), { recursive: true });
     const inKit = (args) => spawnSync('git', args, { cwd: kitSrc, env: { ...env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' }, encoding: 'utf8' });
-    for (const step of [['init', '-q'], ['add', '-A'], ['commit', '-q', '-m', 'kit']]) assert.equal(inKit(step).status, 0, `前提：假套件倉庫 git ${step[0]}`);
+    fs.writeFileSync(path.join(kitSrc, 'settings.json'), '{"mainBranch":"main"}\n');
+    for (const step of [['init', '-q'], ['add', '-A'], ['commit', '-q', '-m', 'kit'], ['update-ref', 'refs/remotes/origin/main', 'HEAD']]) assert.equal(inKit(step).status, 0, `前提：假套件倉庫 git ${step[0]}`);
     const kitVersion = inKit(['rev-parse', 'HEAD']).stdout.trim();
     const lockRun = sh([process.execPath, 'tools/kit-lock.js', '--write', '--kit', kitSrc, '--version', kitVersion, '--repo', 'acct/kit', '--date', '2026-09-29']);
     assert.equal(lockRun.status, 0, `前提：複本寫得出共用檔清單（${lockRun.stdout}${lockRun.stderr}）`);

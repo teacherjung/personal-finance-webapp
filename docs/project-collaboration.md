@@ -6,6 +6,24 @@
 
 > 2026-09-17（搬家第 5 步）起，本專案的協作規矩正本＝`RULES.md`（套件本文，由 `rules.json` 產生、不手改），機器登記與專案值＝`settings.json`（人讀的產物＝`PROJECT-SETTINGS.md`），範本＝`templates/`（套件產物、本專案不改也不加檔），每條規矩有哪台機器守＝`MACHINES.md`。本節只放**只有本專案才有的值**：路徑、指令列、人名與現況。技術規則依共同入口 AGENTS.md 的路由表查各份正本。
 
+### 共用檔清單（RULES D5）
+
+本專案的操作指路（實作者操作化；範圍、流向與分工以 RULES D5 為正本）：
+
+- 開工列好預計修改的完整路徑後，在施工樹根跑 `node tools/kit-lock.js --touch <路徑…>`；送審前用本支實際改動的路徑再核對。退出碼的讀法與下一步見 RULES D5、`tools/kit-lock.js` 檔頭及 `templates/review-fixed-dimensions.md`「共用檔清單」。
+- 同步的版本與操作見 `tools/kit-lock.js --sync` 用法；PR 說明依複審必驗清單「共用檔清單」留同步前檢查及前後清單差異。攔截器相關檔案的變動與後續驗收仍依本檔合併段、`settings.json` 的 F 級動作及 `docs/money-guard-operations.md`。
+
+### 套件檔常設指示
+
+**原話與來源**：以下日期與引文照[套件 AGENTS.md 的固定版本](https://github.com/teacherjung/ai-collab-kit/blob/436ca9bd4277450812ceec00a509bf8cc9331f37/AGENTS.md#L65)；[無例外裁示留痕](https://github.com/teacherjung/ai-collab-kit/pull/106#issuecomment-6177109301)標明由 Claude 轉述。
+
+- 2026-10-05：「我想要定一個規則，就是所有的專案裏面的檔案，只要是從套件裏面同步過去的，都不能做更改，只能在套件這邊改完之後同步回去。專案能改的是他其他的檔案，也就是不是套件複製過去的檔案。」
+- 2026-10-14：「那就幫我把這道保護補上：共用檔案都先在套件修改，再同步到理財；同步前如果發現理財有獨有的修改，就先擋下來，不要覆蓋。記得避開目前正在做的 PR，這個分工也要寫進共同規則。」「我們是不是應該有個共用檔案清單，請理財這邊開工前先查看，如果會動到就跟擁有者說，改動應該去套件那邊實作，在同步回理財。」
+- 2026-10-15：「A（建議）：一律不能改，沒有例外。範圍照清單算，從範本抄出來再填的檔算專案自己的。急的時候先用專案自己的設定止血，例如在專案的禁區清單多擋一個工具名（這要你點頭），再走「套件一支、同步一支」。」
+- 2026-10-15，對「先寫原話、再改規矩與機器、最後同步理財」的施工順序選「A（建議）」；[裁示留痕](https://github.com/teacherjung/ai-collab-kit/pull/106#issuecomment-6177110512)。
+
+**本次操作化（不是原話）**：範圍、流向與分工依 RULES D5；本專案開工與送審操作見「共用檔清單」節。
+
 ### 工作目錄與樹（RULES D2、F1）
 
 - **Claude 與 Codex 都在本機工作**（Codex 為本機 CLI，非雲端）——改動只存在工作目錄，`git commit` 才進歷史、`git push` 才上 GitHub。
@@ -42,7 +60,7 @@
 
 ### 審查（RULES F1〜F10）
 
-- **套件的審查規定（2026-10-10 整批同步起）**：風險級別＝RULES D4 與 `node tools/risk-tier.js <編號>`；複審與掃描分級＝RULES F2、G1 與 `PROJECT-SETTINGS.md` 第十節；送審提示＝RULES F3 與 `templates/review-request.md`，可以用 `node tools/review-launch.js <編號> --reviewer <識別值> --dir <資料夾>` 產生；送審前跑 `node tools/stale-text.js`（RULES K5）；複審者的模型、推理與怎麼起＝RULES F11 與 `settings.json` 的 reviewers（`PROJECT-SETTINGS.md` 第十一節）；文字快速通道＝RULES F12（William 當複審者，結論標頭的角色寫 `William`、來源字串寫 `William 本人`）。口頭指定過的模型與推理（含 9/29、10/1 兩次）一律由設定第十一節與 C28 取代。下面兩條（觸發與指令列、送審提示詞）跟它們不一致的，以它們為準；複審必驗清單的項號以同步進來的 `templates/review-fixed-dimensions.md` 為準。
+- **套件的審查規定（2026-10-10 整批同步起）**：風險級別＝RULES D4 與 `node tools/risk-tier.js <編號>`；複審與掃描分級＝RULES F2、G1 與 `PROJECT-SETTINGS.md` 第十節；送審提示＝RULES F3 與 `templates/review-request.md`，可以用 `node tools/review-launch.js <編號> --reviewer <識別值> --dir <資料夾>` 產生；送審前跑 `node tools/stale-text.js`（RULES K5）；複審者的模型、推理與怎麼起＝RULES F11 與 `settings.json` 的 reviewers（`PROJECT-SETTINGS.md` 第十一節）；快速通道＝RULES F12；擁有者通道的本專案值：William 當複審者，結論標頭的角色寫 `William`、來源字串寫 `William 本人`；AI 通道的範圍由 `settings.json` 的 `fastLane.ai` 登記，本專案維持未登記。口頭指定過的模型與推理（含 9/29、10/1 兩次）一律由設定第十一節與 C28 取代。下面兩條（觸發與指令列、送審提示詞）跟它們不一致的，以它們為準；複審必驗清單的項號以同步進來的 `templates/review-fixed-dimensions.md` 為準。
 - **Codex 審查的觸發（William 常設授權，2026-07-27 立、2026-08-03 擴充）**：Claude 直接用本機 `codex` CLI 起審查、不必先問——PR 進行中的每一輪複審，與每批合併進 main 後的例行審查。指令列＝`codex exec -m <當輪最強模型> -c model_reasoning_effort='"<最高推理>"' -s workspace-write -c sandbox_workspace_write.network_access=true -C "/private/tmp/codex-review-pr<N>" - < <提示詞檔>`（模型與推理依 AGENTS.md 常設指示 C28：發審者每輪依平台當時提供的模型與推理等級清單核對，明確指定最強模型、最高推理；不使用 auto 選模／推理或自動升降級模式，判不出最高者先問 William；歷史設定 gpt-6-astra／xhigh 是 William 2026-09-07 的裁示、落點＝https://github.com/teacherjung/personal-finance-webapp/pull/579#issuecomment-5574063644 ；設定寫在指令上、不動 `~/.codex/config.toml`；網路要開，否則綁 localhost 的端點測試被沙箱擋掉 `listen EPERM`；其餘一律這組設定、AI 不可自行分類降級）。審查樹由實作者備與收，複審者不得自建 worktree；diff 一律 `git diff -M origin/main...HEAD`。
 - **送審提示詞＝RULES F3 與 `templates/review-request.md`**；本節仍是本專案複審必讀文件，來源字串的標準表＝`PROJECT-SETTINGS.md`。複審必驗清單「看情況查」的本專案落點：金額顯示走共用格式器（`money`／`moneyCur`／`pct`，`public/app.js`）；共用樣式住 `public/styles.css`。
 - 複審者絕不讀 `data/store.db`（含 `.bak`／`-wal`／`-shm`）與 `data/store.json`（比 RULES B4 子點嚴：套件准 AI 在真實資料上唯讀驗證；本專案刻意照留，放寬先問 William；實作者標註）；缺 `node_modules`＝備樹失敗，停下回報、不自行 `npm install`；動到 money 路徑的支，送審前用隔離的 `STORE_FILE` 重現。

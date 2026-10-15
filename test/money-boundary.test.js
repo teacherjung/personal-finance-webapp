@@ -52,14 +52,10 @@
  *     會漏接——第二層 hook 接住它：2026-09-27（⑧，套件登記制同步進來）起是**登記制**（新編號沒登記＝整個連接器擋，
  *     名字像錢的，理由的尾句照接規則 3 那一句）；在那之前是家族網只認工具名、不認 UUID。
  *     所以本考題對 hook 做**逐名行為驗證**（含假 UUID 情境），不只驗「字串有出現」；換了編號之後的登記手續＝docs/money-guard-operations.md 機械層。
- *   - 正則自 2026-08-04 起擴編為**家族攔截**（William 指示「所有轉帳相關詞都進攔截器」）：
- *     動詞×名詞鎖（place/submit/cancel…×order/trade/position…）＋出入金關鍵詞
- *     （transfer/withdraw/deposit…；唯讀動詞前綴 get_/list_/search_… 放行）＋換匯三動詞。
- *     即便如此**仍列舉不完所有未來名字**（起怪名的工具照樣漏網）——規則 1 的語意
- *     （「任何現在或未來…的工具」）＋規則 4 的通報義務仍是最後防線，這層不變。
- *     ⚠️ 2026-09-27（⑧，登記制）起家族網**只問得到**碰錢連接器白名單上的工具（與不是 mcp__ 開頭的名字）：沒登記的連接器整個擋
- *     （不管叫什麼）、登記為不碰錢的連接器整個放行（家族網不管——William 2026-09-26 裁示的代價）。所以「列舉不完」現在落在
- *     「不碰錢的連接器登記錯了、或它自己長出會動錢的工具」這一類，仍由規則 1＋規則 4 接住；家族網本身的擋與不誤殺改走夾具量（下面「家族網矩陣走夾具」那一題）。
+ *   - 家族網的判準與射程＝docs/money-guard-two-pattern-tables.md「兩張樣式表」，不在考題註解另抄。
+ *     名字列舉不完、也不能證明工具實際能力；規則 1 的語意禁令與規則 4 的新能力通報義務仍須遵守。
+ *     本檔另備家族網夾具，是為了避免只量到登記結果；理由類別不同，不能把「都拒絕」當成同一道防線。
+ *     夾具考題的題名關鍵字「家族網矩陣走夾具」；其結果不能推廣成所有登記路徑或平台實際工具的證明。
  *   - r2 改造（Codex #404 r1）：判斷主體從 matcher 正則移進 hook 指令（grep -iE 兩段式），
  *     **大小寫與 _ / - / . 分隔符不敏感**（MCP 名字規格允許大寫、連字號、句點——小寫底線
  *     只是慣例；Place_Order／placeOrder／place-order 全都攔）；動詞前可帶前綴詞
@@ -76,25 +72,17 @@
  *     TRANSFERFunds 型補 acronym→Word 邊界正規化；③考題的 matcher 判定改用 Claude
  *     混合語意（純文字＝全等、含特殊字元才是正規式）＋ '^mcp__' 字面釘＋非 MCP 反向探針。
  *   - 擴編的取捨方向＝**寧可誤殺、不可漏擋**（生存優先）。
- *     ⚠️ 2026-09-27（⑧，登記制）起真實誤攔面的第一名是**「沒有登記」**：沒登記的連接器上什麼名字都擋、理由是登記制不是家族網
- *     （處置＝docs/money-guard-operations.md 機械層的登記手續，碰不碰錢由 William 裁）；登記為不碰錢的連接器上，下面①②那種名字整個放行、
- *     根本不經過家族網。**下面①②只剩碰錢連接器白名單上的工具（與不是 mcp__ 開頭的名字）會遇到。**
- *     家族網本身的誤攔面（照實劃界，r1 抓過
- *     描述不準）：①唯讀豁免＝**前綴動詞封閉名單**（get/list/…/retrieve/export/download）——
- *     名單外的讀取動詞（如 obtain_）帶錢詞會被誤攔，處置＝報 William 加名單。
- *     ⚠️ **2026-09-24 起這個補救的射程變窄**（#641 r2 #1）：範圍＝「**兩張樣式表**」
- *     （正本＝`docs/money-guard-two-pattern-tables.md`，這裡不重述）。**加前綴名單救得到哪一道、救不到哪一道，
- *     以那一段為準**；救不到的那些誤攔要照裁示流程處理。（r6 #3 抓到我指路之後又把機制講了一次。）
- *     ②跨域名詞撞名（delete_stock_photo 型）仍會誤攔（trademark／sharepoint 型已用
- *     名詞邊界修掉）；③名字說謊的工具（叫 get_ 卻會動錢）＝**哪一類擋得住、哪一類仍免疫、
- *     誤擋清單全部見「兩張樣式表」**（正本＝`docs/money-guard-two-pattern-tables.md`；本檔不重述，
- *     r5 #2 抓到我指路之後又重述一次）。免疫不了的那幾類屬規則 1 語意＋規則 4 通報義務層。
- *     誤攔的代價是不便、漏攔的代價是錢。
+ *     誤攔的代價是不便、漏攔的代價是錢；名字判斷仍可能漏網。
+ *     誤攔／漏攔的樣本、歸因與量測範圍見 docs/money-guard-two-pattern-tables.md「兩張樣式表」；
+ *     本檔夾具不提供真實工具誤攔率，也不證明名字像唯讀的工具真的唯讀。
+ *     登記與誤攔處置見 docs/money-guard-operations.md；不能只為了讓一個名字通過就自行放寬防線。
+ *     #641 r5、r6 曾抓到本檔在指路之後又重抄機制，所以這裡只保留代價、考題射程與正本路標。
  *   - SIGKILL 殺的是直接子行程（bash）；handler 若刻意生出「抓住 stdout 的孤兒孫行程」
  *     理論上仍能拖延考題（repo 內的 handler 是受審的 echo 一行，這條寫著防未來）。
  */
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -475,5 +463,41 @@ test('兩層互相涵蓋：deny 點名的每一支工具，hook 層對它也是�
   for (const rule of denyOrderTools) {
     assert.ok(entriesBlocking(settings, rule).length >= 1,
       `deny 點名了 ${rule}，但 hook 層對它不是實跑回 deny——兩層各自為政，改一層忘一層就會裂縫。`);
+  }
+});
+
+const EXACT_REGISTRATION_HINT = '；核對 settings.json 的 forbidden.allowedTools 與 tools/forbidden-tools.js，修正後重跑 node --test test/money-boundary.test.js';
+
+test('個別工具登記：全名集合等於核准快照，逐項交正式判斷層可通過', () => {
+  const forbidden = projectForbidden();
+  assert.ok(Array.isArray(forbidden.allowedTools), 'forbidden.allowedTools 必須是陣列' + EXACT_REGISTRATION_HINT);
+  const names = forbidden.allowedTools;
+  assert.ok(names.every((name) => typeof name === 'string'), '核准全名應為字串' + EXACT_REGISTRATION_HINT);
+  assert.equal(names.length, 350, '個別工具登記數量與核准快照不符' + EXACT_REGISTRATION_HINT);
+  assert.equal(new Set(names).size, names.length, '個別工具登記有重複全名' + EXACT_REGISTRATION_HINT);
+  // 期望值固定取自核准快照，避免待驗清單自己產生期望值；不驗工具的實際能力或連線。
+  const digest = createHash('sha256').update(`${[...names].sort().join('\n')}\n`).digest('hex');
+  assert.equal(digest, '6e9afe261e49392f67aef73f832e414000c5e7803922d92cea93fb22716227d5',
+    '個別工具登記與核准全名集合不符；更換集合須連授權與取樣證據核對' + EXACT_REGISTRATION_HINT);
+  for (const name of names) assert.equal(decide(name, forbidden).deny, false, `核准登記未放行：${name}` + EXACT_REGISTRATION_HINT);
+});
+
+test('個別工具登記：代表名依完整登記通過，缺字、大小寫變體及同連接器未知名仍由登記制拒絕', () => {
+  const forbidden = projectForbidden();
+  assert.ok(Array.isArray(forbidden.allowedTools), 'forbidden.allowedTools 必須是陣列' + EXACT_REGISTRATION_HINT);
+  const registered = ['mcp__codex_app__list_artifacts', 'mcp__codex_apps__github__get_repo', 'mcp__cua_repl__js'];
+  const absent = ['mcp__codex_app__list_artifact', 'mcp__codex_apps__github__get_Repo', 'mcp__cua_repl__read_registration_probe_unknown'];
+  for (const name of registered) {
+    assert.ok(forbidden.allowedTools.includes(name), `前提：代表名須在個別登記上：${name}` + EXACT_REGISTRATION_HINT);
+    assert.equal(decide(name, forbidden).deny, false, `代表名未放行：${name}` + EXACT_REGISTRATION_HINT);
+    const withoutExact = decide(name, { ...forbidden, allowedTools: [] });
+    assert.equal(withoutExact.deny, true, `前提：代表名不可由整個連接器登記代放：${name}` + EXACT_REGISTRATION_HINT);
+    assert.equal(reasonClass(withoutExact.why), 'registry', `前提：移除個別登記後應走登記制：${name}` + EXACT_REGISTRATION_HINT);
+  }
+  for (const name of absent) {
+    assert.ok(!forbidden.allowedTools.includes(name), `前提：近似名未經登記：${name}` + EXACT_REGISTRATION_HINT);
+    const result = decide(name, forbidden);
+    assert.equal(result.deny, true, `未登記近似名被放行：${name}` + EXACT_REGISTRATION_HINT);
+    assert.equal(reasonClass(result.why), 'registry', `近似名應由登記制拒絕：${name}` + EXACT_REGISTRATION_HINT);
   }
 });

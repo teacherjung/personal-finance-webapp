@@ -6,8 +6,8 @@
 
 1. **不分任務，全文讀 [RULES.md](RULES.md)、[共用底層契約](docs/contracts/shared-foundation.md) 與 [本專案協作附則](docs/project-collaboration.md)**；本檔的錢的絕對邊界與鐵則同樣不經路由。
 2. 查 [領域契約路由表](docs/contracts/README.md)，以預計修改的完整路徑搜尋，命中幾份就全文讀幾份；再依下表讀相關正本。接手一段時間沒碰的工作，先讀 [PROJECT.md](PROJECT.md) 的「重要決定（已拍板，勿重議）」。
-3. 開工前跑一次 `node tools/pending-rulings.js`（不帶參數；RULES D1）；本專案的值與留痕方式見協作附則「審查回饋處置」。
-4. 實作者、複審者、發審者依 [協作附則](docs/project-collaboration.md) 操作。合併時在釘住受審版本的樹根目錄跑 `node tools/merge.js <編號> --merger <識別值>`；合併地點、失敗處置及驗收依附則。結論標頭見 [範本](templates/verdict-header.md)。
+3. 開工前跑一次 `node tools/pending-rulings.js`（不帶參數；RULES D1）；留痕與共用檔查清單（D5）見協作附則。
+4. 實作、複審、發審、合併與驗收依[協作附則](docs/project-collaboration.md)；結論標頭見[範本](templates/verdict-header.md)。
 
 |何時讀|正本|
 |---|---|
@@ -162,6 +162,7 @@
 
 以下日期為 UTC；原話照錄。括號外的背景與解讀依 2026-10-03 經 William 指示採用的交接，與原話分開標示。
 
+- **套件檔無例外｜2026-10-15**：原話與操作化見[協作附則](docs/project-collaboration.md#套件檔常設指示)。
 - **2026-10-14 UTC**：「需要裁示請直接問GPT6.1 Sol」
 - **複審模型｜2026-10-13 UTC**：「複審幫我改用Opus模型」（#679／6137507759）。
 - **PR 上限｜2026-10-12 UTC 本人更新**：「PR 上限改為各專案分別計算：理財最多兩支、套件最多兩支，草稿也算。這次本人指示取代先前跨專案合計兩支的解讀與代裁；仍須避免與 Claude 的工作衝突。請留痕後繼續原任務。」[本人留痕](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6126118007)。

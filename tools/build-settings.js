@@ -22,7 +22,10 @@ const outFile = path.join(root, 'PROJECT-SETTINGS.md');
 const LINE_BREAK = /[\n\r\u0085\u2028\u2029\v\f]/u;
 const hasNul = (s) => String(s).includes('\u0000');
 const STATES = ['未移植', '已安裝未啟用', '已啟用'];
-const PROVIDERS = ['未設定', '無', '工具自帶', '專案自建'];
+const PROVIDERS = ['未設定', '無', '工具自帶', '專案自建', '借用'];
+// 「借用」＝用別的專案現成的隔離與掃描（套件倉庫借理財專案的，擁有者 2026-10-05「A，先借用試試看」；Fable 2026-10-11 代裁加這個值）：
+// 前綴、盒子位置、禁區只住出借的那一份，這裡不抄（抄了會漂移）；填出借的專案名（關係，不是路徑）
+const BORROWED = '借用';
 // 風險級別只有這三種、從重到輕（規矩 D4 定的，不是專案的值）
 const RISK_TIERS = ['高', '中', '低'];
 
@@ -68,12 +71,12 @@ function build(data) {
   // 預設分工（A1）只排版、沒有機器讀它；要在這裡明寫——產生器不認得的欄位不會自己出現在說明書裡
   const division = data.defaultDivision || {};
   out.push(`預設分工（規矩 A1；裁示者沒有逐支指定時，PR說明的「實作者」「複審者」兩欄照這個填）：實作者＝${plain(division.implementer, '預設分工的實作者')}；複審者＝${plain(division.reviewer, '預設分工的複審者')}`, '');
-  // 擁有者另登一欄、不從參與者的角色字樣去猜：裁示者可以由擁有者指定給別人（A1），文字快速通道（F12）的複審者卻一定是擁有者
+  // 擁有者另登一欄、不從參與者的角色字樣去猜：裁示者可以由擁有者指定給別人（A1），快速通道（擁有者）（F12）的複審者卻一定是擁有者
   const owner = data.owner === undefined ? '未設定' : data.owner;
   if (typeof owner === 'string' && owner.trim() !== '未設定' && !(data.participants || []).some((p) => p && typeof p.id === 'string' && p.id.trim() === owner.trim())) {
     throw new Error(`擁有者「${owner}」不是上表登記的識別值`);
   }
-  out.push(`擁有者（規矩 A1；文字快速通道由他當複審者，F12，結論閘認他的「通過」不要求固定小標）：${plain(owner, '擁有者識別值')}`, '');
+  out.push(`擁有者（規矩 A1；快速通道（擁有者）由他當複審者，F12，結論閘認他的「通過」不要求固定小標）：${plain(owner, '擁有者識別值')}`, '');
   out.push('## 二、來源字串標準表（結論標頭的來源欄；寫作義務：跨輪次一字不改、不含會變的東西）', '');
   out.push('| 審查工具或工作階段 | 逐字來源字串 |', '|---|---|');
   for (const s of data.sources) {
@@ -98,23 +101,45 @@ function build(data) {
   out.push(`- 誰指派、登記在哪：${plain(data.scanner.assignedBy, '掃描發射者的指派方式')}`);
   out.push(`- 兩方都起得了時：${plain(data.scanner.tieBreak, '平手規則')}`);
   out.push(`- 沒有合格者時，誰記錄未執行、誰轉正式：${plain(data.scanner.fallback, '無合格者時的替代')}`);
-  // 掃描者的模型與推理（規矩 G1；擁有者 2026-10-04 的常設指示）：跟複審者那張表一樣，模型名只住這裡，換新模型只改這兩格
-  out.push(`- 掃描用的最強模型（規矩 G1；換新模型只改這裡）：${plain(data.scanner.strongest === undefined ? '未設定' : data.scanner.strongest, '掃描的最強模型')}；最高推理：${plain(data.scanner.maxEffort === undefined ? '未設定' : data.scanner.maxEffort, '掃描的最高推理')}`);
   const iso = data.scanner.isolation || {};
   if (!PROVIDERS.includes(iso.provider)) throw new Error(`隔離提供者「${iso.provider}」不在 ${PROVIDERS.join('／')} 裡`);
+  const borrowed = iso.provider === BORROWED;
+  // 掃描者的模型與推理（規矩 G1；擁有者 2026-10-04 的常設指示）：跟複審者那張表一樣，模型名只住這裡，換新模型只改這兩格。
+  // 借用時兩格只住出借的那一份：這裡只准省略或「未設定」、指路句由產生器自己印（#83 複審後掃：原本照印本機原值，抄了模型名也不會紅、會漂移）
+  if (borrowed) {
+    const own = (v) => v !== undefined && v !== '未設定';
+    if (own(data.scanner.strongest) || own(data.scanner.maxEffort)) throw new Error('借用時掃描的最強模型與最高推理只住出借的那一份：這裡不抄（省略或寫「未設定」）');
+    const lenderName = plain(iso.lender === undefined ? '未設定' : iso.lender, '出借隔離的專案');
+    out.push(`- 掃描用的最強模型（規矩 G1；借用時照出借的專案那一格，換新模型改那裡）：照出借的專案（${lenderName}）設定的那一格（掃描腳本讀那一格、配方聲明印實際值；這裡不抄一份）；最高推理：同上`);
+  } else {
+    out.push(`- 掃描用的最強模型（規矩 G1；換新模型只改這裡）：${plain(data.scanner.strongest === undefined ? '未設定' : data.scanner.strongest, '掃描的最強模型')}；最高推理：${plain(data.scanner.maxEffort === undefined ? '未設定' : data.scanner.maxEffort, '掃描的最高推理')}`);
+  }
   const wrap = Array.isArray(iso.wrap) ? iso.wrap : [];
   const forbidden = Array.isArray(iso.forbidden) ? iso.forbidden : [];
   out.push('', '隔離（規矩 G2；裁示者 2026-09-12 裁「丙」：隔離本身不在套件裡，由這裡指定誰提供；套件只帶掃前檢查與掃後檢查兩支小工具）：', '');
-  out.push(`- 由誰提供：${plain(iso.provider, '隔離提供者')}（「無」或「未設定」＝不掃，掃描紀錄寫「未執行：無隔離」）`);
-  out.push(`- 從盒內跑一條指令的前綴（{box} 會換成盒子路徑、{projectRoot} 會換成專案根目錄）：${plain(wrap.length ? argvText(wrap) : '未設定', '隔離指令前綴')}`);
-  out.push(`- 盒子建在：${plain(iso.boxRoot || '未設定', '盒子位置')}（未設定＝系統暫存區）`);
-  out.push(`- 盒內必須讀不到也寫不進的目錄（~ 代表家目錄；掃前檢查在每一個各埋一個假機密）：${plain(forbidden.length ? forbidden.join('、') : '未設定', '禁區清單')}`);
-  out.push('- 整條鏈（每一步退非零就停，掃描紀錄寫未執行）：');
-  out.push('  1. node tools/scan-probe.js：任一禁區用它的讀寫機制碰得到＝隔離是假的，不掃；連試探都做不成（含盒內起不了那個機制）＝不掃。');
-  out.push('  2. node tools/scan-probe.js --plant <清單檔>：在每個禁區埋一個掃描期間才有的假機密。清單檔不要貼進任何紀錄。');
-  out.push('  3. 起掃描者（本套件不代跑）。');
-  out.push('  4. node tools/scan-postmortem.js --secrets <清單檔> --reply <回覆檔> --logs <日誌目錄>：假機密或未給盒子的真值出現在任何輸出（含檔名）＝事故。');
-  out.push('  5. node tools/scan-probe.js --sweep <清單檔>：把埋下去的收掉。這一步一定要跑。');
+  if (borrowed) {
+    if (iso.lender === '未設定') throw new Error('提供者是「借用」卻沒填出借的專案');
+    const lender = plain(iso.lender, '出借隔離的專案');
+    // 專案名不會有的字一律擋：半形與全形斜線、百分號（編碼過的斜線）、冒號（磁碟機代號），`~`／`.`／空白開頭、空白結尾（#83 複審後掃抓到原本只看半形斜線與第一個字）
+    if (/[/\\／＼%:]|^[~.\s]|\s$/u.test(iso.lender)) throw new Error('出借隔離的專案要寫專案名（關係），不寫路徑');
+    // 前綴、禁區只准省略或空陣列：不是陣列的值（字串、null、帶 length 的物件）也算抄了（#83 複審後掃抓到原本只看長度）
+    const copied = (v) => v !== undefined && !(Array.isArray(v) && v.length === 0);
+    if (copied(iso.wrap) || copied(iso.forbidden) || (iso.boxRoot !== undefined && iso.boxRoot !== '未設定')) throw new Error('借用時前綴、盒子位置、禁區只住出借的那一份：這裡不抄（前綴與禁區省略或寫空陣列；盒子位置省略或寫「未設定」）');
+    out.push(`- 由誰提供：借用（出借的專案：${lender}）。試探、埋、比對、收都在出借的專案那邊、用它自己的工具與設定跑（測的就是真的要用的那個盒子）；怎麼跑寫在上面「掃描者」那一格。本專案的 node tools/scan-probe.js 試探與埋遇到借用一律退 2、指路過去，不假裝測過（收不讀設定、只刪清單上核對過的，借用時用出借那邊的收）。`);
+    out.push(`- 前綴、盒子位置、禁區清單：照出借的專案（${lender}）的設定，這裡不抄一份（抄了會漂移）。`);
+  } else {
+    if (iso.lender !== undefined && iso.lender !== '未設定') throw new Error('只有提供者是「借用」才填出借的專案（其他提供者留「未設定」）');
+    out.push(`- 由誰提供：${plain(iso.provider, '隔離提供者')}（「無」或「未設定」＝不掃，掃描紀錄寫「未執行：無隔離」；「借用」＝用別的專案現成的隔離）`);
+    out.push(`- 從盒內跑一條指令的前綴（{box} 會換成盒子路徑、{projectRoot} 會換成專案根目錄）：${plain(wrap.length ? argvText(wrap) : '未設定', '隔離指令前綴')}`);
+    out.push(`- 盒子建在：${plain(iso.boxRoot || '未設定', '盒子位置')}（未設定＝系統暫存區）`);
+    out.push(`- 盒內必須讀不到也寫不進的目錄（~ 代表家目錄；掃前檢查在每一個各埋一個假機密）：${plain(forbidden.length ? forbidden.join('、') : '未設定', '禁區清單')}`);
+    out.push('- 整條鏈（每一步退非零就停，掃描紀錄寫未執行）：');
+    out.push('  1. node tools/scan-probe.js：任一禁區用它的讀寫機制碰得到＝隔離是假的，不掃；連試探都做不成（含盒內起不了那個機制）＝不掃。');
+    out.push('  2. node tools/scan-probe.js --plant <清單檔>：在每個禁區埋一個掃描期間才有的假機密。清單檔不要貼進任何紀錄。');
+    out.push('  3. 起掃描者（本套件不代跑）。');
+    out.push('  4. node tools/scan-postmortem.js --secrets <清單檔> --reply <回覆檔> --logs <日誌目錄>：假機密或未給盒子的真值出現在任何輸出（含檔名）＝事故。');
+    out.push('  5. node tools/scan-probe.js --sweep <清單檔>：把埋下去的收掉。這一步一定要跑。');
+  }
   out.push('', '## 五、平台介面（規矩 E5、H1；閘要問平台的每一件事都走這裡）', '');
   out.push('套件只定「問什麼」與「答案長什麼樣」，每個動作填一條指令，指令要把答案印成約定形狀的 JSON。翻譯是這個專案的事，套件不碰任何平台的語彙。沒登記的動作被問到時一律不放行，不會回一個空答案假裝問過了。', '');
   out.push(`平台：${plain((data.platform && data.platform.name) || '未設定', '平台名稱')}；倉庫身分（指令裡的 {project}）：${plain((data.platform && data.platform.project) || '未設定', '倉庫身分')}；問平台前要清掉的選倉環境變數：${plain((data.platform && Array.isArray(data.platform.clearEnv) && data.platform.clearEnv.length) ? data.platform.clearEnv.join('、') : '（無）', '選倉環境變數')}`, '');
@@ -145,9 +170,10 @@ function build(data) {
   const fb = data.forbidden || {};
   const joinList = (xs) => (Array.isArray(xs) && xs.length ? xs.join('、') : '（空）');
   out.push(`- 禁區叫什麼：${plain(fb.name || '未設定', '禁區名稱')}（未設定＝攔截器一律拒絕）`);
-  out.push(`- 會動到禁區的連接器（白名單制；兩欄的登記名＝工具名 mcp__ 後面、下一個 __ 前面那一段，一個連接器一筆、逐字、沒有萬用字元）：${plain(joinList(fb.servers), '禁區連接器')}`);
-  out.push(`- 不會動到禁區的連接器（整個放行；登記制：mcp__ 開頭的名字所屬的連接器兩欄都沒登記＝一律拒絕，兩欄都空＝全擋）：${plain(joinList(fb.safeServers), '不碰禁區的連接器')}`);
-  out.push(`- 那些連接器上准用的唯讀工具：${plain(joinList(fb.allowlist), '唯讀名單')}`);
+  out.push(`- 會動到禁區的連接器（servers；登記方式與判斷見「兩張樣式表」）：${plain(joinList(fb.servers), '禁區連接器')}`);
+  out.push(`- 不會動到禁區的連接器（safeServers；登記方式與判斷見「兩張樣式表」）：${plain(joinList(fb.safeServers), '不碰禁區的連接器')}`);
+  out.push(`- 個別准用的完整工具名（allowedTools；登記方式與判斷見「兩張樣式表」）：${plain(joinList(fb.allowedTools), '個別工具名')}`);
+  out.push(`- 碰禁區連接器上准用的工具（allowlist；分工見「兩張樣式表」）：${plain(joinList(fb.allowlist), '唯讀名單')}`);
   out.push(`- 逐字拒絕的工具名：${plain(joinList(fb.deny), '拒絕清單')}`);
   out.push(`- 家族網的動詞：${plain(joinList(fb.verbs), '動詞')}；名詞：${plain(joinList(fb.nouns), '名詞')}；唯讀前綴（豁免到哪一道、代價與射程＝「兩張樣式表」，正本＝\`docs/money-guard-two-pattern-tables.md\`，本檔不重述）：${plain(joinList(fb.readPrefixes), '唯讀前綴')}\n- 兩張樣式表的條數：額外樣式 ${fb.patterns ? fb.patterns.length : 0} 條、patternsReadSafe ${fb.patternsReadSafe ? fb.patternsReadSafe.length : 0} 條（分工＝見「兩張樣式表」）`);
   out.push(`- 額外樣式（patterns）：${plain(joinList(fb.patterns), '額外樣式')}`);
@@ -180,6 +206,21 @@ function build(data) {
     const cell = (k, what) => plain(row[k] || '未設定', `${t}風險的${what}`);
     out.push(`| ${t} | ${cell('full', '全審')} | ${cell('diffOnly', '只核差異')} | ${cell('afterPassFix', '通過後那一輪')} | ${cell('scan', '掃描')} |`);
   }
+  // 快速通道（AI）收哪些檔（F12）：分級腳本照這三張判；任一張含「未設定」＝專案沒登記、不走
+  const lane = (data.fastLane || {}).ai || {};
+  out.push('', '快速通道（AI）收的檔（規矩 F12；分級腳本照這三張判，有一張是「未設定」＝不走；不掃描、複審者第 1 輪起只核差異）：', '');
+  const laneList = (key, what) => {
+    const list = lane[key] === undefined ? ['未設定'] : lane[key];   // 沒登記＝不走（跟上面幾張表一樣，沒填就印「未設定」）
+    if (!Array.isArray(list)) throw new Error(`快速通道（AI）的 ${key} 不是陣列`);
+    for (const pattern of list) {
+      if (pattern !== '未設定' && (typeof pattern !== 'string' || !pattern.startsWith('^'))) throw new Error(`快速通道（AI）的 ${key} 有一筆樣式沒以 ^ 開頭：${JSON.stringify(pattern)}`);
+      if (pattern !== '未設定') { try { new RegExp(pattern, 'u'); } catch { throw new Error(`快速通道（AI）的 ${key} 有一筆不是合法正規式：${pattern}`); } }
+    }
+    out.push(`- ${what}：${list.length ? list.map((x) => plain(x, `快速通道（AI）的 ${key}`)).join('、') : '（沒有）'}`);
+  };
+  laneList('files', '整檔改什麼都收（正規式）');
+  laneList('commentOnly', '只改註解才收（正規式；只認 // 開頭的整行註解，不收帶 @ 或工具指示的）');
+  laneList('never', '一律不收（正規式；先比這一張）');
   out.push('', '## 十一、複審者的模型與怎麼起（規矩 F1、F11；每個 AI 一列，換新模型改這裡——有釘值題的專案連釘值題一起改，套件倉庫自己的是 kit-only/settings-pin.test.js）', '');
   const reviewers = data.reviewers || [{}];
   const ids = (data.participants || []).map((p) => p.id);
@@ -235,4 +276,4 @@ if (require.main === module) {
   process.stdout.write(`寫好 PROJECT-SETTINGS.md：${data.machines.length} 支機器\n`);
 }
 
-module.exports = { build, read, dataFile, outFile, STATES, PROVIDERS, RISK_TIERS };
+module.exports = { build, read, dataFile, outFile, STATES, PROVIDERS, BORROWED, RISK_TIERS };

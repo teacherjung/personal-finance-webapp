@@ -7,6 +7,7 @@
 //   ③時間欄：缺整理、缺核實、核實沒有月/日 時:分、核實晚於整理；相等不算；整理、核實各讀自己那一段，缺的不借另一段的時間（r8 R1）；
 //   ④證據欄引的附件條號不存在；範圍「45〜47」「1 〜 3」都會展開（r1 R4）；拆不開、倒過來、超出安全整數或上限的條號列成問題、不會卡住（r1 R3）；證據欄一條都沒引也列；
 //     附件另放一份檔（--attachments）：條號從那份檔讀（有「## 附件」那一節就讀那一節、沒有就整份讀），本檔那一節只留指標或沒有都行，同一條兩邊都有＝列；
+//     同一節裡同一個條號出現兩次以上（⑮，理財 #672 r5 第 1 條）＝列一次、寫次數；每一條各量大小（超長那條後面接同號短條照樣列）、引到的 PR 都查（跟順序無關）；三種放法一樣；
 //   ⑤已合併：引到的附件沒有 PR＝核不了；離線只查這一點；平台答案不是布林（字串、物件）＝核不了，不當成已合併（r1 R5）；
 //     有答案時沒有一支合併＝列；施工中或等複審、沒寫已合併、引到的全合併了＝可能過期；「套件 #45」這種寫法要 --repos 登記才算，`__proto__` 也登記得進去（r1 R8）；
 //     切段只看空白、不看任何標點（擁有者 2026-10-08 裁）：一段裡第一個「://」不是 http(s) 的 GitHub PR 網址（大小寫不分、ftp 這類也算網址），那一段後面的全部不算
@@ -36,6 +37,12 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { run, evaluate, fetchPrStates, ghEnv, expandRefs, parseRefs, prRefs, parseArgs, FIELDS, DONE_DAYS, WEEK_DAYS, STALE_PAUSED_DAYS, STALE_VERIFIED_DAYS, STALE_STATES, RECENT_HOURS, BODY_MAX_BYTES, ATTACH_MAX_BYTES, ATTACH_ITEM_MAX_BYTES } = require('../tools/check-progress-summary.js');
+
+// 考題自己建的暫存資料夾記在這裡、整支跑完（不論成敗）一起收（待辦「考題在系統暫存區留下資料夾沒收」那一條，已落地 #79：以前每跑一次三關就在系統暫存區多一批沒人收）；
+// 只收這裡記下的、不碰暫存區裡別的東西
+const made = [];
+const tmpDir = (prefix) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); made.push(d); return d; };
+test.after(() => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
 
 const TOOL = path.join(__dirname, '..', 'tools', 'check-progress-summary.js');
 const NOW = { year: 2026, month: 10, day: 7 };
@@ -324,7 +331,7 @@ test('⑤已合併：附件沒有 PR＝核不了；離線只查這點；答案�
   assert.deepEqual(nestedRun.cited, [], '外站網址裡夾的 GitHub 網址也不會拿去問平台');
   assert.ok(nestedRun.problems.some((p) => p.includes('核不了')), nestedRun.problems.join('\n'));
   assert.ok(parenRun.problems.some((p) => p.includes('核不了')), parenRun.problems.join('\n'));
-  const parenDir = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-paren-'));
+  const parenDir = tmpDir('summary-paren-');
   fs.writeFileSync(path.join(parenDir, 'paren.md'), parenDoc);
   fs.writeFileSync(path.join(parenDir, 'states.json'), JSON.stringify({ 'acme/kit#41': { merged: true } }));
   const parenCli = spawnSync(process.execPath, [TOOL, '--file', path.join(parenDir, 'paren.md'), '--now', '10/07', '--repos', '套件=acme/kit', '--pr-states', path.join(parenDir, 'states.json'), '--strict'], { encoding: 'utf8' });
@@ -394,7 +401,7 @@ test('⑥已結束的形狀與 30 天；本週成果七天、子項目要有日�
 });
 
 test('⑦指令入口：有問題退 0、--strict 退 1、沒問題退 0；讀不到、少節、參數錯、--now 寫法錯＝退 2；--pr-states 當平台答案', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-check-'));
+  const dir = tmpDir('summary-check-');
   const good = path.join(dir, 'good.md');
   const bad = path.join(dir, 'bad.md');
   const states = path.join(dir, 'states.json');
@@ -561,7 +568,7 @@ test('⑩沒動的線：暫停中整理超過 14 天＝列、剛好 14 天不列
   const noVerify = problemsOf(doc({ entries: [entry({ fields: { 時間: '整理 09/01 18:26' } })] }));
   assert.ok(noVerify.some((p) => p.includes('缺「核實」')) && !noVerify.some((p) => p.includes('沒更新')), noVerify.join('\n'));
   // 指令入口印得出來（--now 給定）
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'psum-'));
+  const dir = tmpDir('psum-');
   const file = path.join(dir, 's.md');
   fs.writeFileSync(file, doc({ entries: [paused('09/22 18:26', '09/22 18:00')] }));
   const r = run(['--file', file, '--now', '10/07', '--offline']);
@@ -572,7 +579,7 @@ test('⑩沒動的線：暫停中整理超過 14 天＝列、剛好 14 天不列
 
 test('⑪最近誰提交：在 git 倉庫裡印最近 N 小時改過本檔的提交（預設 1、--recent 改窗口、只算本檔）；不在倉庫裡印查不到；只印不算問題；--recent 寫法錯＝退 2', () => {
   assert.equal(RECENT_HOURS, 1, '預設窗口寫死在考題：改要兩邊一起改');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'psum-git-'));
+  const dir = tmpDir('psum-git-');
   const file = path.join(dir, 's.md');
   const git = (args, env = {}) => { const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: { ...ghEnv(), ...env } }); assert.equal(r.status, 0, r.stderr); return r.stdout; };
   git(['init', '-q']); git(['config', 'user.email', 'x@y']); git(['config', 'user.name', 'x']); git(['config', 'commit.gpgsign', 'false']);
@@ -593,7 +600,7 @@ test('⑪最近誰提交：在 git 倉庫裡印最近 N 小時改過本檔的提
   assert.ok(r.lines.some((l) => l === '沒有問題。'), r.lines.join('\n'));
   assert.equal(run(['--file', file, '--now', '10/07', '--offline', '--strict']).code, 0);
   // 窗口裡沒有提交：印「沒有人提交」（不是查不到）——另開一個只有三小時前那一筆的倉庫（--recent 0 不能用來測：0 小時＝現在，剛提交的那一筆照樣算進去）
-  const quiet = fs.mkdtempSync(path.join(os.tmpdir(), 'psum-quiet-'));
+  const quiet = tmpDir('psum-quiet-');
   const qgit = (args, env = {}) => { const r = spawnSync('git', ['-C', quiet, ...args], { encoding: 'utf8', env: { ...ghEnv(), ...env } }); assert.equal(r.status, 0, r.stderr); };
   qgit(['init', '-q']); qgit(['config', 'user.email', 'x@y']); qgit(['config', 'user.name', 'x']); qgit(['config', 'commit.gpgsign', 'false']);
   fs.writeFileSync(path.join(quiet, 's.md'), doc()); qgit(['add', 's.md']); qgit(['commit', '-q', '-m', '更新：B線（三小時前）'], { GIT_AUTHOR_DATE: old, GIT_COMMITTER_DATE: old });
@@ -602,7 +609,7 @@ test('⑪最近誰提交：在 git 倉庫裡印最近 N 小時改過本檔的提
   assert.ok(none.lines.some((l) => l.includes('最近 1 小時沒有人提交本檔')), none.lines.join('\n'));
   assert.ok(!none.lines.some((l) => l.includes('B線')), none.lines.join('\n'));
   // 不在 git 倉庫裡：印查不到，不炸、退出碼照舊
-  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'psum-plain-'));
+  const plain = tmpDir('psum-plain-');
   fs.writeFileSync(path.join(plain, 's.md'), doc());
   const p = run(['--file', path.join(plain, 's.md'), '--now', '10/07', '--offline']);
   assert.equal(p.code, 0);
@@ -612,7 +619,7 @@ test('⑪最近誰提交：在 git 倉庫裡印最近 N 小時改過本檔的提
 });
 
 test('⑫最近誰提交：簽章診斷不混進清單、輸出編碼設定不成亂碼、印的是提交時間不是作者時間（#66 r2 R1、R2）', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'psum-gitcfg-'));
+  const dir = tmpDir('psum-gitcfg-');
   const file = path.join(dir, 's.md');
   const git = (args, env = {}) => { const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: { ...ghEnv(), ...env } }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
   git(['init', '-q']); git(['config', 'user.email', 't@example.invalid']); git(['config', 'user.name', 't']); git(['config', 'commit.gpgsign', 'false']);
@@ -658,7 +665,7 @@ test('⑫最近誰提交：簽章診斷不混進清單、輸出編碼設定不�
 
 test('⑬摘要檔名逐字比對、不當 git 的比對樣式：s[1].md 旁邊有 s1.md、s*.md 旁邊有 sx.md，只改旁邊那個檔的提交不列（#66 r3 R2）', () => {
   for (const [name, sibling] of [['s[1].md', 's1.md'], ['s*.md', 'sx.md']]) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'psum-literal-'));
+    const dir = tmpDir('psum-literal-');
     const git = (args) => { const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: ghEnv() }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
     git(['init', '-q']); git(['config', 'user.email', 't@example.invalid']); git(['config', 'user.name', 't']); git(['config', 'commit.gpgsign', 'false']);
     const file = path.join(dir, name);
@@ -751,9 +758,62 @@ test('⑭大小與孤兒附件：本文 30,000（不含本週成果、附件那�
   const orphans = problemsOf(orphanDoc).filter((p) => p.includes('沒有任何一則引用'));
   assert.deepEqual(orphans.map((p) => Number(/附件第 (\d+) 條/u.exec(p)[1])).sort(), [2, 5], orphans.join('\n'));
   // --strict：這幾種都跟其餘問題一樣算
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'psum-size-'));
+  const dir = tmpDir('psum-size-');
   const f = path.join(dir, 's.md');
   fs.writeFileSync(f, orphanDoc);
   assert.equal(run(['--file', f, '--now', '10/07', '--offline', '--strict']).code, 1);
   assert.equal(run(['--file', f, '--now', '10/07', '--offline']).code, 0, '只列不擋');
+});
+
+test('⑮同一節附件重號（理財 #672 r5 第 1 條）：列出來；超長那條後面接同號短條照樣量出超過；前一條引的 PR 照樣查、跟順序無關；三種放法一樣；--strict 退 1', () => {
+  const bytes = (s) => Buffer.byteLength(s, 'utf8');
+  const head = '1. 套件 #41 https://github.com/acme/kit/pull/41 已合併。';
+  const long = `${head}${'w'.repeat(1501 - bytes(head))}`;
+  assert.equal(bytes(long), 1501);
+  const short = '1. 套件 #41 https://github.com/acme/kit/pull/41';
+  const ref1 = doc({ attachments: ['（附件在附件檔）'] });
+  // 三種放法：附件檔有「## 附件」標題、附件檔沒有標題、放在本檔那一節
+  const shapes = (items, prStates = MERGED) => [
+    ['附件檔有標題', evaluate(ref1, { now: NOW, prStates, attachmentsText: `## 附件\n\n${items.join('\n')}\n` })],
+    ['附件檔沒有標題', evaluate(ref1, { now: NOW, prStates, attachmentsText: `${items.join('\n')}\n` })],
+    ['本檔那一節', evaluate(doc({ attachments: items }), { now: NOW, prStates })],
+  ];
+  const dupOf = (ps) => ps.filter((p) => /附件第 \d+ 條在.+出現 \d+ 次/u.test(p));
+  for (const [where, r] of shapes([long])) {
+    assert.ok(r.problems.some((p) => p.includes('附件第 1 條') && p.includes('1501 位元組')), `對照組（${where}）：只有超長那一條就列：${r.problems.join('\n')}`);
+    assert.deepEqual(dupOf(r.problems), [], `對照組（${where}）：沒有重號就不提重號`);
+  }
+  for (const [where, r] of shapes([long, short])) {
+    assert.ok(r.problems.some((p) => p.includes('附件第 1 條') && p.includes('1501 位元組')), `${where}：同號短條接在後面，超長那條照樣量：${r.problems.join('\n')}`);
+    assert.equal(dupOf(r.problems).length, 1, `${where}：重號列一次：${r.problems.join('\n')}`);
+    assert.match(dupOf(r.problems)[0], /附件第 1 條在.+出現 2 次/u);
+  }
+  for (const [where, r] of shapes([short, long, short])) {
+    assert.equal(dupOf(r.problems).length, 1, `${where}：出現三次也只列一次、寫出次數`);
+    assert.match(dupOf(r.problems)[0], /出現 3 次/u);
+  }
+  // 前一條引的 PR 照樣查：未合併的在前、已合併的在後，或倒過來，查到的 PR 都是兩支、問題一樣（重號蓋掉前一條時只查最後一支）
+  const states = { 'acme/kit#41': { merged: true }, 'acme/kit#42': { merged: false } };
+  const a = '1. https://github.com/acme/kit/pull/42';
+  const b = '1. https://github.com/acme/kit/pull/41';
+  const forward = shapes([a, b], states);
+  const backward = shapes([b, a], states);
+  for (let i = 0; i < forward.length; i++) {
+    assert.deepEqual(forward[i][1].cited.slice().sort(), ['acme/kit#41', 'acme/kit#42'], `${forward[i][0]}：兩支都查`);
+    assert.deepEqual(backward[i][1].cited.slice().sort(), ['acme/kit#41', 'acme/kit#42'], `${backward[i][0]}：倒過來也兩支都查`);
+    assert.deepEqual(forward[i][1].problems, backward[i][1].problems, `${forward[i][0]}：順序不影響結果`);
+  }
+  // 本檔與附件檔各有同一個條號（已經會列「兩邊都有」）：兩邊引的 PR 也都查，不讓附件檔那一條蓋掉本檔那一條
+  const both = evaluate(doc({ attachments: [a] }), { now: NOW, prStates: states, attachmentsText: `${b}\n` });
+  assert.ok(both.problems.some((p) => p.includes('附件第 1 條在摘要本檔與附件檔都有')), both.problems.join('\n'));
+  assert.deepEqual(both.cited.slice().sort(), ['acme/kit#41', 'acme/kit#42'], '本檔與附件檔同號：兩邊的 PR 都查');
+  // 指令入口：超長那一條後面接同號短條，--strict 照樣退 1
+  const dir = tmpDir('psum-dup-');
+  const f = path.join(dir, 's.md'); const att = path.join(dir, 'a.md');
+  fs.writeFileSync(f, ref1);
+  fs.writeFileSync(att, `## 附件\n\n${short}\n`);
+  assert.equal(run(['--file', f, '--attachments', att, '--now', '10/07', '--offline', '--strict']).code, 0, '對照組：只有短的那一條＝沒有問題');
+  fs.writeFileSync(att, `## 附件\n\n${long}\n${short}\n`);
+  const r = run(['--file', f, '--attachments', att, '--now', '10/07', '--offline', '--strict']);
+  assert.equal(r.code, 1, '同號短條不能讓 --strict 變成退 0');
 });

@@ -18,7 +18,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { gitEnv } = require('../tools/git-env.js');
-const { run, parseDiff, phrasesOf, looksLikeName, MAX_HITS } = require('../tools/stale-text.js');
+const { run, parseDiff, phrasesOf, looksLikeName, MAX_HITS, RULES_SHOWN } = require('../tools/stale-text.js');
+const { excerpt, read: readRules } = require('../tools/build-rules.js');
 const { runInCopy } = require('./helpers/kit-copy.js');
 
 const SETTINGS = { mainBranch: 'main' };
@@ -219,4 +220,12 @@ test('⑥命中太多照實印出沒列的處數、只列前 10 處；字串太�
     assert.match(text, /只搜了前 1 個；另有 2 個沒搜/u);
     assert.match(out.lines[0], /刪掉或改掉的字串 3 個，其中 1 個還出現/u, '只搜了 1 個，就只會有 1 個命中');
   } finally { r2.cleanup(); }
+});
+
+test('指令列在輸出後面印 K5 原文（逐條判斷時用的那一條）；只多印、退出碼不變', () => {
+  assert.deepEqual(RULES_SHOWN, ['K5']);
+  const copy = runInCopy('tools/stale-text.js', ['--nope'], { files: ['rules.json'] });
+  assert.equal(copy.status, 2, copy.stdout + copy.stderr);
+  assert.match(copy.stdout, /^用法：node tools\/stale-text\.js/u, '工具自己的輸出照舊在前面');
+  assert.ok(copy.stdout.includes(`\n${excerpt(readRules(), RULES_SHOWN)}\n`), `沒印出 K5 原文：\n${copy.stdout}`);
 });

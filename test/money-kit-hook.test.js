@@ -339,3 +339,29 @@ test('③ConfigChange 那一條實跑：/bin/sh 與 /bin/bash 的 -c 都退 2、
     assert.deepEqual([r.status, r.stdout, r.stderr], [2, '', ''], `${shell} -c：設定變更攔截那一條要退 2、兩個輸出都空的`);
   }
 });
+
+const EXACT_REGISTRATION_HINT = '；核對 settings.json 的 forbidden.allowedTools 與 .claude/settings.json 接線；指紋不同步時依 tools/guard-copy.js --claude-line 重印，修正後重跑 node --test test/money-kit-hook.test.js';
+
+test('個別工具登記：Claude 的設定接線放行代表名，拒絕未登記近似名（本題暫存家）', () => {
+  assert.ok(Array.isArray(projectForbidden.allowedTools), 'forbidden.allowedTools 必須是陣列' + EXACT_REGISTRATION_HINT);
+  const registered = ['mcp__codex_app__list_artifacts', 'mcp__codex_apps__github__get_repo', 'mcp__cua_repl__js'];
+  const absent = ['mcp__codex_app__list_artifact', 'mcp__codex_apps__github__get_Repo', 'mcp__cua_repl__read_registration_probe_unknown'];
+  const cmd = cmdOf(pinnedGroup);
+  const matcher = new RegExp(pinnedGroup.matcher);
+  const own = makePinnedHome(ROOT);
+  try {
+    for (const name of registered) {
+      assert.ok(projectForbidden.allowedTools.includes(name), `前提：代表名須在個別登記上：${name}` + EXACT_REGISTRATION_HINT);
+      assert.ok(matcher.test(name), `前提：接線 matcher 應接到代表名：${name}` + EXACT_REGISTRATION_HINT);
+      allows(runRaw(cmd, JSON.stringify({ tool_name: name, tool_input: {} }), { home: own.home }), `Claude 個別登記代表名：${name}` + EXACT_REGISTRATION_HINT);
+    }
+    for (const name of absent) {
+      assert.ok(!projectForbidden.allowedTools.includes(name), `前提：近似名未經登記：${name}` + EXACT_REGISTRATION_HINT);
+      assert.ok(matcher.test(name), `前提：接線 matcher 應接到近似名：${name}` + EXACT_REGISTRATION_HINT);
+      const reason = denyReason(runRaw(cmd, JSON.stringify({ tool_name: name, tool_input: {} }), { home: own.home }), `Claude 未登記近似名：${name}` + EXACT_REGISTRATION_HINT);
+      assert.equal(reasonClass(reason), 'registry', `近似名應由登記制拒絕：${name}` + EXACT_REGISTRATION_HINT);
+    }
+  } finally {
+    removeHome(own.home);
+  }
+});

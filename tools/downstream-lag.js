@@ -127,7 +127,6 @@ function lagOf(p, { root, settings, platform, kitHead, template }) {
   const theirs = new Map(tree.map((x) => [x.path, x.sha]));
   let version;
   let from;
-  let exceptions = [];
   if (theirs.has(LOCK_FILE)) {
     let lock;
     try { lock = JSON.parse(readConsistent(p, LOCK_FILE, theirs, { root, settings, platform })); }
@@ -135,7 +134,6 @@ function lagOf(p, { root, settings, platform, kitHead, template }) {
     try { validateLock(lock); } catch (e) { if (e instanceof LockError) throw new LagError(`它的 ${e.message}`); throw e; }
     version = lock.version;
     from = `它的 ${LOCK_FILE}（同步日 ${lock.syncedAt}）`;
-    exceptions = lock.exceptions;
   } else if (p.fallback) {
     version = p.fallback;
     from = `設定裡人填的（它還沒裝 ${LOCK_FILE}）：${p.fallbackFrom || '出處沒寫'}`;
@@ -154,17 +152,15 @@ function lagOf(p, { root, settings, platform, kitHead, template }) {
   const kitNow = kitFiles(root, kitHead);
   const kitThen = kitFiles(root, version);
   const theirsShared = new Map([...theirs].filter(([f]) => underShared(f)));
-  const exc = new Map(exceptions.map((x) => [x.path, x]));
-  const note = (f) => (exc.has(f) ? `；記了例外：${exc.get(f).who}，${exc.get(f).why}` : '');
   const differ = [];
   const onlyKit = [];
   const onlyTheirs = [];
   for (const [f, blob] of kitNow) {
-    if (!theirsShared.has(f)) onlyKit.push(`${f}（${kitThen.has(f) ? '它那邊沒有，它記的版本有＝它刪掉了' : '套件後來加的'}${note(f)}）`);
-    else if (theirsShared.get(f) !== blob) differ.push(`${f}（${theirsShared.get(f) === kitThen.get(f) ? '套件後來改了' : '它改過：跟它記的那一版也不同'}${note(f)}）`);
+    if (!theirsShared.has(f)) onlyKit.push(`${f}（${kitThen.has(f) ? '它那邊沒有，它記的版本有＝它刪掉了' : '套件後來加的'}）`);
+    else if (theirsShared.get(f) !== blob) differ.push(`${f}（${theirsShared.get(f) === kitThen.get(f) ? '套件後來改了' : '它改過：跟它記的那一版也不同'}）`);
   }
   for (const f of theirsShared.keys()) {
-    if (!kitNow.has(f)) onlyTheirs.push(`${f}（${kitThen.has(f) ? '套件後來刪了' : '它自己加的'}${note(f)}）`);
+    if (!kitNow.has(f)) onlyTheirs.push(`${f}（${kitThen.has(f) ? '套件後來刪了' : '它自己加的'}）`);
   }
 
   let settingsLines;

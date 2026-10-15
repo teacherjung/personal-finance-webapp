@@ -250,7 +250,7 @@ test('③--claude 落地：位置、四個唯讀檔、沒有暫存殘留；再�
   assert.equal(again.status, 0, again.stderr);
   assert.equal(again.stdout, `${fp}\n`, '標準輸出＝指紋一行');
   assert.match(again.stderr, /原本就在、自洽，沒有動它/u);
-  assert.match(again.stderr, /自我試跑：過（\/bin\/sh -c 與 -lc 各一遍：無害假名放行、該擋的假名印出拒絕（HOME 指到這個家）；改過一個位元組的副本退 2（HOME 指到另開的暫存目錄））/u,
+  assert.match(again.stderr, /自我試跑：過（\/bin\/sh -c 與 -lc 各一遍：放行候選的 JSON 輸入被放行、該擋的假名印出拒絕（HOME 指到這個家）；改過一個位元組的副本退 2（HOME 指到另開的暫存目錄））/u,
     '已經在：前兩項是這個家跑的，第三項是另開的暫存目錄跑的');
   assert.match(again.stderr, /這棵樹現在的四個檔：同一個指紋/u);
   assert.deepEqual(snapshot(baseOf(home)), before, '已經在而且自洽：一個位元組、一個修改時間都不可以變');
@@ -266,7 +266,7 @@ test('③--claude 落地：位置、四個唯讀檔、沒有暫存殘留；再�
   const first = tool(src, ['--claude'], { home: firstHome });
   assert.deepEqual([first.status, first.stdout], [0, `${fp}\n`], first.stderr);
   assert.match(first.stderr, /（新落地）/u);
-  assert.match(first.stderr, /自我試跑：過（落地前先用這個家跑 \/bin\/sh -lc ':'，標準輸出是空的；之後兩次，每次 \/bin\/sh -c 與 -lc 各一遍：無害假名放行、該擋的假名印出拒絕（第一次 HOME 指到暫存骨架、落地後第二次 HOME 指到這個家）；改過一個位元組的副本退 2（HOME 指到另開的暫存目錄））/u,
+  assert.match(first.stderr, /自我試跑：過（落地前先用這個家跑 \/bin\/sh -lc ':'，標準輸出是空的；之後兩次，每次 \/bin\/sh -c 與 -lc 各一遍：放行候選的 JSON 輸入被放行、該擋的假名印出拒絕（第一次 HOME 指到暫存骨架、落地後第二次 HOME 指到這個家）；改過一個位元組的副本退 2（HOME 指到另開的暫存目錄））/u,
     '新落地：落地前那一次、兩次試跑，第三項是另開的暫存目錄跑的');
   assert.deepEqual(fs.readdirSync(baseOf(firstHome)), [fp]);
 
@@ -748,7 +748,7 @@ test('⑫登入設定往標準輸出印字：落地前先量到＝不落地；�
   // (b) 落地之後才開始印字：落地後用這個家再試跑沒過＝撤掉這一次落地的那一份
   const late = chattyOnceLanded(fakeHome(scratch));
   const rl = buildClaude({ from: 'HEAD', root: src, home: late, allowTemp: true });
-  assert.match(rl.failure || '', /\/bin\/sh -lc：無害的假名一個都沒有被乾淨地放行[\s\S]*PROFILE-SAYS-HELLO/u, `落地之後在這個家試跑要沒過（${rl.failure}）`);
+  assert.match(rl.failure || '', /\/bin\/sh -lc：放行候選一個都沒有被乾淨地放行[\s\S]*PROFILE-SAYS-HELLO/u, `落地之後在這個家試跑要沒過（${rl.failure}）`);
   assert.deepEqual([rl.existed, rl.landedThenFailed, rl.withdrawn, rl.stagingLeft], [false, true, true, undefined]);
   assert.ok(!fs.existsSync(rl.copyDir), '這一次落地的那一份要撤掉');
   assert.deepEqual(fs.readdirSync(baseOf(late)), [], '基底目錄裡什麼都沒留（暫存骨架也清掉）');
@@ -1185,5 +1185,66 @@ test('⑳拒絕形狀同時有兩個問題時，說的是檢查順序在前面�
     assert.match(r.failure, p.says, `${p.why}：要說前面那一句（${r.failure}）`);
     assert.doesNotMatch(r.failure, p.notSays, `${p.why}：不可以說後面那一句——檢查順序被換掉了（${r.failure}）`);
     assert.ok(!fs.existsSync(r.copyDir), `${p.why}：試跑沒過不可以落地`);
+  }
+}));
+
+test('完整工具名登記：固定複本承接精確清單，未知名與篡改仍拒絕', () => withScratch((scratch) => {
+  // 只把合成名字送進鉤子的 JSON；不呼叫任何連接器。
+  const exact = 'mcp__probe_apps__notes__get_note';
+  const denied = 'mcp__probe_apps__notes__get_blocked';
+  const unknown = 'mcp__probe_apps__notes__get_new_note';
+  for (const withDeny of [true, false]) {
+    const forbidden = { name: '測試禁區', allowedTools: withDeny ? [denied, exact] : [exact], ...(withDeny ? { deny: [denied] } : {}) };
+    const { home, copyDir, cmd } = landed(scratch, { forbidden }, withDeny ? {} : { denyProbe: unknown });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(copyDir, 'settings.json'), 'utf8')).forbidden, forbidden,
+      '請檢查 tools/guard-copy.js 抽取 forbidden 後重跑本題');
+    for (const flag of ['-c', '-lc']) {
+      allows(hook(cmd, { home, tool: exact, flag }), '請檢查完整名是否原樣進入固定複本，重跑本題');
+      const missing = hook(cmd, { home, tool: unknown, flag });
+      denies(missing, '未知同組名：請檢查登記判斷後重跑本題');
+      assert.match(missing.stdout, /沒有登記/u, '請核未知名拒絕理由，避免設定壞掉造成假綠；重跑本題');
+      if (withDeny) {
+        const blocked = hook(cmd, { home, tool: denied, flag });
+        denies(blocked, '逐字拒絕：請檢查 deny 順序後重跑本題');
+        assert.match(blocked.stdout, /在拒絕清單上/u, '請核 deny 拒絕理由，重跑本題');
+      }
+    }
+    const file = path.join(copyDir, 'settings.json');
+    fs.chmodSync(file, 0o644);
+    fs.appendFileSync(file, ' ');
+    blocks(hook(cmd, { home, tool: exact }), MISMATCH, '請檢查固定複本的指紋檢查後重跑本題');
+  }
+}));
+
+
+test('完整工具名登記：金融大小寫衝突使固定複本自測失敗，無衝突對照成功', () => withScratch((scratch) => {
+  // 合成來源與假家目錄隔離安裝自測；只把名字當 JSON 輸入，不呼叫連接器。
+  const repair = '檢查 tools/forbidden-tools.js 的設定驗證及 tools/guard-copy.js 自我試跑，重跑 node --test tests/guard-copy-claude.test.js';
+  const exact = 'mcp__probe_apps__notes__get_note';
+  for (const withSafe of [false, true]) for (const conflict of [false, true]) {
+    const forbidden = { ...FAKE, safeServers: withSafe ? ['other'] : [],
+      allowedTools: [exact, conflict ? 'mcp__FAKEBROKER__get_quote' : 'mcp__fakebroker__get_quote'] };
+    const src = sourceRepo(scratch, { forbidden });
+    const home = fakeHome(scratch);
+    const r = tool(src, ['--claude', '--from', 'HEAD'], { home });
+    const copyDir = path.join(baseOf(home), treeFingerprint(src));
+    if (conflict) {
+      assert.deepEqual([r.status, r.stdout], [1, ''], `${repair}：${r.stderr}`);
+      assert.match(r.stderr, /自我試跑沒過[\s\S]*放行候選一個都沒有被乾淨地放行/u, repair);
+      // 安裝自測的 stdout 摘錄會截短；拒絕理由另讀同一合成來源的完整 JSON。
+      const probe = spawnSync(process.execPath, [path.join(src, 'tools', 'forbidden-tools.js')],
+        { cwd: scratch, env: { ...base, HOME: home }, input: JSON.stringify({ tool_name: exact }), encoding: 'utf8' });
+      assert.deepEqual([probe.status, probe.stderr], [0, ''], repair);
+      const result = JSON.parse(probe.stdout).hookSpecificOutput;
+      assert.equal(result.permissionDecision, 'deny', repair);
+      assert.match(result.permissionDecisionReason, /allowedTools[\s\S]*servers[\s\S]*大小寫衝突[\s\S]*設定壞掉/u, repair);
+      assert.doesNotMatch(r.stderr, /自我試跑：過/u, repair);
+      assert.equal(fs.existsSync(copyDir), false, repair);
+    } else {
+      assert.equal(r.status, 0, `${repair}：${r.stderr}`);
+      assert.match(r.stdout, /^[a-f0-9]{64}\n$/u, repair);
+      assert.match(r.stderr, /自我試跑：過/u, repair);
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(copyDir, 'settings.json'), 'utf8')).forbidden, forbidden, repair);
+    }
   }
 }));

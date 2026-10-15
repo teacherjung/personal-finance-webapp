@@ -8,7 +8,7 @@
 // 為什麼：Codex 的全域鉤子套到每一個 session，不能靠「當下在哪個專案」找攔截器，所以讀一份固定複本（裁示 6a）。
 // 但 Codex 的「信任」只記鉤子那一行指令的雜湊，指令引用的檔案不在信任範圍內——複本被改＝不必重按信任就生效，
 // 而且沒有人看得到。所以指令裡寫死指紋：複本的指紋對不上就退 2（所有 mcp__ 工具都擋、看得見的失敗），
-// 要改清單＝重抽複本＋換一行新指令＋裁示者重按信任，負擔跟今天一樣（裁示 7b）。
+// 改清單時重抽複本、換一行新指令，由擁有者重按信任，避免清單變動繞過本人信任（裁示 7b）。
 // Claude 側為什麼也釘：活讀裝法（templates/hook-claude.json）每次呼叫都讀當下那棵樹的清單——在樹裡把清單改弱、或切到弱清單的分支，
 // 下一次呼叫就照弱的判。釘指紋那一行不看所在目錄、不碰 git，只照倉庫外那一份判：樹裡的清單怎麼改都沒有用。
 // 那一行在同一支變更裡換了、而這台機器還沒補那一份複本＝那一行找不到複本＝所有 mcp__ 工具全擋（看得見）；
@@ -49,15 +49,15 @@
 //     基底目錄（或它的上層）是連結、解開之後在家目錄的 .claude／.codex 底下＝退 2、不碰（跟 --claude 同一個檢查）；
 //     讀不了基底（例如有一層不給進）＝退 2、照實說確認不了、不刪；只有基底確實不存在才說「沒有東西可以退役」。
 //
-// Codex 全域層：裝與換只有一條順序（專案裡要看得到：套件的 README 不跟著搬進專案；README 第 3 步是同一份順序的抄本）：
-//   ⓪先確認禁區清單（settings.json 的 forbidden.deny）裡有一個刻意放的無害測試工具：它要是 Codex 連得到的伺服器上真的存在的 mcp__ 工具，就算真的執行了也不會動到禁區、不會造成任何改變，而且不可以是禁區連接器（forbidden.servers）上的任何工具——連唯讀的查詢也不行；原本還有別的攔截組並存時，挑一個只有這份清單擋、別組不擋的名字。套件帶了一支現成的＝tools/canary-server.js（掛上去只回一句 pong，什麼都不做），工具名 mcp__guard_canary__ping，兩家 AI 各登記一次的做法見 templates/canary-install.md。清單上還沒有就先加、合併，再從①開始——沒有就停下來，不可以拿任何別的工具代替。
+// Codex 全域層：裝與換的完整順序在這裡（供同步到使用專案；套件 README 第 3 步節錄並指向本節）：
+//   ⓪先確認禁區清單（settings.json 的 forbidden.deny）裡有一個刻意放的無害測試工具：它要是 Codex 連得到的伺服器上真的存在的 mcp__ 工具，就算真的執行了也不會動到禁區、不會造成任何改變，而且不可以是禁區連接器（forbidden.servers）上的任何工具——連唯讀的查詢也不行；原本還有別的攔截組並存時，挑一個只有這份清單擋、別組不擋的名字。套件帶了一支現成的＝tools/canary-server.js（掛上去只回一句 pong，什麼都不做），工具名 mcp__guard_canary__ping，每個參與的 AI 各登記一次的做法見 templates/canary-install.md。清單上還沒有就先加、合併，再從①開始——沒有就停下來，不可以拿任何別的工具代替。
 //   ①先 git fetch，在專案裡跑 node tools/guard-copy.js --from <已合併進主幹的版本> --to <新的空目錄>（建議家目錄底下固定的地方，例如 ~/.local/share/ai-collab-kit/guard/<版本碼前幾碼>）。
-//   ②關掉所有 Codex 視窗（改鉤子檔到按下信任之間，改過的那一組是停用的：Codex 對沒信任的鉤子一聲不吭地跳過，這段時間不能有 Codex 在跑）。
+//   ②從 Codex 外部關掉所有 Codex 視窗與無頭程序，確認沒有 Codex 程序在跑（例如用 pgrep -fl codex 輔助核對，仍須確認啟動中的其他 Codex 程序已停；不能先換鉤子才關。改鉤子檔到按下信任之間，改過的那一組是停用的：Codex 對沒信任的鉤子一聲不吭地跳過，這段時間不能有 Codex 在跑）。
 //   ③編輯家目錄 .codex/hooks.json：第一次裝＝把印出的那一組加到 hooks.PreToolUse 最後面（原本有別的攔截組就讓它們並存）；換新複本＝在原位置換掉舊複本那一組。
-//   ④開 Codex、按信任。
-//   ⑤在 Codex 叫⓪那個無害測試工具：要看到被擋，而且擋的理由是這一組的（理由含「在拒絕清單上」；「固定複本不在、被改過…（指紋對不上）」那一句不算，那是複本壞了）。叫一般工具照常能用證明不了什麼（鉤子沒跑時它也能用）。
-//   ⑥⑤沒看到這一組的拒絕＝關掉 Codex、把原來那一組放回去（換新複本時舊複本目錄還在）、按信任，再查原因；⑤過了、而且是換新複本，這時才刪舊的複本目錄（先 chmod -R u+w；先刪會讓舊那一組把所有 mcp__ 工具全擋）。
-//   之後要拆掉並存的別的攔截組：同樣先關 Codex、刪那一組、對剩下的按信任（位置變了），再做一次⑤。
+//   ④由擁有者開 Codex、按信任。
+//   ⑤由擁有者在 Codex 叫⓪那個無害測試工具：要看到被擋，而且擋的理由是這一組的（理由含「在拒絕清單上」；「固定複本不在、被改過…（指紋對不上）」那一句不算，那是複本壞了）。叫一般工具照常能用證明不了什麼（鉤子沒跑時它也能用）。
+//   ⑥⑤沒看到這一組的拒絕＝照②停掉全部 Codex 程序，再把原來那一組放回去（換新複本時舊複本目錄還在）、由擁有者按信任，再查原因；⑤過了、而且是換新複本，這時才刪舊的複本目錄（先 chmod -R u+w；先刪會讓舊那一組把所有 mcp__ 工具全擋）。
+//   之後要拆掉並存的別的攔截組：同樣先照②停掉全部 Codex 程序，再刪那一組、由擁有者對剩下的按信任（位置變了），再做一次⑤。
 //   要重抽的時候＝settings.json 的 forbidden 那一塊、tools/forbidden-tools.js、tools/settings-data.js、tools/package.json、或 templates/hook-codex-global.json 那一組合併了改動：照⓪〜⑥重做；不重抽＝Codex 照抽的那個版本判，沒有機器提醒。
 //   ⚠️ 任何會動到禁區的真工具，不論在不在清單上、不論攔截器擋不擋得住，一律絕不可以叫來試；驗收只准用⓪那個無害測試工具。
 //
@@ -165,16 +165,14 @@ const UNSET = '未設定';
 /** 自我試跑用的無害假工具名（接在登記為不碰禁區的連接器後面）：依序試，有一個被乾淨地放行就算過（專案清單剛好擋到其中一個也不會誤判安裝失敗）。 */
 const ALLOW_PROBE_TOOLS = ['guard_copy_selftest_noop', 'guard_copy_selftest_ping', 'kit_selftest_zz_hello'];
 /**
- * 從清單產生「照清單該放行」的試跑名字：每一個登記為不碰禁區的連接器（safeServers）各配上面那幾個假工具名。
- * 為什麼不再用固定的假連接器名：登記制（2026-09-26）之後沒登記的連接器一律擋，固定假名永遠放不了行；
- * 清單沒登記任何不碰禁區的連接器（safeServers 空）＝試跑找不到能放行的名字＝拒絕完成安裝：--claude 什麼都不落地；
- * --to 已經把四個檔寫進目的目錄（先寫再試跑）、留著給人檢查、不印接線。這時碰禁區連接器白名單上的工具仍放行、其餘 mcp__ 名字全擋，
- * 所以訊息不寫成「全擋」。放行的假名接在 safeServers 之後、形狀是標準的 mcp__<登記名>__<假工具名>。
+ * 只把名字當 JSON 輸入送進固定複本的鉤子，不呼叫名字對應的外部工具。
+ * 登記與家族網的順序見 docs/money-guard-two-pattern-tables.md；清單候選仍可能被 deny 或家族網拒絕，故逐個試。
  */
 function allowProbes(forbidden) {
   const f = forbidden && typeof forbidden === 'object' ? forbidden : {};
   const safe = Array.isArray(f.safeServers) ? f.safeServers.filter((s) => typeof s === 'string' && s !== UNSET) : [];
-  return safe.flatMap((srv) => ALLOW_PROBE_TOOLS.map((t) => `mcp__${srv}__${t}`)).filter((n) => PROBE_NAME.test(n));
+  const exact = Array.isArray(f.allowedTools) ? f.allowedTools.filter((n) => typeof n === 'string') : [];
+  return [...safe.flatMap((srv) => ALLOW_PROBE_TOOLS.map((t) => `mcp__${srv}__${t}`)), ...exact].filter((n) => PROBE_NAME.test(n));
 }
 /** 暫存區：作業系統會清，複本放那裡哪天被清掉＝所有 mcp__ 工具突然全擋。 */
 const TEMP_ROOTS = ['/tmp', '/private/tmp', '/var/tmp', '/private/var/tmp', '/var/folders', '/private/var/folders'];
@@ -458,7 +456,7 @@ const claudeRig = ({ fp, template }) => {
 
 /**
  * 照鉤子的起法真的跑那一行指令（Codex＝/bin/sh -lc；Claude＝-c 與 -lc 各跑一遍），任一項不符就回失敗原因：
- *   ①無害假名要**放行**：退 0、兩個輸出都空的（依序試幾個，有一個過就算；清單壞到什麼都擋、登入設定往輸出印字，都在這裡露出來）；
+ *   ①候選名字要**放行**：退 0、兩個輸出都空的（依序試幾個，有一個過就算；清單壞到什麼都擋、登入設定往輸出印字，都在這裡露出來）；
  *   ②照清單該擋的假名要**擋**：Codex＝退 2、錯誤輸出是拒絕的形狀；Claude＝退 0、標準輸出整段是完整的拒絕形狀（claudeDenyProblem）
  *    （依序試幾個；攔截器被改成什麼都放、Claude 側印的拒絕形狀缺欄位，這裡露出來）；
  *   ③指紋檢查要真的在：同一行指令對到一份改過一個位元組的副本，要退 2 而且是指紋那一句。
@@ -474,12 +472,12 @@ function selfTest({ copyDir, fp, template, forbidden, denyProbe = null, rig = co
     let allowName = null;
     let lastAllow = null;
     const allowCandidates = allowProbes(forbidden);
-    if (!allowCandidates.length) return `${tag}清單沒有登記任何不碰禁區的連接器（settings.json 的 forbidden.safeServers 是空的）：試跑找不到任何該放行的假名、拒絕完成安裝（--claude 不落地；--to 已寫進目的目錄的四個檔留著給人看、不印接線）。此時碰禁區連接器白名單上的工具仍放行、其餘 mcp__ 名字全擋——先把不碰禁區的連接器登記進 safeServers（碰禁區的登記進 servers 並配 allowlist），合併之後再抽`;
+    if (!allowCandidates.length) return `${tag}清單沒有放行試跑候選（settings.json 的 forbidden.safeServers 與 forbidden.allowedTools 都沒有可用名字）：拒絕完成安裝（--claude 不落地；--to 已寫進目的目錄的四個檔留著給人看、不印接線）。先依 docs/money-guard-two-pattern-tables.md 核對授權與登記，修正 settings.json，合併後重跑原 guard-copy 指令`;
     for (const name of allowCandidates) {
       lastAllow = runHook(command, name, { flag, env });
       if (lastAllow.status === 0 && lastAllow.stdout === '' && lastAllow.stderr === '') { allowName = name; break; }
     }
-    if (!allowName) return `${tag}無害的假名一個都沒有被乾淨地放行（最後一次：${show(lastAllow)}）——清單壞到什麼都擋、或登入設定往標準輸出印字（要先讓它安靜）`;
+    if (!allowName) return `${tag}放行候選一個都沒有被乾淨地放行（最後一次：${show(lastAllow)}）——清單壞到什麼都擋、或登入設定往標準輸出印字（要先讓它安靜）`;
 
     // 有給 --deny-probe 就只試那一個（給了卻不擋＝失敗，不改試別的）；沒給就從清單自動產生
     const denyCandidates = denyProbe ? [denyProbe] : autoDenyProbes(forbidden);
@@ -512,7 +510,7 @@ function selfTest({ copyDir, fp, template, forbidden, denyProbe = null, rig = co
   return null;
 }
 
-/** 從清單自動產生「照清單該擋」的試跑名字：連接器、第一組動詞＋名詞、逐字拒絕清單。只有樣式規則的清單產不出來（要 --deny-probe）。 */
+/** 不能從樣式或精確放行名反推拒絕樣本；缺少自動來源時由 --deny-probe 提供。 */
 function autoDenyProbes(forbidden) {
   const f = forbidden;
   return [
@@ -528,12 +526,12 @@ function checkDenyProbe(denyProbe) {
   }
 }
 
-/** 試跑要有「照清單該擋」的名字可以用：只靠樣式規則的清單產不出來，沒給 --deny-probe 就拒絕（此時什麼都還沒寫）。 */
+/** 在寫檔前先核負向試跑來源，避免缺樣本時留下半份安裝。 */
 function requireDenySource(f, { runSelfTest, denyProbe }) {
   // 只看「清單有沒有這幾種欄位」，不看合不合文法：壞掉的清單要走到試跑，由「無害名字也被擋、設定壞掉」那一句露出來
   const hasAutoSource = (Array.isArray(f.servers) && f.servers.length) || (Array.isArray(f.verbs) && f.verbs[0] && Array.isArray(f.nouns) && f.nouns[0]) || (Array.isArray(f.deny) && f.deny.length);
   if (runSelfTest && !denyProbe && !hasAutoSource) {
-    throw new Refusal('這份清單只靠樣式規則（沒有連接器、動詞＋名詞、逐字拒絕清單），工具自己想不出該擋的試跑名字：用 --deny-probe 給一個照清單該擋的假工具名（只當字串餵給攔截器）');
+    throw new Refusal('這份清單沒有自動拒絕試跑來源（禁區連接器、動詞＋名詞、逐字拒絕清單）：重跑原 guard-copy 指令，另用 --deny-probe 給一個照清單該擋的假工具名（只當字串餵給攔截器）');
   }
 }
 
@@ -787,8 +785,8 @@ function mainClaude(args, env) {
   try { sameAsTree = treeFingerprint() === r.fp; } catch { /* 這棵樹算不出指紋：下面照實說 */ }
   // 改過一個位元組的副本是擺在另開的暫存目錄、HOME 指到那裡跑的（selfTest 的 dupRoot），不是這個家
   const tried = r.existed
-    ? '自我試跑：過（/bin/sh -c 與 -lc 各一遍：無害假名放行、該擋的假名印出拒絕（HOME 指到這個家）；改過一個位元組的副本退 2（HOME 指到另開的暫存目錄））。'
-    : '自我試跑：過（落地前先用這個家跑 /bin/sh -lc \':\'，標準輸出是空的；之後兩次，每次 /bin/sh -c 與 -lc 各一遍：無害假名放行、該擋的假名印出拒絕'
+    ? '自我試跑：過（/bin/sh -c 與 -lc 各一遍：放行候選的 JSON 輸入被放行、該擋的假名印出拒絕（HOME 指到這個家）；改過一個位元組的副本退 2（HOME 指到另開的暫存目錄））。'
+    : '自我試跑：過（落地前先用這個家跑 /bin/sh -lc \':\'，標準輸出是空的；之後兩次，每次 /bin/sh -c 與 -lc 各一遍：放行候選的 JSON 輸入被放行、該擋的假名印出拒絕'
       + '（第一次 HOME 指到暫存骨架、落地後第二次 HOME 指到這個家）；改過一個位元組的副本退 2（HOME 指到另開的暫存目錄））。';
   process.stdout.write(`${r.fp}\n`);
   process.stderr.write([...summary, tried, ...left,
@@ -847,8 +845,8 @@ function main(argv = process.argv.slice(2), env = process.env) {
     return 1;
   }
   process.stdout.write(`${JSON.stringify(r.group, null, 2)}\n`);
-  process.stderr.write([...summary, '自我試跑：過（/bin/sh -lc：無害假名放行、該擋的假名退 2、改過一個位元組的副本退 2）。',
-    '接下來（人做，這支不碰家目錄的 .codex；完整順序＝本檔檔頭⓪〜⑥）：先確認禁區清單裡有刻意放的無害測試工具（真的存在、執行了也無害、不可以是禁區連接器上的工具——連唯讀的也不行；套件帶了一支現成的：tools/canary-server.js，名字 mcp__guard_canary__ping，裝法見 templates/canary-install.md；沒有就停下來先加、合併、重抽，不可以拿別的工具代替）→ 關掉所有 Codex 視窗 → 第一次裝＝把上面那一組加到家目錄 .codex/hooks.json 的 hooks.PreToolUse 最後面；換新複本＝在原位置換掉舊複本那一組 → 開 Codex 按信任 → 叫那個無害測試工具，要看到這一組的拒絕理由（含「在拒絕清單上」）→ 沒看到就先關掉所有 Codex 視窗、把原來那一組放回去、開 Codex 按信任、再查；看到了、而且是換新複本，才刪舊的複本目錄。⚠️ 任何會動到禁區的真工具，不論在不在清單上、不論攔截器擋不擋得住，一律絕不可以叫來試；驗收只准用清單上刻意放的無害測試工具，沒有就停下來先加。', ''].join('\n'));
+  process.stderr.write([...summary, '自我試跑：過（/bin/sh -lc：候選名字放行、該擋的假名退 2、改過一個位元組的副本退 2）。',
+    '接下來（人做，這支不碰家目錄的 .codex；完整順序＝本檔檔頭⓪〜⑥）：先確認禁區清單裡有刻意放的無害測試工具（真的存在、執行了也無害、不可以是禁區連接器上的工具——連唯讀的也不行；套件帶了一支現成的：tools/canary-server.js，名字 mcp__guard_canary__ping，裝法見 templates/canary-install.md；沒有就停下來先加、合併、重抽，不可以拿別的工具代替）→ 關掉所有 Codex 視窗與無頭程序，確認沒有 Codex 程序在跑 → 第一次裝＝把上面那一組加到家目錄 .codex/hooks.json 的 hooks.PreToolUse 最後面；換新複本＝在原位置換掉舊複本那一組 → 開 Codex 按信任 → 叫那個無害測試工具，要看到這一組的拒絕理由（含「在拒絕清單上」）→ 沒看到就先關掉所有 Codex 視窗與無頭程序，確認沒有 Codex 程序在跑、把原來那一組放回去、開 Codex 按信任、再查；看到了、而且是換新複本，才刪舊的複本目錄。⚠️ 任何會動到禁區的真工具，不論在不在清單上、不論攔截器擋不擋得住，一律絕不可以叫來試；驗收只准用清單上刻意放的無害測試工具，沒有就停下來先加。', ''].join('\n'));
   return 0;
 }
 

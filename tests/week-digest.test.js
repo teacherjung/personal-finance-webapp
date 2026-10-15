@@ -22,6 +22,12 @@ const { mergedWithin, dayOf, render, replaceSection, acceptedDate, traceShape, p
 const { deciderOf } = require('../tools/pending-rulings.js');
 const { evaluate } = require('../tools/check-progress-summary.js');
 
+// 考題自己建的暫存資料夾記在這裡、整支跑完（不論成敗）一起收（待辦「考題在系統暫存區留下資料夾沒收」那一條，已落地 #79：以前每跑一次三關就在系統暫存區多一批沒人收）；
+// 只收這裡記下的、不碰暫存區裡別的東西
+const made = [];
+const tmpDir = (prefix) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); made.push(d); return d; };
+test.after(() => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
+
 const TOOL = path.join(__dirname, '..', 'tools', 'week-digest.js');
 const NOW_ISO = '2026-10-09T10:00:00+08:00';
 const NOW = Date.parse(NOW_ISO);
@@ -150,7 +156,7 @@ test('⑤驗收留痕用待裁清單工具同一套判斷：合規才算、取�
 });
 
 test('⑥⑦指令入口：假 gh 接住參數與環境；只印不改檔；--write 整份逐字比、別人同時改的節留著；空週；留言第二頁的驗收；PR 翻頁與上限；寫法錯、gh 失敗、不是 JSON＝退 2', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'week-digest-'));
+  const dir = tmpDir('week-digest-');
   const bin = path.join(dir, 'bin'); fs.mkdirSync(bin);
   const record = path.join(dir, 'record.json');
   const settingsFile = path.join(dir, 'settings.json'); fs.writeFileSync(settingsFile, JSON.stringify(SETTINGS));

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // 從 rules.json 產生 RULES.md。**本文是產物、不要手改**：手改會被 tests/rules-length.test.js 抓到。
+// 另一個用法 --rules：只印指定那幾條的原文、不寫檔；合併、送審、問裁示那幾支工具也用同一份（excerpt、ruleFooter）。
 //
 // 為什麼要產生：字數上限那道考題原本得自己判斷「RULES.md 的哪幾行算規矩」，等於用土法重做
 // Markdown 的呈現規則——連七輪被複審者用不同寫法繞過（項目符號、有序清單、縮排、Tab、
@@ -338,6 +339,18 @@ function itemLines(items, rich) {
 }
 
 /**
+ * 一條規矩在本文裡的那幾行：條號與主句、子點、標籤，各自後面空一行。
+ * 本文與按需印條文（excerpt）共用這一份，印出來的才會是本文裡那一條、不是另寫的一份。
+ */
+function ruleLines(letter, rule, rich) {
+  const out = [`【${letter}${rule.n}】${rich(rule.text)}`, ''];
+  const items = rule.items || [];
+  if (items.length) out.push(...itemLines(items, rich), '');
+  out.push(`（${rich(rule.tag)}）`, '');
+  return out;
+}
+
+/**
  * A1 範本（擁有者定案的版面）。build 與 buildRaw 只差編碼器，範本只有這一份：
  * 考題拿 plain(build(data)) === buildRaw(data) 證明本文解回來就是「範本填上原文」。
  * 標籤前一定空一行，否則它會被當成上一個子點的續行；標籤後也空一行，否則下一條的主句會黏成同一段。
@@ -349,14 +362,74 @@ function render(data, codec) {
   const out = [`# ${field(data.title)}`, '', field(data.preamble), ''];
   for (const section of data.sections) {
     out.push(`## ${section.letter}、${field(section.title)}`, '');
-    for (const rule of section.rules) {
-      out.push(`【${section.letter}${rule.n}】${rich(rule.text)}`, '');
-      const items = rule.items || [];
-      if (items.length) out.push(...itemLines(items, rich), '');
-      out.push(`（${rich(rule.tag)}）`, '');
-    }
+    for (const rule of section.rules) out.push(...ruleLines(section.letter, rule, rich));
   }
   return out.join('\n');
+}
+
+/**
+ * 按需印條文（擁有者 2026-10-12 要求做完稽核「按需載入-1」印條文那一半；待辦原本那一行已搬到「做完的」）：
+ * 到了合併、送審、問裁示那一刻，工具把相關的幾條原文印在眼前，不必回頭翻 RULES.md。
+ * wanted 每一項是條號（H1）或只給節的字母（I＝整節）；重複的只印一次、照給的順序。
+ * 印的是解回來的原文（＝RULES.md 那幾行 plain 之後，記號照留）；markdown: true 印本文裡的字面編碼，
+ * 考題拿它證明「印出來的就是 RULES.md 裡那幾行」。資料不合契約、條號或節不存在、一條都沒給：丟例外，不印半份。
+ */
+function excerpt(data, wanted, { markdown = false } = {}) {
+  throwIfInvalid(data, '印不出條文');
+  const roles = data.roles || [];
+  const rich = markdown ? (value) => inline(value, roles) : (value) => value;
+  const picked = [];
+  const seen = new Set();
+  for (const raw of wanted) {
+    const want = String(raw).trim();
+    let found;
+    if (/^[A-Z]$/u.test(want)) {
+      const section = data.sections.find((s) => s.letter === want);
+      found = section && section.rules.map((rule) => ({ letter: want, rule }));
+    } else {
+      const m = /^([A-Z])([1-9]\d*)$/u.exec(want);
+      const section = m && data.sections.find((s) => s.letter === m[1]);
+      const rule = section && section.rules.find((r) => r.n === Number(m[2]));
+      found = rule && [{ letter: m[1], rule }];
+    }
+    if (!found) throw new Error(`不認得的條號或節「${want}」：照 RULES.md 的寫法，例如 H1，或只給節的字母 H`);
+    for (const x of found) {
+      const id = `${x.letter}${x.rule.n}`;
+      if (!seen.has(id)) {
+        seen.add(id);
+        picked.push(x);
+      }
+    }
+  }
+  if (!picked.length) throw new Error('沒有指定任何條號');
+  const lines = picked.flatMap((x) => ruleLines(x.letter, x.rule, rich));
+  while (lines.length && lines[lines.length - 1] === '') lines.pop();
+  return lines.join('\n');
+}
+
+/**
+ * 印不出條文的原因，只說哪一類、不帶檔案路徑：讀檔錯誤的原文會帶上本機的絕對路徑（含使用者與資料夾名），
+ * 這幾支工具的輸出常被整段貼進「PR說明」，使用專案的倉庫可能是公開的（B5；Grok 掃 #88 抓到）。
+ * 契約不合只留第一句（細節跑一次 node tools/build-rules.js 就看得到），條號不存在照原句（只帶條號）。
+ */
+function reasonOf(e) {
+  if (e && typeof e.code === 'string') return `讀不到 rules.json（${e.code}）`;
+  if (e instanceof SyntaxError) return 'rules.json 不是合格的 JSON';
+  return String((e && e.message) || e).split('\n')[0];
+}
+
+/**
+ * 給「到了那個時機」的工具接在自己輸出後面的那幾行：先空一行隔開，再一行說這是哪幾條、從哪裡印的，再接原文。
+ * 印不出來（rules.json 讀不到、不是 JSON、不合契約、條號不存在）就只有空行加一行說明、指回 RULES.md，不丟例外：
+ * 工具本身的結果與退出碼不可以因為這幾行而變（合併指令尤其不行）。
+ */
+function ruleFooter(wanted, { load = read } = {}) {
+  const names = wanted.map((w) => (/^[A-Z]$/u.test(String(w)) ? `${w} 節` : String(w))).join('、');
+  try {
+    return ['', `——這一步相關的規矩原文（${names}；從 rules.json 印出，跟 RULES.md 同一條）——`, excerpt(load(), wanted)];
+  } catch (e) {
+    return ['', `（這一步相關的規矩是 ${names}，但條文印不出來：${reasonOf(e)}——直接看 RULES.md 那幾條）`];
+  }
 }
 
 /** 由資料產生本文的完整內容（換行一律用 \n）。資料不合契約就直接丟例外，不產生半成品。 */
@@ -375,11 +448,45 @@ function read() {
   return JSON.parse(fs.readFileSync(dataFile, 'utf8'));
 }
 
-if (require.main === module) {
-  const data = read();
-  fs.writeFileSync(outFile, build(data), 'utf8');
-  const n = data.sections.reduce((s, x) => s + x.rules.length, 0);
-  process.stdout.write(`寫好 RULES.md：${data.sections.length} 節、${n} 條、規矩正文 ${countRules(data)} 字\n`);
+const USAGE = '用法：node tools/build-rules.js（重新產生 RULES.md）｜node tools/build-rules.js --rules <條號或節,…>（只印那幾條的原文、不寫檔；例如 --rules H1,H6 或 --rules I）';
+
+/**
+ * 指令列：不給參數＝重新產生 RULES.md；--rules 後接逗號分隔的條號或節＝只印、不寫檔。
+ * 其餘一律退 2：原本不看參數，打錯成 --rule 會靜靜改去重寫本文，讓人以為印出來的是條文。
+ */
+function parseCli(argv) {
+  if (argv.length === 0) return { mode: 'write' };
+  if (argv.length === 2 && argv[0] === '--rules') {
+    const ids = argv[1].split(',').map((s) => s.trim()).filter(Boolean);
+    if (ids.length) return { mode: 'print', ids };
+  }
+  return { error: `${USAGE}（收到：${argv.join(' ')}）` };
 }
 
-module.exports = { build, buildRaw, read, validate, tokenize, inline, literal, plain, countRules, MARK, dataFile, outFile, MIN_RULES };
+if (require.main === module) {
+  const cli = parseCli(process.argv.slice(2));
+  if (cli.error) {
+    process.stderr.write(`${cli.error}\n`);
+    process.exit(2);
+  }
+  let data;
+  try { data = read(); } catch (e) {
+    // 讀不到就退 2、只說哪一類（不讓例外帶著本機路徑的堆疊印出來；兩種用法都一樣，什麼都沒寫）
+    process.stderr.write(`${reasonOf(e)}：沒有產生、也沒有印任何東西\n`);
+    process.exit(2);
+  }
+  if (cli.mode === 'print') {
+    let text;
+    try { text = excerpt(data, cli.ids); } catch (e) {
+      process.stderr.write(`${e.message}\n`);
+      process.exit(2);
+    }
+    process.stdout.write(`${text}\n`);
+  } else {
+    fs.writeFileSync(outFile, build(data), 'utf8');
+    const n = data.sections.reduce((s, x) => s + x.rules.length, 0);
+    process.stdout.write(`寫好 RULES.md：${data.sections.length} 節、${n} 條、規矩正文 ${countRules(data)} 字\n`);
+  }
+}
+
+module.exports = { build, buildRaw, excerpt, ruleFooter, reasonOf, parseCli, read, validate, tokenize, inline, literal, plain, countRules, MARK, dataFile, outFile, MIN_RULES };

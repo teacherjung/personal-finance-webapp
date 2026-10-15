@@ -31,9 +31,9 @@
 //   ⑥的切半測試靠一個很短的等待，機器很忙時那一次可能兩段一起到＝沒真的考到切半（前半段的斷言仍成立）。
 //   ③的圍欄／行內程式碼分類只認這份說明**現在用的格式**（三反引號圍欄、單行的行內程式碼）：波浪號圍欄、
 //     縮排程式碼、跨行的行內程式碼會被誤算或漏算（Codex r5 待辦）。要換寫法就先換成熟的解析器，不要補分類規則。
-//   ⑦用 /bin/sh 與 git 起（Windows 不支援），是自己起子行程、**不是真的 Claude／Codex session**。
+//   ⑦用 /bin/sh 與 git 起（Windows 不支援），是自己起子行程、**不是真的 AI session**。
 //   對方掛著不把輸出讀走時，回覆會排在記憶體裡（沒有背壓處理）——要刻意不讀才碰得到。
-//   登記在兩家 AI 的設定裡這件事沒有機器看著（設定檔被改、被換成別的程式，靠人核對）。
+//   登記在各方 AI 的設定裡這件事沒有機器看著（設定檔被改、被換成別的程式，靠人核對）。
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -48,7 +48,7 @@ const { gitEnv } = require('../tools/git-env.js');
 const ROOT = path.join(__dirname, '..');
 const SERVER = path.join(ROOT, 'tools', 'canary-server.js');
 const INSTALL_DOC = path.join(ROOT, 'templates', 'canary-install.md');
-/** 完整工具名的唯一字面值：兩家 AI 都叫成 mcp__<伺服器名>__<工具名>。③會拿它跟真的跑出來的名字對。 */
+/** 完整工具名的唯一字面值：採 MCP 工具命名的平台（目前接過的 Claude Code 與 Codex 都是）叫成 mcp__<伺服器名>__<工具名>。③會拿它跟真的跑出來的名字對。 */
 const FULL_NAME = 'mcp__guard_canary__ping';
 /**
  * 會跟著搬進專案的四份說明，散文裡各提到這個名字幾次（README 不跟著搬，所以不在這裡釘）。
@@ -57,7 +57,7 @@ const FULL_NAME = 'mcp__guard_canary__ping';
 const PROSE_MENTIONS = [['templates/canary-install.md', 2], ['tools/guard-copy.js', 2], ['templates/hook-codex-global.json', 1], ['MACHINES.md', 2]];
 /** 伺服器的位元組釘（改了本體就要重算；重算的人要負責看過改了什麼）：
  *  node -e "console.log(require('node:crypto').createHash('sha256').update(require('node:fs').readFileSync('tools/canary-server.js')).digest('hex'))" */
-const SERVER_BYTES_SHA256 = '6c74b251a7172bebd38e22ba8be3c0463facd84375b6eaeb7cb2744f66491a5d';
+const SERVER_BYTES_SHA256 = 'fc9e0c7d2193482abdbd1b08bb68f7cba434dfc7259470c329b0cd80c63e10e9';
 
 const hello = (protocolVersion, id = 1) => ({ jsonrpc: '2.0', id, method: 'initialize', params: { protocolVersion, capabilities: {}, clientInfo: { name: 'kit-test', version: '1' } } });
 const HELLO = hello('2025-06-18');

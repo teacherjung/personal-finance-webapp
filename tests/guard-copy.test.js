@@ -44,8 +44,7 @@ const CRASH = /require is not defined in ES module scope/u;
 const MISMATCH = /指紋對不上/u;
 const STARTUP = /起不來/u;
 // 全是假名（連接器、工具名都是編的）
-// 登記制（2026-09-26）之後 mcp__ 名字所屬的連接器沒登記一律擋：ALLOWED 那個假連接器 other 登記為不碰禁區，
-// 自我試跑的放行假名也接在它後面（tools/guard-copy.js 的 allowProbes 從 safeServers 產）。
+// other 是這份合成設定的整組放行對照；個別名字登記另用不設 safeServers 的設定測。
 const FAKE = {
   name: '測試禁區', servers: ['fakebroker'], safeServers: ['other'], allowlist: ['get_quote'], deny: ['mcp__other__harmless_named_thing'],
   verbs: ['create', 'place'], nouns: ['widget'], readPrefixes: ['get'], patterns: [],
@@ -464,9 +463,8 @@ test('⑨自我試跑真的抓得到：什麼都放、什麼都擋、指紋檢�
   failsWith(editFile('tools/forbidden-tools.js', (c) => c.replace('function decide(toolName, forbidden) {', 'function decide() { return { deny: false };\n}\nfunction decideOriginal(toolName, forbidden) {')),
     /沒有一個被擋成退 2/u, '判斷層被改成什麼都放');
   failsWith({ forbidden: { name: '測試禁區', servers: ['fake broker with space'], safeServers: ['other'] } }, /沒有被乾淨地放行[\s\S]*設定壞掉/u, '清單壞到什麼都擋');
-  // 登記制（2026-09-26）：沒登記任何不碰禁區的連接器＝試跑找不到能放行的假名＝自我試跑失敗、照實說要先登記
-  //（兩側各留下什麼、碰禁區白名單上的工具仍放行＝guard-copy.js 檔頭；這一題只驗訊息）
-  failsWith({ forbidden: { ...FAKE, safeServers: [] } }, /safeServers 是空的[\s\S]*先把不碰禁區的連接器登記進 safeServers/u, 'safeServers 空');
+  // 沒有試跑候選時要先修登記，避免拿禁區連接器的真工具驗安裝。
+  failsWith({ forbidden: { ...FAKE, safeServers: [] } }, /safeServers 與 forbidden.allowedTools 都沒有可用名字[\s\S]*修正 settings.json/u, '請核試跑候選不足的指路訊息，重跑本題');
   failsWith(editFile('templates/hook-codex-global.json', (c) => c.replace("指紋對不上）：一律當成拒絕' >&2; exit 2; }", "指紋對不上）：一律當成拒絕' >&2; exit 0; }")),
     /指紋檢查沒有作用/u, '範本的指紋檢查被拿掉（提交進版本）');
   failsWith(editFile('tools/forbidden-tools.js', (c) => c.replace("if (r.output) process.stdout.write(`${r.output}\\n`);", "process.stdout.write(r.output ? `${r.output}\\n` : 'hello\\n');")),
@@ -496,9 +494,7 @@ test('⑨自我試跑真的抓得到：什麼都放、什麼都擋、指紋檢�
 
 test('⑩只靠樣式規則的清單：沒給 --deny-probe 就拒絕（什麼都不寫）；給了照清單該擋的假名就能裝，給的名字不擋或不合法就不過', () => withScratch((scratch) => {
   const home = fs.mkdtempSync(path.join(scratch, 'home-'));
-  // 登記制（2026-09-26）之後：mcp__ 名字只有碰禁區連接器白名單上的工具靠樣式規則決定擋不擋；沒登記的連接器一律擋、
-  // 登記為不碰禁區的整個放行。所以「只靠樣式規則」的清單仍要有 safeServers（試跑的放行假名從那裡產），
-  // 「照清單該擋」的假名＝沒登記的連接器（登記制擋）、「照清單不擋」的假名＝不碰禁區連接器上的。
+  // 這份合成設定用 safeServers 供放行候選；樣式本身無法反推該擋的名字，故另給 deny-probe。
   const patternsOnly = { name: '測試禁區', safeServers: ['other'], patterns: ['^create_widget$'] };
   const src = sourceRepo(scratch, { forbidden: patternsOnly });
   const to = path.join(scratch, 'p-none');
@@ -514,4 +510,64 @@ test('⑩只靠樣式規則的清單：沒給 --deny-probe 就拒絕（什麼都
   // 指令入口也收這個參數
   const cli = spawnSync(process.execPath, [path.join(src, 'tools', 'guard-copy.js'), '--from', 'HEAD', '--to', path.join(scratch, 'p-cli'), '--deny-probe', 'mcp__guard_copy_selftest__create_widget'], { cwd: scratch, encoding: 'utf8', env: { ...base, KIT_GUARD_COPY_ALLOW_TEMP: '1' } });
   assert.equal(cli.status, 0, cli.stderr);
+}));
+
+test('完整工具名登記：固定複本承接精確清單，未知名與篡改仍拒絕', () => withScratch((scratch) => {
+  // 只把合成名字送進鉤子的 JSON；不呼叫任何連接器。
+  const exact = 'mcp__probe_apps__notes__get_note';
+  const denied = 'mcp__probe_apps__notes__get_blocked';
+  const unknown = 'mcp__probe_apps__notes__get_new_note';
+  for (const withDeny of [true, false]) {
+    const forbidden = { name: '測試禁區', allowedTools: withDeny ? [denied, exact] : [exact], ...(withDeny ? { deny: [denied] } : {}) };
+    const src = sourceRepo(scratch, { forbidden });
+    const r = build({ root: src, from: 'HEAD', allowTemp: true, to: path.join(scratch, withDeny ? 'exact-deny' : 'exact-only'),
+      ...(withDeny ? {} : { denyProbe: unknown }) });
+    assert.equal(r.failure, null, `請檢查 tools/guard-copy.js 的精確名試跑，再跑本題：${r.failure}`);
+    const copyDir = r.copyDir;
+    const cmd = r.group.hooks[0].command;
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(copyDir, 'settings.json'), 'utf8')).forbidden, forbidden,
+      '請檢查 tools/guard-copy.js 抽取 forbidden 後重跑本題');
+    for (const flag of ['-c', '-lc']) {
+      allows(hook(cmd, { tool: exact, flag }), '請檢查完整名是否原樣進入固定複本，重跑本題');
+      const missing = hook(cmd, { tool: unknown, flag });
+      denies(missing, '未知同組名：請檢查登記判斷後重跑本題');
+      assert.match(missing.stderr, /沒有登記/u, '請核未知名拒絕理由，避免設定壞掉造成假綠；重跑本題');
+      if (withDeny) {
+        const blocked = hook(cmd, { tool: denied, flag });
+        denies(blocked, '逐字拒絕：請檢查 deny 順序後重跑本題');
+        assert.match(blocked.stderr, /在拒絕清單上/u, '請核 deny 拒絕理由，重跑本題');
+      }
+    }
+    const file = path.join(copyDir, 'settings.json');
+    fs.chmodSync(file, 0o644);
+    fs.appendFileSync(file, ' ');
+    blocks(hook(cmd, { tool: exact }), MISMATCH, '請檢查固定複本的指紋檢查後重跑本題');
+  }
+}));
+
+
+test('完整工具名登記：金融大小寫衝突使固定複本自測失敗，無衝突對照成功', () => withScratch((scratch) => {
+  // 合成來源與假家目錄隔離安裝自測；只把名字當 JSON 輸入，不呼叫連接器。
+  const repair = '檢查 tools/forbidden-tools.js 的設定驗證及 tools/guard-copy.js 自我試跑，重跑 node --test tests/guard-copy.test.js';
+  const exact = 'mcp__probe_apps__notes__get_note';
+  for (const withSafe of [false, true]) for (const conflict of [false, true]) {
+    const forbidden = { ...FAKE, safeServers: withSafe ? ['other'] : [],
+      allowedTools: [exact, conflict ? 'mcp__FAKEBROKER__get_quote' : 'mcp__fakebroker__get_quote'] };
+    const src = sourceRepo(scratch, { forbidden });
+    const home = fs.mkdtempSync(path.join(scratch, 'home-'));
+    const copyDir = path.join(scratch, `case-copy-${withSafe}-${conflict}`);
+    const r = spawnSync(process.execPath, [path.join(src, 'tools', 'guard-copy.js'), '--from', 'HEAD', '--to', copyDir],
+      { cwd: scratch, env: { ...base, HOME: home, KIT_GUARD_COPY_ALLOW_TEMP: '1' }, encoding: 'utf8' });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(copyDir, 'settings.json'), 'utf8')).forbidden, forbidden, repair);
+    if (conflict) {
+      assert.deepEqual([r.status, r.stdout], [1, ''], `${repair}：${r.stderr}`);
+      assert.match(r.stderr, /自我試跑沒過[\s\S]*allowedTools[\s\S]*大小寫衝突/u, repair);
+      assert.match(r.stderr, /不印接線/u, repair);
+      assert.doesNotMatch(r.stderr, /自我試跑：過/u, repair);
+    } else {
+      assert.equal(r.status, 0, `${repair}：${r.stderr}`);
+      assert.equal(JSON.parse(r.stdout).matcher, '^mcp__', repair);
+      assert.match(r.stderr, /自我試跑：過/u, repair);
+    }
+  }
 }));
