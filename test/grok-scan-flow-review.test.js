@@ -6,12 +6,19 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdtempSync } fro
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { runScan } from '../scripts/grok-scan.js';
+import { MODEL_WALK_MAX_NODES, reviewModelsQualified, runScan } from '../scripts/grok-scan.js';
 import { cleanupTempRoots, fakeCanary, fakeGrok, fakeRelay, isolated, keep, promptFile, SANDBOX_OK, SKIP_AFTER_CANARY, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
 
 after(cleanupTempRoots);
 const hash = (/** @type {string | Buffer} */ value) => createHash('sha256').update(value).digest('hex');
 const identity = { project: 'owner/repo', change: '17', reviewer: 'Grok', source: 'Grok CLI', round: 1 };
+
+test('複審資格採精確的非空全員集合，不按陌生名稱推級別', () => {
+  for (const models of [[], undefined, 'grok-4.7', [null], [61713], ['grok-4.5'], ['grok-4.8'], ['grok-4.7', 'grok-4.5'], ['grok-4.7', 'grok-4.7-other'], ['toString']]) {
+    assert.equal(reviewModelsQualified(models), false);
+  }
+  assert.equal(reviewModelsQualified(['grok-4.6-build', 'grok-4.7']), true);
+});
 
 /** @param {Record<string, any>} [options] */
 async function reviewRun(options = {}) {
@@ -141,11 +148,57 @@ for (const [label, shell] of [
 });
 
 test('正式複審安全鏈失敗、沒有原文或模型足跡時不產生正式結果', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
-  for (const options of [{ deps: { runCanary: fakeCanary(1) } }, { fake: { reply: '' } }, { fake: { noToolFootprint: true } }, { fake: { status: 1 } }, { fake: { model: undefined } }, { fake: { model: 'grok-4.6' } }]) {
+  for (const options of [{ deps: { runCanary: fakeCanary(1) } }, { fake: { reply: '' } }, { fake: { noToolFootprint: true } }, { fake: { status: 1 } }, { fake: { model: undefined } }]) {
     const { result, iso } = await reviewRun(options);
     assert.equal(result.code, 2, result.summary.join('\n'));
     assert.equal(result.review, undefined);
     assert.deepEqual(readdirSync(iso.resultsRoot), []);
+  }
+});
+
+test('正式複審接受已登記的 4.6 以上單一或混合模型，保留指定值與實際投影', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const models = ['grok-4.6', 'grok-4.6-build', 'grok-4.7', 'grok-4.7-build'];
+  for (let bits = 1; bits < (1 << models.length); bits++) {
+    const selected = models.filter((_, i) => bits & (1 << i));
+    const { result, iso, box } = await reviewRun({ fake: { model: selected[0], sessionLines: selected.map(model_id => JSON.stringify({ model_id })) } });
+    assert.equal(result.code, 0, result.summary.join('\n'));
+    assert.ok(result.review, '模型資格合格仍須取得完整正式結果');
+    assert.equal(result.review.model, 'grok-4.7');
+    assert.equal(result.review.effort, 'xhigh');
+    assert.deepEqual(result.review.observedModels, selected);
+    assert.equal(result.review.modelFloor, '4.6');
+    assert.equal(result.review.modelQualified, true);
+    assert.ok(result.review.recipe.includes(`模型=${selected.join('＋')}｜`));
+    assert.equal(readdirSync(iso.resultsRoot).length, 1);
+    const saved = JSON.parse(readFileSync(join(iso.resultsRoot, readdirSync(iso.resultsRoot)[0], 'review-result.json'), 'utf8'));
+    assert.deepEqual(saved.observedModels, selected);
+    assert.equal(existsSync(box), false);
+  }
+});
+
+test('正式複審模型核對失敗只回已核名稱與固定旗標，仍清除未合格結果', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const unknown = 'SYNTHETIC-UNRECOGNIZED-MODEL-61713';
+  const hostile = '/synthetic/account/SENTINEL-61713\\t';
+  const overLimit = JSON.stringify({ model_id: 'grok-4.6', nodes: Array(MODEL_WALK_MAX_NODES).fill(0) });
+  for (const [fake, expected] of [
+    [{ model: 'grok-4.5' }, '查不出來；另有不在清單上的 model_id'],
+    [{ model: 'grok-4.8' }, '查不出來；另有不在清單上的 model_id'],
+    [{ model: 'grok-4.7-unregistered' }, '查不出來；另有不在清單上的 model_id'],
+    [{ model: undefined }, '查不出來'],
+    [{ model: unknown }, '查不出來；另有不在清單上的 model_id'],
+    [{ sessionLines: ['{"model_id":"grok-4.5"}'] }, 'grok-4.7；另有不在清單上的 model_id'],
+    [{ sessionLines: [JSON.stringify({ model_id: hostile })] }, 'grok-4.7；另有不在清單上的 model_id'],
+    [{ sessionLines: [overLimit] }, 'grok-4.7；有紀錄讀不完整、整行不採用'],
+    [{ sessionLines: ['{"model_id":"grok-4.6"}', '{"model_id":61713}'] }, 'grok-4.6＋grok-4.7；另有不在清單上的 model_id'],
+  ]) {
+    const { result, iso, box } = await reviewRun({ fake });
+    assert.equal(result.code, 2);
+    assert.equal(result.review, undefined);
+    const diagnostic = result.summary.find(line => line.includes('實際模型紀錄')) ?? '';
+    assert.equal(diagnostic, `⛔ 正式複審的實際模型紀錄不完整或未符合已登記的 4.6 以上資格；模型紀錄摘要：${expected}。核對模型與 session 格式後重跑 scripts/grok-review.js`);
+    assert.ok(!diagnostic.includes(unknown) && !diagnostic.includes('61713'), '陌生值與未信任計數不能進診斷文字');
+    assert.deepEqual(readdirSync(iso.resultsRoot), []);
+    assert.equal(existsSync(box), false);
   }
 });
 

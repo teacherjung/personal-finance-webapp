@@ -73,12 +73,38 @@ function fixture(t) {
     runnerCalls.push({ ...input, material: readFileSync(input.promptFile, 'utf8') });
     const reply = replyOf();
     return { code: 0, review: { reply, replySha256: digest(reply), manifestSha256: 'c'.repeat(64), base: BASE, head: HEAD,
-      source: 'Grok CLI', model: args.model, effort: args.effort, recipe: '合成配方', resultsDir: join(dir, 'results') } };
+      source: 'Grok CLI', model: args.model, effort: args.effort, observedModels: ['grok-4.7'], modelFloor: '4.6', modelQualified: true,
+      recipe: '合成配方', resultsDir: join(dir, 'results') } };
   };
   return { dir, args, record, settings, values, write, current, comments, allComments, changedFiles, git, ask, runner, runnerCalls };
 }
 
 const absent = (f) => assert.equal(existsSync(f.args.outFile), false, '不應產生結論；請查 scripts/grok-review.js 並重跑本檔。');
+
+test('正式前端分列指定模型與合格實際集合，缺錯資格不產出收據', async t => {
+  const cases = [
+    { observedModels: ['grok-4.6'] }, { observedModels: ['grok-4.6-build', 'grok-4.7-build'] },
+    { observedModels: [] }, { observedModels: undefined }, { observedModels: ['grok-4.5'] },
+    { observedModels: ['grok-4.7', 'grok-4.8'] }, { modelFloor: undefined }, { modelFloor: '4.5' },
+    { modelQualified: undefined }, { modelQualified: false },
+  ];
+  for (const [i, changes] of cases.entries()) {
+    const f = fixture(t), original = f.runner;
+    f.runner = async input => { const r = await original(input); Object.assign(r.review, changes); return r; };
+    const r = await runReview(f.args, f);
+    if (i < 2) {
+      assert.equal(r.code, 0, r.lines.join('\n'));
+      const receipt = JSON.parse(readFileSync(`${f.args.outFile}.receipt.json`, 'utf8'));
+      assert.equal(receipt.model, 'grok-4.7');
+      assert.deepEqual(receipt.observedModels, changes.observedModels);
+      assert.equal(receipt.modelFloor, '4.6');
+      assert.equal(receipt.modelQualified, true);
+    } else {
+      assert.equal(r.code, 2); absent(f);
+      assert.equal(existsSync(`${f.args.outFile}.receipt.json`), false);
+    }
+  }
+});
 
 test('八個送審記號完整接入，未知／重複／缺值拒收', () => {
   const flags = ['--model', 'grok-4.7', '--effort', 'xhigh', '--review-tree', '/tree', '--mutation-copy', '/mutation',

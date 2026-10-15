@@ -15,7 +15,7 @@ import collab from '../tools/gates/check-collab-fields.js';
 import pending from '../tools/pending-rulings.js';
 import riskTier from '../tools/risk-tier.js';
 import reviewVerdicts from '../tools/gates/check-review-verdicts.js';
-import { repoLabelFrom, runScan } from './grok-scan.js';
+import { repoLabelFrom, REVIEW_MODEL_FLOOR, reviewModelsQualified, runScan } from './grok-scan.js';
 
 const SHA = /^[a-f0-9]{40}$/u;
 const MODEL = /^[A-Za-z0-9._-]+$/u;
@@ -226,10 +226,12 @@ export async function runReview(args, { git = reviewGit, ask = platform.ask, run
     demand(got && got.head === ready.record.head && got.base === ready.record.base && got.source === 'Grok CLI'
       && got.model === args.model && got.effort === args.effort && /^[a-f0-9]{64}$/u.test(got.manifestSha256)
       && typeof got.recipe === 'string' && got.recipe.length > 0 && typeof got.resultsDir === 'string' && got.resultsDir.length > 0, '安全 runner 的複審收據不符');
+    demand(got.modelFloor === REVIEW_MODEL_FLOOR && got.modelQualified === true && reviewModelsQualified(got.observedModels), '安全 runner 的模型資格收據不符');
     const reply = validateReply(got.reply, { head: ready.record.head, round: ready.record.round });
     demand(got.replySha256 === hash(reply), '安全 runner 原文雜湊不符');
     const receipt = { project: args.project, change: String(args.change), head: ready.record.head, base: ready.record.base,
       reviewer: 'Grok', source: 'Grok CLI', round: ready.record.round, model: args.model, effort: args.effort,
+      observedModels: [...got.observedModels], modelFloor: got.modelFloor, modelQualified: got.modelQualified,
       providerSha256: hash(readFileSync(fileURLToPath(import.meta.url))),
       runnerSha256: hash(readFileSync(new URL('./grok-scan.js', import.meta.url))),
       originalPromptSha256: ready.originalSha256, materialSha256: hash(ready.prompt), publicContextSha256: ready.contextSha256,

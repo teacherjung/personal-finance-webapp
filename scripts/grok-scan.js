@@ -152,7 +152,7 @@ function reviewSnapshotState(root) {
 }
 
 /** @typedef {{ project: string, change: string, reviewer: string, source: string, round: number, previousHead?: string }} ReviewIdentity */
-/** @typedef {{ reply: string, replySha256: string, manifestSha256: string, base: string, head: string, source: string, model: string, effort: string, recipe: string, resultsDir: string }} ReviewResult */
+/** @typedef {{ reply: string, replySha256: string, manifestSha256: string, base: string, head: string, source: string, model: string, effort: string, observedModels: string[], modelFloor: string, modelQualified: boolean, recipe: string, resultsDir: string }} ReviewResult */
 
 /**
  * 被掃倉庫的身分：只認 GitHub 的 https／ssh 遠端，解析成 `owner/name`；認不出就回 null（呼叫端換成固定字串）。
@@ -466,7 +466,7 @@ function assertStringListEqual(actual, expected, msg) {
  * 只有 ESRCH 算「群已空」；EPERM／EINVAL 等其他錯＝不知道群裡還有誰，**丟出去**（r6 #2：原本任何錯都當已空）。
  * @param {number | null} pgid
  */
-async function killGroupAndWait(pgid) {
+export async function killGroupAndWait(pgid) {
   if (!pgid) return;
   const gone = (/** @type {unknown} */ e) => /** @type {NodeJS.ErrnoException} */ (e).code === 'ESRCH';
   for (let i = 0; i < 200; i++) {   // 最多 ~10 秒
@@ -483,7 +483,7 @@ async function killGroupAndWait(pgid) {
  * @param {string} box realpath
  * @param {(m: string) => void} log
  */
-function sweepEscapees(box, log) {
+export function sweepEscapees(box, log) {
   const r = spawnSync('/usr/sbin/lsof', ['-n', '-P', '-u', String(process.getuid?.() ?? ''), '-d', 'cwd,txt,rtd', '-F', 'pn'], { encoding: 'utf8', timeout: 20_000, maxBuffer: 64 * 1024 * 1024 });
   if (r.status !== 0 && r.status !== 1) { log(`（lsof 掃蕩跑不了：status ${r.status}——略過，best-effort）`); return 0; }
   /** @type {Set<number>} */ const hits = new Set();
@@ -498,7 +498,7 @@ function sweepEscapees(box, log) {
 }
 
 /** 向 OS 要一個目前沒人用的 127.0.0.1 port（每掃不同：上一掃離開來的程序，其沙箱只准連舊 port） */
-function freePort() {
+export function freePort() {
   return new Promise((ok, bad) => {
     const s = createServer();
     s.on('error', bad);
@@ -572,6 +572,20 @@ export const KNOWN_MODELS = Object.freeze([
   'grok-4.6', 'grok-4.6-build',   // 2026-09-05〜2026-09-21 實際用的（本機結果包實測）
   'grok-4.7', 'grok-4.7-build',   // 2026-09-21 傍晚起（同上）
 ]);
+
+// 公開投影清單與複審資格各有用途：日後增加可顯示名稱，不能順便授予正式複審資格。
+const REVIEW_MODEL_LEVELS = Object.freeze({
+  'grok-4.6': '4.6', 'grok-4.6-build': '4.6',
+  'grok-4.7': '4.7', 'grok-4.7-build': '4.7',
+});
+export const REVIEW_MODEL_FLOOR = '4.6';
+/** 名稱逐項登記，不從未知名稱的版本外觀推定資格。
+ * @param {unknown} models
+ */
+export function reviewModelsQualified(models) {
+  return Array.isArray(models) && models.length > 0
+    && models.every(model => typeof model === 'string' && Object.hasOwn(REVIEW_MODEL_LEVELS, model));
+}
 
 /** 會被當成模型紀錄來解析的檔名（r1 #2：材料與提示文字**不算**紀錄）。 */
 const MODEL_LOG_EXT = Object.freeze(['.json', '.jsonl']);
@@ -1011,11 +1025,14 @@ export async function runScan(args, deps = {}) {
   /** @type {import('node:child_process').ChildProcess | undefined} */ let relay;
   /** @type {string | undefined} */ let liveDir;
   /** @type {number | null} */ let grokPgid = null;
+  let relayClosed = false, incidentWritten = false, outWritten = false;
+  /** @type {{ error: unknown } | undefined} */ let primaryFailure;
+  /** @type {{ phase: string, error: unknown }[]} */ const cleanupFailures = [];
   let cleaned = false;
-  const cleanup = () => {
+  const cleanup = (removeBox = true) => {
     if (cleaned) return; cleaned = true;
-    try { if (dummyFile) rmSync(dummyFile, { force: true }); } catch { /* 沒建 */ }
-    try { if (box) rmSync(box, { recursive: true, force: true }); } catch { /* 盡力 */ }
+    try { if (dummyFile) rmSync(dummyFile, { force: true }); } catch (error) { cleanupFailures.push({ phase: 'dummy', error }); }
+    try { if (removeBox && box) rmSync(box, { recursive: true, force: true }); } catch (error) { cleanupFailures.push({ phase: 'box', error }); }
   };
   /** 沒掃成（退 2）＝結果包整個不留（Grok 掃描抓到：原本每次失敗都在 ~/.grok-scan-results 留一個空目錄或只有 launch.json）；事故（退 1）留 launch.json 當證據、不留 sessions */
   const dropResultsDir = () => { try { if (resultsDir) rmSync(resultsDir, { recursive: true, force: true }); } catch { /* 盡力 */ } };
@@ -1293,6 +1310,7 @@ export async function runScan(args, deps = {}) {
   // ── ③ 轉送器（監看它的生死）──
   const relayProc = spawn(process.execPath, [relayScript, String(relayPort), '--auth-dir', authDir, '--dummy-file', dummyFile], { stdio: ['ignore', 'pipe', 'pipe'] });   // broker：真 token 只在轉送器手上
   relay = relayProc;
+  relayProc.once('close', () => { relayClosed = true; });
   let relayDead = /** @type {string | null} */ (null);
   let relayErr = '';
   relayProc.stderr?.on('data', (d) => { if (relayErr.length < 1024 * 1024) relayErr += String(d); });   // 有界：轉送器自己也有 MAX_REFUSALS
@@ -1411,6 +1429,7 @@ export async function runScan(args, deps = {}) {
       // ⚠️ **整份序列化之後再過一次那道門**：這樣「哪一個欄位可能夾帶已知機密」就不必逐格記得
       //   （提示檔路徑、錯誤訊息、之後新增的任何欄位都一樣）。佔位符不含引號與反斜線，JSON 仍然合法。
       writeFileSync(to, scrubText(JSON.stringify({ note: '事故指紋包：不含任何命中值本身。整份寫出前會再過一次清洗（已知機密與破口形狀都換成佔位符）；認不得的擋不住。', ...payload }, null, 2)), { mode: 0o600 });
+      incidentWritten = true;
       say(`事故指紋已寫入 ${to}（不含命中內容）`);
     } catch (e) {
       say(`⚠️ 事故指紋寫不出來（${/** @type {Error} */ (e).message}）——這一次沒有證據可查`);
@@ -1621,10 +1640,10 @@ export async function runScan(args, deps = {}) {
     return failAndClean('驗屍：沒有任何工具足跡——這次掃描只證明 Grok 能回文字，不能證明審查能力沒有降級');
   }
   const used = modelsUsedIn(snap.files);
-  if (formal && (used.incomplete || used.rejected || used.models.length !== 1 || used.models[0] !== model)) {
-    return failAndClean('正式複審的實際模型紀錄不完整或與指定值不符；核對模型與 session 格式後重跑 scripts/grok-review.js');
+  if (formal && (used.incomplete || used.rejected || !reviewModelsQualified(used.models))) {
+    return failAndClean(`正式複審的實際模型紀錄不完整或未符合已登記的 4.6 以上資格；模型紀錄摘要：${modelFieldText(used)}。核對模型與 session 格式後重跑 scripts/grok-review.js`);
   }
-  if (outFile && !formal) writeFileSync(outFile, reply);
+  if (outFile && !formal) { outWritten = true; writeFileSync(outFile, reply); }
   // 模型留痕（William 2026-09-22 裁「甲」）：當時掃描器不指定模型，上游自己換過一次（2026-09-21 grok-4.6→grok-4.7）
   // 而紀錄裡看不出來；2026-10-11 起明確指定（配方聲明的「指定模型」），這一格照舊記實際跑出來的。這一格只是**留痕不是閘**：讀不到／不認得／讀不完整都只是換一個
   // 值域寫死的字串，不擋掃描、不改退出碼。
@@ -1633,19 +1652,52 @@ export async function runScan(args, deps = {}) {
   log(`\n配方聲明可抄：${recipe}`);
   say(recipe);
   if (formal) {
-    const review = { ...args.review, reply, replySha256: sha256(reply), manifestSha256: sha256(manifestText ?? ''), base, head, source: 'Grok CLI', model, effort, recipe, resultsDir };
+    const review = { ...args.review, reply, replySha256: sha256(reply), manifestSha256: sha256(manifestText ?? ''), base, head, source: 'Grok CLI', model, effort,
+      observedModels: [...used.models], modelFloor: REVIEW_MODEL_FLOOR, modelQualified: true, recipe, resultsDir };
     writeFileSync(join(resultsDir, 'review-manifest.json'), manifestText ?? '', { mode: 0o600, flag: 'wx' });
     writeFileSync(join(resultsDir, 'review-result.json'), JSON.stringify(review, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
     return { code: 0, summary, review };
   }
   return { code: 0, summary };
+  } catch (error) {
+    primaryFailure = { error };
+    throw new Error('掃描未完成；本場結果無效，請確認本場資源後重跑', { cause: error });
   } finally {
-    // r4 #4：任何出口（含 throw）都清盒子；轉送器與活金絲雀也在這裡收；r5 #3：grok 整個程序群組也在這裡確定死透
+    // 群組未確認清空時保留盒子，但不能讓這個失敗跳過盒外資源的收尾。
     try {
-      await killGroupAndWait(grokPgid);
-      try { relay?.kill(); } catch { /* 已死 */ }
-      try { if (liveDir) rmSync(liveDir, { recursive: true, force: true }); } catch { /* 已清 */ }
-      cleanup();
+      let groupCleared = false;
+      try { await killGroupAndWait(grokPgid); groupCleared = true; }
+      catch (error) { cleanupFailures.push({ phase: 'group', error }); }
+      try {
+        const ownRelay = relay;
+        if (ownRelay && !relayClosed) await new Promise((resolve, reject) => {
+          const done = () => { clearTimeout(timer); resolve(undefined); };
+          const timer = setTimeout(() => { ownRelay.off('close', done); reject(new Error('relay close timeout')); }, 2000);
+          ownRelay.once('close', done);
+          try { ownRelay.kill('SIGKILL'); }
+          catch (error) { clearTimeout(timer); ownRelay.off('close', done); reject(error); }
+        });
+      } catch (error) { cleanupFailures.push({ phase: 'relay', error }); }
+      try { if (liveDir) rmSync(liveDir, { recursive: true, force: true }); }
+      catch (error) { cleanupFailures.push({ phase: 'live', error }); }
+      cleanup(groupCleared);
+      if (primaryFailure || cleanupFailures.length) {
+        // 只處理本場盒外產物；事故指紋已去機密，不因收尾失敗順手抹去。
+        if (resultsDir) {
+          const ownResults = resultsDir;
+          const revoke = incidentWritten ? ['review-result.json', 'review-manifest.json', 'sessions'].map((name) => join(ownResults, name)) : [ownResults];
+          for (const path of revoke) try { rmSync(path, { recursive: true, force: true }); }
+          catch (error) { cleanupFailures.push({ phase: 'results', error }); }
+        }
+        if (outWritten && outFile) try { rmSync(outFile, { force: true }); }
+        catch (error) { cleanupFailures.push({ phase: 'output', error }); }
+      }
+      if (cleanupFailures.length) {
+        // eslint-disable-next-line no-unsafe-finally -- 收尾失敗必須否決待回傳的成功值；cause 保留最早錯誤。
+        throw Object.assign(new Error('掃描收尾未完成；本場結果無效，請確認本場資源後重跑', { cause: primaryFailure?.error ?? cleanupFailures[0].error }), {
+          cleanupStages: cleanupFailures.map((failure) => failure.phase),
+        });
+      }
     } finally {
       // 卸掉本輪 handler；若前面的收尾步驟丟錯，暫存路徑是否仍存在由那個錯誤回報，不在這行保證。
       process.off('SIGTERM', emergency); process.off('SIGINT', emergency);
@@ -1668,6 +1720,11 @@ if (isMainModule(import.meta.url)) {
   //    活金絲雀的餌要落在**真家目錄**才有意義（理由見 ScanDeps.liveRoot）。在這一行注入一個
   //    **不是家目錄、且已經存在**的根目錄，餌就搬家，而全套考題照樣綠（Codex #516 r1 對 BOX_ROOT 實測跑過全卷）
   //    ——釘住預設值的那一題直接呼叫 runScan、不經過這個接縫。
-  const { code } = await runScan({ base, head, promptFile, outFile, repo });
-  process.exit(code);
+  try {
+    const { code } = await runScan({ base, head, promptFile, outFile, repo });
+    process.exit(code);
+  } catch {
+    console.error('掃描未完成；本場結果無效，請確認本場資源後重跑');
+    process.exit(2);
+  }
 }
