@@ -236,7 +236,7 @@ test('.claude/settings.json：deny 清單精確點名兩支下單工具、拆護
     'disableAllHooks:true 會把第二層 hook 整個關掉——那是拆護欄的開關，不准出現在專案設定。');
 });
 
-test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實跑回 deny 的組、登記過的可用名一律不誤傷、沒登記的連接器整個擋（換了編號的券商連唯讀查詢也擋）；理由類別另用行程內 decide() 對真清單斷言', () => {
+test('.claude/settings.json：hook 層逐名配對本題列出的拒絕與放行探針；未登記及模擬券商換編號的理由類別另用 decide() 對真清單斷言', () => {
   const settings = loadSettings();
   // ⚠️ 正反兩面都是「matcher ∧ handler 決策」成對驗證（Codex #392 r2 important）：
   //    只驗 matcher 會被「看輸入決定」的 handler 假綠（create 擋、delete 放）；
@@ -247,7 +247,7 @@ test('.claude/settings.json：hook 層逐名配對——每個必擋名都有實
   for (const tool of [...FORBIDDEN_TOOLS, ...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAMILY, ...LOOKALIKES_UNREGISTERED]) {
     assert.ok(entriesBlocking(settings, tool).length >= 1,
       `沒有任何 hook 組對 ${tool} 是「matcher 接得住＋handler 實跑回 deny」——`
-      + '空殼、改輸出、或「看輸入決定」的偏心 handler 都算沒擋（連接器換 UUID、沒登記的連接器也必須擋得住）。');
+      + '空殼、改輸出、或「看輸入決定」的偏心 handler 都算沒擋（本題列出的未登記與換編號探針也須擋下）。');
   }
   // 誤傷＝matcher 命中「且」對該名字實跑回 deny。純記錄的良性 hook（不 deny）不歸本考題管，
   // 不會被錯殺（Codex #392 r1 minor②）。
