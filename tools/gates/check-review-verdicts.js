@@ -30,8 +30,35 @@
 // 那個 AI 的通過就跳過小標，擁有者的原話反而被擋。擁有者沒登記（或登記的不是參與者）時不豁免＝那一則不算數、看得見地擋下，
 // 訊息會提醒先登記擁有者、不要替他的原話補小標。
 //
+// ## F7 當版核對收據 v1（格式唯一正本）
+// 只證明某則原通過曾在當時 HEAD 合法解除較早阻擋；不能產生通過，也不能代替新指定者對目前 HEAD 的通過。
+// F7 收件者在盒外查平台、實跑整閘 exit0 後，保存私有 UTF-8 證據：命令、時間、退出碼、stdout/stderr、
+// 當時完整 HEAD，以及原通過的 id/body/createdAt；再在同支 PR 貼獨立留言。不得拿今天重跑或舊樹冒充過去核對。
+// 首個非空行逐字為下面標題，其後只接一個 json 程式碼區塊，不帶結論標頭或機器人記號；沒有其他欄位：
+// F7 當版核對收據 v1
+// ```json
+// {
+//   "passCommentId": "<platform comments 的原通過 id>",
+//   "role": "<原通過角色>",
+//   "source": "<原通過來源>",
+//   "headSha": "<當時完整40位小寫SHA>",
+//   "checkedAt": "<UTC ISO至秒，例如2026-10-15T06:13:10Z>",
+//   "exitCode": 0,
+//   "passBodySha256": "<原通過body原字串UTF-8的64位小寫SHA-256>",
+//   "proofSha256": "<私有實跑證據原始位元組的64位小寫SHA-256>"
+// }
+// ```
+// 角色／來源沿用標頭正規化。body 不正規化；原留言被編輯時舊 hash 不能沿用。時間同以秒精度比較：
+// 原 pass.createdAt ≤ checkedAt ≤ 收據.createdAt。同輪一致性只核 checkedAt 當秒以前的留言；後到矛盾另立阻擋。
+// 無機器人記號的收據若缺欄、多欄、型別／時間／綁定不符或非 exit0，只讓收據不採計並提醒；不為無關壞收據新增全域阻擋。
+// 收據前綴若豁免含機器人記號的留言，會把既有壞標頭／壞時間防線變成只提醒。
+// 缺可採計的歷史證據時保留阻擋，不推定從未解除；可由同身分對目前 HEAD 補更高輪次通過，或公開既有真實 exit0 收據。
+// 誠實劃界：proofSha256 只驗格式，閘不讀私證據、不證明當時 HEAD 或 exit0 真實；F7 收件者須核原證據。
+// 這沿用共用帳號自我宣告的限制，不是簽章、強身分驗證或平台原生歷史。
+//
 // 退出碼：0＝指定的複審者對目前版本說通過（那則帶兩行固定小標，擁有者除外）、且沒有未撤銷的阻擋／1＝未通過／2＝查不清楚（一律當未通過）。
 'use strict';
+const { createHash } = require('node:crypto');
 const { ask, PlatformError } = require('../platform.js');
 const { read: readSettings } = require('../settings-data.js');
 const { fieldValue, canonicalRole, rolesOf } = require('./check-collab-fields.js');
@@ -134,9 +161,61 @@ function sourceLookalike(a, b) {
   return null;
 }
 
+const RECEIPT_TITLE = 'F7 當版核對收據 v1';
+const RECEIPT_FIELDS = ['passCommentId', 'role', 'source', 'headSha', 'checkedAt', 'exitCode', 'passBodySha256', 'proofSha256'];
+const RECEIPT_FIX = '由同身分對目前 HEAD 補更高輪次通過，或依 tools/gates/check-review-verdicts.js 檔頭「F7 當版核對收據 v1」公開既有真實 exit0 收據；不得以今天重跑冒充歷史核對。';
+const secondOf = (time) => Math.floor(time / 1000);
+const receiptLike = (body) => !hasBotMark(body) && (String(body || '').split('\n').find((line) => line.trim()) || '').trim().startsWith('F7 當版核對收據');
+const compatibleSha = (a, b) => a.startsWith(b) || b.startsWith(a);
+
+/** 同輪的所有結論須同為通過且與核對 HEAD 相容；短碼不能掩蓋另一則更長版本碼。 */
+function passRoundAgrees(pass, records, head, cutoff = Infinity) {
+  return records.filter((r) => r.who === pass.who && r.round === pass.round && secondOf(r.at) <= cutoff)
+    .every((r) => !r.blocking && head.startsWith(r.sha));
+}
+
+/** 收據只引用已合規的原通過；回傳原記錄，讓事件解除仍走同一條規則。 */
+function receiptPass(comment, comments, records, roles) {
+  const body = String(comment.body || '').replace(/\r\n?/gu, '\n');
+  const content = body.replace(/^(?:[^\S\n]*\n)*/u, '');
+  const match = /^F7 當版核對收據 v1\n\s*```json\n([\s\S]*?)\n```[^\S\n]*(?:\n\s*)?$/u.exec(content);
+  if (!match || hasBotMark(body)) return { error: '標題或單一 JSON 區塊格式不符' };
+  let data;
+  try { data = JSON.parse(match[1]); } catch { return { error: 'JSON 讀不出來' }; }
+  if (!data || typeof data !== 'object' || Array.isArray(data)
+      || Object.keys(data).length !== RECEIPT_FIELDS.length || !RECEIPT_FIELDS.every((key) => Object.hasOwn(data, key))) {
+    return { error: '欄位缺少或多出' };
+  }
+  if (RECEIPT_FIELDS.some((key) => key !== 'exitCode' && typeof data[key] !== 'string') || data.exitCode !== 0) {
+    return { error: '欄位型別不符或不是整閘 exit0' };
+  }
+  if (!/^[0-9a-f]{40}$/u.test(data.headSha) || !/^[0-9a-f]{64}$/u.test(data.passBodySha256)
+      || !/^[0-9a-f]{64}$/u.test(data.proofSha256)) return { error: '完整 HEAD 或雜湊格式不符' };
+  const checked = parseInstant(data.checkedAt);
+  const posted = parseInstant(comment.createdAt);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/u.test(data.checkedAt) || checked === null || posted === null) {
+    return { error: '核對或收據時間不符 UTC 秒精度／有效時間契約' };
+  }
+  const originals = comments.filter((c) => String(c.id) === data.passCommentId);
+  const pass = records.find((r) => r.id === data.passCommentId);
+  if (originals.length !== 1 || !pass || pass.blocking) return { error: '找不到唯一且合規的原通過留言' };
+  if (canonicalRole(data.role.trim(), roles) !== pass.role || data.source.trim().replace(/\s+/gu, ' ') !== pass.source) {
+    return { error: '角色或來源與原通過不符' };
+  }
+  if (createHash('sha256').update(originals[0].body, 'utf8').digest('hex') !== data.passBodySha256) {
+    return { error: '原通過 body 雜湊不符' };
+  }
+  if (!data.headSha.startsWith(pass.sha)) return { error: '完整 HEAD 與原通過 SHA 不相容' };
+  if (!(secondOf(pass.at) <= secondOf(checked) && secondOf(checked) <= secondOf(posted))) {
+    return { error: '不符合原通過 ≤ 核對 ≤ 收據的秒精度時間順序' };
+  }
+  if (!passRoundAgrees(pass, records, data.headSha, secondOf(checked))) return { error: '核對當秒以前的同輪結論不一致或版本不符' };
+  return { pass };
+}
+
 /**
  * 純判斷層。
- * @param {Array<{id:string, body:string}>} comments 依時間排序的留言
+ * @param {Array<{id:string, body:string, createdAt:string}>} comments 平台留言（判斷層自行按時間排序）
  * @param {string} head 目前版本
  * @param {string|null} reviewerRole PR說明指定的複審者；null＝讀不出來
  * @param {string[]} roles 專案設定的參與者識別值
@@ -149,17 +228,23 @@ function evaluate(comments, head, reviewerRole, roles, { ownerRole = null } = {}
   const latest = {};
   const malformed = [];
   const voids = [];
+  const records = [];
+  const events = [];
   // 先後看**留言時間**、不看清單順序（r1 Medium⑩：平台把清單反過來給，同一組事實會判出相反結果）。
-  // 時間讀不出的留言＝整支判不了，交給呼叫端退 2（gateRun 先驗過；這裡再守一次）。
+  // 普通留言時間讀不出＝整支判不了；收據時間不合只讓該收據失效，不製造全域阻擋。
   // 時間走共用契約（r3 High①）：沒帶時區的時間在不同執行機器會判出不同先後，不收
   const at = (c) => { const v = parseInstant(c.createdAt); return v === null ? NaN : v; };
-  if (comments.some((c) => !Number.isFinite(at(c)))) {
+  if (comments.some((c) => !receiptLike(c.body) && !Number.isFinite(at(c)))) {
     return { problems: ['有留言的時間讀不出來或沒帶時區：先後判不了，不放行。'], warnings: [], reviewers: {}, unsure: true };
   }
-  comments = [...comments].sort((a, b) => at(a) - at(b));
+  // 同刻用固定字串次序，避免輸入排列改變事件與提醒輸出；同刻 pass 仍不能解同刻事件。
+  const orderKey = (c) => `${c.id}\n${c.body}`;
+  comments = [...comments].sort((a, b) => ((Number.isFinite(at(a)) ? at(a) : Infinity) - (Number.isFinite(at(b)) ? at(b) : Infinity))
+    || (orderKey(a) < orderKey(b) ? -1 : orderKey(a) > orderKey(b) ? 1 : 0));
   const byId = new Map(comments.map((c, i) => [String(c.id), i]));
 
   comments.forEach((c, idx) => {
+    if (receiptLike(c.body)) return;
     const h = headerOf(c.body, roles);
     if (!h) {
       const excerpt = `「${String(c.body).replace(/\s+/g, ' ').slice(0, 60)}…」`;
@@ -172,8 +257,18 @@ function evaluate(comments, head, reviewerRole, roles, { ownerRole = null } = {}
     // 缺固定小標的「通過」整則不採計（F7）：不放行、也不撤銷同一位先前的阻擋；作廢行照樣生效（那是救別則的）
     if (!h.blocking && h.role !== ownerRole) {
       const missing = missingHeadings(c.body);
-      if (missing.length) { incomplete.push({ id: String(c.id), who, role: h.role, sha: h.sha, round: h.round, missing }); return; }
+      if (missing.length) { incomplete.push({ id: String(c.id), who, role: h.role, sha: h.sha, round: h.round, at: at(c), missing }); return; }
     }
+    const record = { ...h, who, id: String(c.id), at: at(c) };
+    const sameRound = records.filter((r) => r.who === who && r.round === h.round);
+    if (h.blocking) events.push(record);
+    // 衝突屬於引入矛盾的這則留言時間；較早的高輪通過不能預先清除後來的事件。
+    const opposite = sameRound.find((r) => r.blocking !== h.blocking);
+    const otherVersion = sameRound.find((r) => !compatibleSha(r.sha, h.sha));
+    if (opposite || otherVersion) events.push({ ...record, blocking: true,
+      verdict: opposite ? `同一輪（r${h.round}）出現相反結論：${opposite.verdict} vs ${h.verdict}`
+        : `同一輪（r${h.round}）對不同版本各給結論（${otherVersion.sha}、${h.sha}）：不明，要更高輪次澄清` });
+    records.push(record);
     const cur = latest[who];
     if (!cur || h.round > cur.round) latest[who] = { ...h, who, shas: [h.sha] };
     else if (h.round === cur.round) {
@@ -222,11 +317,20 @@ function evaluate(comments, head, reviewerRole, roles, { ownerRole = null } = {}
       const why = sourceLookalike(ids[i].source, ids[j].source);
       if (why) {
         warnings.push(`「${ids[i].who}」與「${ids[j].who}」的來源${why}——這兩個可能是同一位被打成兩種寫法。`
-          + '這道閘不會自動併成一位，所以其中一邊的阻擋，另一邊說通過也解不掉；每一個身分各自對目前版本補一則更高輪次的結論。');
+          + '這道閘不會自動併成一位，所以其中一邊的阻擋，另一邊說通過也解不掉；每一個仍有未撤銷阻擋的身分，各自對目前版本補一則更高輪次的通過。');
       }
     }
   }
 
+  const historicalPasses = new Set();
+  for (const comment of comments.filter((c) => receiptLike(c.body))) {
+    const receipt = receiptPass(comment, comments, records, roles);
+    if (receipt.error) warnings.push(`${RECEIPT_TITLE}（留言 ${comment.id}）不採計：${receipt.error}。${RECEIPT_FIX}`);
+    else historicalPasses.add(receipt.pass);
+  }
+  const qualifiedPasses = records.filter((r) => !r.blocking && (historicalPasses.has(r) || passRoundAgrees(r, records, head)));
+  const clears = (pass, event) => pass.who === event.who && pass.round > event.round && pass.at > event.at;
+  const unresolved = events.filter((event) => !qualifiedPasses.some((pass) => clears(pass, event)));
   const passers = ids.filter((h) => !h.blocking && head.startsWith(h.sha));
   for (const x of incomplete) {
     const fix = ownerRole
@@ -234,9 +338,9 @@ function evaluate(comments, head, reviewerRole, roles, { ownerRole = null } = {}
       : '那則「通過」不算數，要重貼一則合格的（範本 templates/verdict-header.md）；如果這一則是擁有者走快速通道（擁有者）（F12）的原話：專案設定還沒登記擁有者，所以沒有豁免，先登記擁有者，不要替他的原話補小標。';
     const note = `${x.who} 在 r${x.round}（審 ${x.sha}）的「通過」（留言 ${x.id}）缺固定小標「${x.missing.join('」「')}」：${fix}`;
     // 它算數的話結果會不會不一樣：①會撤掉同一位較低輪次的阻擋，或②會是指定那一位對目前版本的通過、而沒有別則補上。
-    // 同一位之後又有更高（或同輪）的結論時，它算不算數都改變不了什麼，只提醒。不在目前版本上的也只提醒（算數也會因為版本變了而擋）。
+    // 撤銷看未解事件而非 latest：更高輪錯版通過可能遮住低輪阻擋。過期缺小標仍只提醒。
     const cur = latest[x.who];
-    const revokes = Boolean(cur && cur.blocking && cur.round < x.round);
+    const revokes = unresolved.some((event) => clears(x, event));
     const releases = x.role === reviewerRole && !passers.some((h) => h.role === reviewerRole) && (!cur || cur.round < x.round);
     if (head.startsWith(x.sha) && (revokes || releases)) problems.push(note);
     else warnings.push(note);
@@ -248,11 +352,20 @@ function evaluate(comments, head, reviewerRole, roles, { ownerRole = null } = {}
       ? `對目前版本說「通過」的是 ${passers.map((h) => h.who).join('、')}，但PR說明指定的複審者是「${reviewerRole}」——放行只認指定的那一位，否則實作者自己說一句通過就放行了自己的PR。`
       : `沒有「${reviewerRole}」對目前版本（${head.slice(0, 7)}）下過「通過」的正式結論。協作欄位只證明有人被寫成審查者，證明不了審查真的發生過。`);
   }
-  for (const h of ids) {
-    if (h.blocking) problems.push(`${h.who} 在 r${h.round}（審 ${h.sha}）的結論是「${h.verdict}」，還沒有被同一位撤銷。取聯集、不取最後一則：別人說通過不會解除這一條。`);
-    else if (!head.startsWith(h.sha)) problems.push(`${h.who} 的「${h.verdict}」是對 ${h.sha} 說的，但目前版本是 ${head.slice(0, 7)}——分支推過之後，那個結論不再適用。`);
+  for (const event of unresolved) {
+    const historyUnknown = records.some((r) => !r.blocking && clears(r, event) && !qualifiedPasses.includes(r));
+    const reason = historyUnknown
+      ? `缺可採計的歷史當版核對收據，保留阻擋（不推定從未解除）。${RECEIPT_FIX}`
+      : '還沒有被同一位撤銷。取聯集、不取最後一則：別人說通過不會解除這一條。';
+    problems.push(`${event.who} 在 r${event.round}（審 ${event.sha}，留言 ${event.id}）的結論是「${event.verdict}」，${reason}`);
   }
-  return { problems, warnings, reviewers: latest, incomplete };
+  for (const h of ids) {
+    if (!h.blocking && !head.startsWith(h.sha)) warnings.push(`${h.who} 的「${h.verdict}」是對 ${h.sha} 說的，但目前版本是 ${head.slice(0, 7)}——分支推過之後，那個結論不再適用。`);
+  }
+  // review-launch 依 blocking 判斷能否套「上輪通過後」的範圍；高輪舊 pass 不能把未撤事件藏掉。
+  const reviewers = Object.fromEntries(ids.map((h) => [h.who, !h.blocking && unresolved.some((event) => event.who === h.who)
+    ? { ...h, blocking: true, verdict: `${h.verdict}（仍有未撤銷阻擋）` } : h]));
+  return { problems, warnings, reviewers, incomplete };
 }
 
 function gateRun(changeId, { settings = readSettings(), platform = { ask } } = {}) {

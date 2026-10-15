@@ -174,7 +174,7 @@ test('④缺兩個固定小標的「通過」不算數，不可以把這一輪�
     assert.match(mixed.prompt, /輪次：r3\n/u);
     assert.match(mixed.prompt, /本輪範圍：全審（/u, '最近貼的那一輪不算數：照中風險第 3 輪＝全審');
     close('7', { settings: s, dir, leftoverRoots: [] });
-    const good = verdict('Beta', 3, r.base, '通過');
+    const good = verdict('Beta', 3, r.head, '通過');
     const two = launch('7', 'Beta', { settings: s, platform: fakePlatform(answersFor(r, { changedFiles: files, comments: [r1, bare, good] })), cwd: r.dir, dir, template: TEMPLATE });
     assert.match(two.prompt, new RegExp(`本輪範圍：${TIERS.中.afterPassFix}（`, 'u'), '對照組：合格的通過之後照「通過後回頭改」那一格');
     close('7', { settings: s, dir, leftoverRoots: [] });
