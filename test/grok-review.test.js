@@ -1,7 +1,7 @@
 // @ts-check
-// 假平台與假 runner 不發模型請求；git 環境題另走真 git／假執行檔，沒有建立沙盒倉庫。
+// 假平台、假 runner 與假 CLI 不發模型請求；沙盒 git 依 helpers/grok-scan-flow-fixtures.js 從零組環境。
 // 本檔只驗傳輸與收件；OS 沙箱與 DLP 由 grok-scan 的行為考題負責。
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -10,19 +10,33 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import launcher from '../tools/review-launch.js';
 import { parseReviewArgs, prepareReview, projectPublicBody, promptValues, publicMaterial, reviewGit, runReview, validateReply } from '../scripts/grok-review.js';
+import { runScan } from '../scripts/grok-scan.js';
+import { cleanupTempRoots, fakeGrok, fakeRelay, isolated, SANDBOX_OK, SKIP_AFTER_CANARY, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
 import { assertChildGitEnvClean, injectDirtyGitEnv } from './helpers/dirty-git-env.js';
 
+after(cleanupTempRoots);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const TEMPLATE = readFileSync(join(ROOT, 'templates/review-request.md'), 'utf8');
 const HEAD = 'a'.repeat(40), BASE = 'b'.repeat(40);
 const digest = (text) => createHash('sha256').update(text).digest('hex');
 const replyOf = () => '🤖 Grok｜來源：Grok CLI｜審 `aaaaaaa`｜r1｜結論：通過\n\n### 本輪實際用的設定\n模型 grok-4.7；推理 xhigh。\n### 清單逐項結果\n合成測試資料。\n### 發現\n本輪提了 0 條。\n未貼\n';
 
-function fixture(t) {
+// 收件夾具手工建立來源收據；不靠被測選取函式替自己的錯誤背書。
+function selectedReply(reply, prefix = '合成進度🙂\n') {
+  const stdout = prefix + reply + '\n';
+  return { reply, replySha256: digest(reply), stdout, stdoutSha256: digest(stdout), selection: {
+    schema: 'grok-final-selection/v1', cliVersion: '1.0.46', encoding: 'decoded-stdout-utf8',
+    transcriptPath: '%2Fsynthetic%2Fsrc/00000000-0000-4000-8000-000000000001/chat_history.jsonl',
+    transcriptSha256: 'f'.repeat(64), rowCount: 1, rowIndex: 0, byteStart: Buffer.byteLength(prefix),
+    byteEnd: Buffer.byteLength(prefix + reply), stdoutBytes: Buffer.byteLength(stdout), replyBytes: Buffer.byteLength(reply) } };
+}
+
+function fixture(t, versions = { head: HEAD, base: BASE, repo: undefined }) {
+  const HEAD = versions.head, BASE = versions.base;
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'grok-review-test-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const root = join(dir, 'repo'), tree = join(dir, 'tree'), mutation = join(dir, 'mutation'), common = join(dir, 'common');
-  for (const p of [root, tree, mutation, common]) mkdirSync(p);
+  const root = versions.repo ?? join(dir, 'repo'), tree = join(dir, 'tree'), mutation = join(dir, 'mutation'), common = join(dir, 'common');
+  for (const p of [root, tree, mutation, common]) if (!existsSync(p)) mkdirSync(p);
   const args = { model: 'grok-4.7', effort: 'xhigh', reviewTree: tree, mutationCopy: mutation,
     promptFile: join(dir, 'prompt.md'), outFile: join(dir, 'output.log'), change: '108', project: 'example/other-project' };
   const record = { reviewer: 'Grok', change: '108', round: 1, base: BASE, head: HEAD, root, tree, mutation,
@@ -72,7 +86,7 @@ function fixture(t) {
   const runner = async (input) => {
     runnerCalls.push({ ...input, material: readFileSync(input.promptFile, 'utf8') });
     const reply = replyOf();
-    return { code: 0, review: { reply, replySha256: digest(reply), manifestSha256: 'c'.repeat(64), base: BASE, head: HEAD,
+    return { code: 0, review: { ...selectedReply(reply), manifestSha256: 'c'.repeat(64), base: BASE, head: HEAD,
       source: 'Grok CLI', model: args.model, effort: args.effort, observedModels: ['grok-4.7'], modelFloor: '4.6', modelQualified: true,
       recipe: '合成配方', resultsDir: join(dir, 'results') } };
   };
@@ -230,7 +244,7 @@ test('投影不遮沒包住的路徑或憑證，也不代改 Grok 結論', () =>
   assert.throws(() => publicMaterial(result.body), /本機絕對路徑/u);
   for (const tokenBody of ['`github_pat_' + 'z'.repeat(24) + '`', '`/Users/sample/github_pat_' + 'z'.repeat(24) + '`'])
     assert.throws(() => projectPublicBody({ id: '5', body: tokenBody }, 'https://github.com/example/other-project/pull/108#issuecomment-5'), /憑證/u);
-  const reply = replyOf() + '\n`/Users/sample/private.txt`\n';
+  const reply = replyOf().replace('未貼', '`/Users/sample/private.txt`\n未貼');
   assert.throws(() => validateReply(reply, { head: HEAD, round: 1 }), /本機絕對路徑/u);
 });
 
@@ -274,7 +288,7 @@ test('原文無效不造結論，失敗與阻擋原文也照實保留', async (t
   }
   for (const conclusion of ['需修改後再審', '不可合併']) {
     const f = fixture(t), original = f.runner;
-    f.runner = async (input) => { const r = await original(input); r.review.reply = replyOf().replace('結論：通過', `結論：${conclusion}`); r.review.replySha256 = digest(r.review.reply); return r; };
+    f.runner = async (input) => { const r = await original(input); Object.assign(r.review, selectedReply(replyOf().replace('結論：通過', `結論：${conclusion}`))); return r; };
     assert.equal((await runReview(f.args, f)).code, 0);
     assert.match(readFileSync(f.args.outFile, 'utf8'), new RegExp(`結論：${conclusion}`, 'u'));
   }
@@ -389,4 +403,68 @@ test('git 呼叫在髒環境下仍核對當前倉庫，且子行程拿不到 GIT
     assert.deepEqual(JSON.parse(reviewGit(ROOT, ['show', 'HEAD:settings.json'])), ['--no-replace-objects', 'show', 'HEAD:settings.json'],
       '請在 scripts/grok-review.js 保留原始物件讀取旗標並重跑本檔。');
   } finally { if (beforePath === undefined) delete process.env.PATH; else process.env.PATH = beforePath; }
+});
+
+for (const [name, change] of [
+  ['stdout hash', got => { got.stdoutSha256 = '0'.repeat(64); }],
+  ['final hash', got => { got.replySha256 = '0'.repeat(64); }],
+  ['missing selection', got => { delete got.selection; }],
+  ['range', got => { got.selection.byteStart++; }],
+  ['source hash', got => { got.selection.transcriptSha256 = ''; }],
+  ['raw stdout changed', got => { got.stdout = '別的原文'; }],
+]) test(`正式前端拒絕選取收據失配：${name}`, async t => {
+  const f = fixture(t), original = f.runner;
+  f.runner = async input => { const result = await original(input); change(result.review); return result; };
+  const result = await runReview(f.args, f);
+  assert.equal(result.code, 2); absent(f);
+  assert.equal(existsSync(`${f.args.outFile}.receipt.json`), false);
+});
+
+for (const prefix of ['/Users/synthetic/private.log\n', 'github_pat_' + 'x'.repeat(24) + '\n', '🤖 另一則對外文字\n']) {
+  test('final 外的對外輸出安全警訊不能靠選取隱去：' + (prefix.startsWith('🤖') ? '標記' : prefix.startsWith('/') ? '路徑' : '憑證'), async t => {
+    const f = fixture(t), original = f.runner;
+    f.runner = async input => { const result = await original(input); Object.assign(result.review, selectedReply(replyOf(), prefix)); return result; };
+    assert.equal((await runReview(f.args, f)).code, 2); absent(f);
+  });
+}
+
+test('文末獨立未貼及三小標不可省，final 前言仍不接受', () => {
+  for (const content of [replyOf().replace('未貼\n', ''), replyOf().replace('未貼', '並未貼'),
+    replyOf().replace('未貼', '未貼\n正文'), replyOf().replace('未貼', ' 未貼'),
+    ...['### 本輪實際用的設定', '### 清單逐項結果', '### 發現'].map(h => replyOf().replace(h, '')),
+    '未貼\n' + replyOf(), ' \n' + replyOf(), replyOf().replace('Grok｜', 'Claude｜'), replyOf().replace('通過', '未知')]) {
+    assert.throws(() => validateReply(content, { head: HEAD, round: 1 }), /重跑 scripts\/grok-review.js/);
+  }
+});
+
+for (const preface of ['', '未貼：這是前言\n\n']) test(`假 CLI→正式安全 runner→正式前端${preface ? '拒 final 自身前言' : '只收完整 final 並保存原 stdout'}`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async t => {
+  const repo = tinyRepo({ firstCommitFiles: { 'RULES.md': 'synthetic rules\n' } });
+  const f = fixture(t, { head: repo.head, base: repo.base, repo: repo.dir });
+  const final = preface + replyOf().replace('aaaaaaa', repo.head.slice(0, 7));
+  const prefix = '進度🙂\n';
+  const inst = fakeGrok({ model: 'grok-4.7', reply: final, formalTranscript: true });
+  const bin = join(inst, 'bin', 'grok'), script = readFileSync(bin, 'utf8');
+  const anchor = "printf '%s' \"";
+  assert.equal(script.split(anchor).length - 1, 2);
+  // 只替換回覆輸出行；第一個同形 printf 用在 workspace 編碼。
+  const at = script.indexOf(anchor, script.indexOf(anchor) + anchor.length);
+  writeFileSync(bin, script.slice(0, at) + `printf '%s' '${prefix}'\n` + script.slice(at));
+  const iso = isolated(); let safe;
+  const result = await runReview(f.args, { ...f, runner: async args => {
+    safe = await runScan(args, { ...iso, ...withGrok(inst), relayScript: fakeRelay(), log: () => {} }); return safe;
+  } });
+  assert.equal(safe.code, 0, safe.summary.join('\n'));
+  assert.equal(safe.review.reply, final);
+  assert.equal(safe.review.stdout, prefix + final);
+  const saved = JSON.parse(readFileSync(join(safe.review.resultsDir, 'review-result.json'), 'utf8'));
+  assert.equal(saved.stdout, prefix + final); assert.equal(saved.reply, final);
+  if (preface) { assert.equal(result.code, 2); absent(f); }
+  else {
+    assert.equal(result.code, 0, result.lines.join('\n'));
+    assert.equal(readFileSync(f.args.outFile, 'utf8'), final);
+    assert.equal(result.receipt.replySha256, digest(final));
+    assert.equal(result.receipt.stdoutSha256, digest(prefix + final));
+    assert.deepEqual(result.receipt.selection, saved.selection);
+    assert.equal(result.receipt.posted, false);
+  }
 });

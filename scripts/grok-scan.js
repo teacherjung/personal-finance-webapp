@@ -60,6 +60,7 @@ import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
 import { gitEnv } from '../lib/git-env.js';
 import { refreshSandboxAuth, authNeedles, authNeedleFields } from './grok-auth-refresh.js';
 import { REFUSED_PREFIX, isToleratedRefusal } from './grok-relay.js';
+import { selectFinalReply } from './grok-final-reply.js';
 import { isMainModule } from '../lib/is-main.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -152,7 +153,7 @@ function reviewSnapshotState(root) {
 }
 
 /** @typedef {{ project: string, change: string, reviewer: string, source: string, round: number, previousHead?: string }} ReviewIdentity */
-/** @typedef {{ reply: string, replySha256: string, manifestSha256: string, base: string, head: string, source: string, model: string, effort: string, observedModels: string[], modelFloor: string, modelQualified: boolean, recipe: string, resultsDir: string }} ReviewResult */
+/** @typedef {import('./grok-final-reply.js').SelectedReply & { manifestSha256: string, base: string, head: string, source: string, model: string, effort: string, observedModels: string[], modelFloor: string, modelQualified: boolean, recipe: string, resultsDir: string }} ReviewResult */
 
 /**
  * 被掃倉庫的身分：只認 GitHub 的 https／ssh 遠端，解析成 `owner/name`；認不出就回 null（呼叫端換成固定字串）。
@@ -1652,7 +1653,10 @@ export async function runScan(args, deps = {}) {
   log(`\n配方聲明可抄：${recipe}`);
   say(recipe);
   if (formal) {
-    const review = { ...args.review, reply, replySha256: sha256(reply), manifestSha256: sha256(manifestText ?? ''), base, head, source: 'Grok CLI', model, effort,
+    let selected;
+    try { selected = selectFinalReply(snap.files, src, reply, EXPECTED_GROK_VERSION); }
+    catch { return failAndClean('正式複審的完整最後回覆無法與 root 紀錄及 stdout 唯一對應；核對固定 CLI 格式後重跑 scripts/grok-review.js'); }
+    const review = { ...args.review, ...selected, manifestSha256: sha256(manifestText ?? ''), base, head, source: 'Grok CLI', model, effort,
       observedModels: [...used.models], modelFloor: REVIEW_MODEL_FLOOR, modelQualified: true, recipe, resultsDir };
     writeFileSync(join(resultsDir, 'review-manifest.json'), manifestText ?? '', { mode: 0o600, flag: 'wx' });
     writeFileSync(join(resultsDir, 'review-result.json'), JSON.stringify(review, null, 2) + '\n', { mode: 0o600, flag: 'wx' });

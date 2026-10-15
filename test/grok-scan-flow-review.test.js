@@ -23,7 +23,7 @@ test('複審資格採精確的非空全員集合，不按陌生名稱推級別',
 /** @param {Record<string, any>} [options] */
 async function reviewRun(options = {}) {
   const repo = tinyRepo({ firstCommitFiles: { '.gitattributes': 'tree-only.txt export-ignore\n', 'RULES.md': 'base rules\n' } });
-  const inst = fakeGrok({ model: 'grok-4.7', ...options.fake });
+  const inst = fakeGrok({ formalTranscript: true, model: 'grok-4.7', ...options.fake });
   if (options.versionProbe) {
     const bin = join(inst, 'bin', 'grok');
     const body = readFileSync(bin, 'utf8');
@@ -70,7 +70,7 @@ test('正式複審拒絕未指定模型或推理；不借掃描預設值補空�
 
 test('正式材料的 git 子行程收到的環境不含 GIT 家族，dirty GIT_DIR 不會換掉受審版本', async () => {
   const repo = tinyRepo();
-  const fake = fakeGrok({ model: 'grok-4.7' });
+  const fake = fakeGrok({ formalTranscript: true, model: 'grok-4.7' });
   const root = keep(mkdtempSync(join(tmpdir(), 'review-git-env-')));
   const observed = join(root, 'received.jsonl');
   const wrapper = `#!${process.execPath}\nconst fs=require('node:fs'); const cp=require('node:child_process'); fs.appendFileSync(${JSON.stringify(observed)},JSON.stringify({args:process.argv.slice(2),keys:Object.keys(process.env).filter(k=>k.startsWith('GIT_'))})+'\\n'); const r=cp.spawnSync('/usr/bin/git',process.argv.slice(2),{env:process.env}); process.stdout.write(r.stdout); process.stderr.write(r.stderr); process.exit(r.status??2);\n`;
@@ -120,8 +120,8 @@ test('正式複審把本輪明確指定的模型與推理傳進 CLI，不拿掃�
   const { result } = await reviewRun({ args: { model: 'grok-4.6', effort: 'high' }, fake: { model: 'grok-4.6' }, shell: 'printf "%s\\n" "$@"' });
   assert.equal(result.code, 0, result.summary.join('\n'));
   assert.ok(result.review, '修正 runner 正式複審回傳後重跑本檔');
-  assert.ok(result.review.reply.includes('--model\ngrok-4.6\n'));
-  assert.ok(result.review.reply.includes('--reasoning-effort\nhigh\n'));
+  assert.ok(result.review.stdout.includes('--model\ngrok-4.6\n'));
+  assert.ok(result.review.stdout.includes('--reasoning-effort\nhigh\n'));
 });
 
 test('正式複審在第一個盒內程序之前備妥材料與突變相依副本', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
@@ -227,3 +227,39 @@ for (const [label, options] of [
     assert.ok(result.summary.some((line) => line.includes('模型=grok-4.7')));
   });
 }
+
+
+test('完整 root final 與 CLI 進度分列保存，Unicode 範圍使用 UTF-8 bytes', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const prefix = '進度🙂\n';
+  const { result, iso } = await reviewRun({ shell: `printf '%s' '${prefix}'` });
+  assert.equal(result.code, 0, result.summary.join('\n'));
+  assert.ok(result.review);
+  assert.equal(result.review.reply, 'FAKE-REPLY');
+  assert.equal(result.review.stdout, prefix + 'FAKE-REPLY');
+  assert.equal(result.review.stdoutSha256, hash(prefix + 'FAKE-REPLY'));
+  assert.equal(result.review.selection.byteStart, Buffer.byteLength(prefix));
+  const saved = JSON.parse(readFileSync(join(iso.resultsRoot, readdirSync(iso.resultsRoot)[0], 'review-result.json'), 'utf8'));
+  assert.deepEqual(saved, result.review);
+});
+
+for (const [name, shell] of [
+  ['缺 root transcript', 'rm "$ws/fake-session/chat_history.jsonl"'],
+  ['最後 user 不能倒找 assistant', `printf '%s\n' '{"type":"user","content":"FAKE-REPLY"}' >> "$ws/fake-session/chat_history.jsonl"`],
+  ['多 root', 'mkdir "$ws/00000000-0000-4000-8000-000000000002"; cp "$ws/fake-session/chat_history.jsonl" "$ws/00000000-0000-4000-8000-000000000002/chat_history.jsonl"'],
+  ['重複 stdout', "printf 'FAKE-REPLY'"],
+  ['非 final 機器人標記', "printf '🤖 假前綴\\n'"],
+]) test(`安全 runner 不對不明 final fallback stdout：${name}`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const { result, iso } = await reviewRun({ shell });
+  assert.equal(result.code, 2, result.summary.join('\n'));
+  assert.ok(result.summary.some(line => line.includes('完整最後回覆')));
+  assert.equal(result.review, undefined); assert.deepEqual(readdirSync(iso.resultsRoot), []);
+});
+
+test('final 選取不能蓋過完整 stdout 的 DLP 事故', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const live = 'SYNTHETIC-FINAL-LIVE-SENTINEL-ONLY';
+  const { result, iso } = await reviewRun({ shell: `printf '%s' '${live}'`, deps: { liveSecret: live } });
+  assert.equal(result.code, 1, result.summary.join('\n')); assert.equal(result.review, undefined);
+  const directory = join(iso.resultsRoot, readdirSync(iso.resultsRoot)[0]);
+  assert.equal(existsSync(join(directory, 'review-result.json')), false);
+  assert.equal(existsSync(join(directory, 'incident.json')), true);
+});

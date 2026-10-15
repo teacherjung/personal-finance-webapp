@@ -110,7 +110,7 @@ export function tinyRepo(/** @type {{ firstCommitFiles?: Record<string, string>,
  *   原本只跳脫單引號，於是帶 `"` 的回覆會被 shell 切成好幾個字、`printf '%s'` 只印第一個。
  *   那是**靜靜壞掉**：考題照樣綠，但它根本沒測到想測的東西（2026-09-01 寫「命中含機密」那題時踩到）。
  */
-export function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean, noToolFootprint?: boolean, model?: string, sessionLines?: string[] }} */ o = {}) {
+export function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean, noToolFootprint?: boolean, model?: string, sessionLines?: string[], formalTranscript?: boolean }} */ o = {}) {
   const d = keep(mkdtempSync(join(tmpdir(), 'fake-grok-install-')));
   mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'config.toml'), ''); writeFileSync(join(d, 'auth.json'), fakeAuth());
   const p = join(d, 'bin', 'grok');
@@ -127,9 +127,15 @@ export function fakeGrok(/** @type {{ version?: string, status?: number, reply?:
   const body = [logLine, ...(o.sessionLines ?? [])].join('\n') + '\n';
   const session = o.noSession ? '' : `
 ws="$GROK_HOME/sessions/$(printf '%s' "$PWD" | /usr/bin/sed 's|/|%2F|g')"; mkdir -p "$ws/fake-session" && printf '%s' '${body}' > "$ws/fake-session/updates.jsonl"`;
+  const finalRow = JSON.stringify({ type: 'assistant', content: o.reply ?? 'FAKE-REPLY', model_id: o.model,
+    model_fingerprint: 'synthetic', reasoning_effort: 'xhigh' });
+  const transcript = o.formalTranscript && !o.noSession
+    ? `\nprintf '%s\\n' '${finalRow.replace(/'/g, "'\\''")}' > "$ws/fake-session/chat_history.jsonl"` : '';
+  const finish = o.formalTranscript && !o.noSession
+    ? '\nmv "$ws/fake-session" "$ws/00000000-0000-4000-8000-000000000001"' : '';
   writeFileSync(p, `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "grok ${o.version ?? EXPECTED_GROK_VERSION} (fake)"; exit 0; fi${session}
-printf '%s' "${(o.reply ?? 'FAKE-REPLY').replace(/["\\$`]/g, '\\$&')}" # REPLY-LINE
+if [ "$1" = "--version" ]; then echo "grok ${o.version ?? EXPECTED_GROK_VERSION} (fake)"; exit 0; fi${session}${transcript}
+printf '%s' "${(o.reply ?? 'FAKE-REPLY').replace(/["\\$`]/g, '\\$&')}" # REPLY-LINE${finish}
 exit ${o.status ?? 0}
 `);
   chmodSync(p, 0o755);

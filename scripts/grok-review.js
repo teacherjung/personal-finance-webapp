@@ -16,6 +16,7 @@ import pending from '../tools/pending-rulings.js';
 import riskTier from '../tools/risk-tier.js';
 import reviewVerdicts from '../tools/gates/check-review-verdicts.js';
 import { repoLabelFrom, REVIEW_MODEL_FLOOR, reviewModelsQualified, runScan } from './grok-scan.js';
+import { verifyFinalSelection } from './grok-final-reply.js';
 
 const SHA = /^[a-f0-9]{40}$/u;
 const MODEL = /^[A-Za-z0-9._-]+$/u;
@@ -207,7 +208,7 @@ export function validateReply(reply, expected) {
   demand(header.test(lines[0]), 'Grok 原文的身分、版本、輪次或結論標頭不符');
   demand(lines.filter((line) => /^🤖/u.test(line)).length === 1, 'Grok 原文有多個結論標頭');
   for (const heading of ['### 本輪實際用的設定', '### 清單逐項結果', '### 發現']) demand(lines.includes(heading), 'Grok 原文缺正式結論小標');
-  demand(lines.some((line) => line.trim() === '未貼'), 'Grok 原文未如實標示未貼');
+  demand(lines.filter((line) => line !== '').at(-1) === '未貼', 'Grok 原文文末未獨立標示未貼');
   publicMaterial(reply);
   return reply;
 }
@@ -227,6 +228,9 @@ export async function runReview(args, { git = reviewGit, ask = platform.ask, run
       && got.model === args.model && got.effort === args.effort && /^[a-f0-9]{64}$/u.test(got.manifestSha256)
       && typeof got.recipe === 'string' && got.recipe.length > 0 && typeof got.resultsDir === 'string' && got.resultsDir.length > 0, '安全 runner 的複審收據不符');
     demand(got.modelFloor === REVIEW_MODEL_FLOOR && got.modelQualified === true && reviewModelsQualified(got.observedModels), '安全 runner 的模型資格收據不符');
+    try { verifyFinalSelection(got); }
+    catch { stop('安全 runner 的完整 stdout／final 雜湊或選取收據不符'); }
+    publicMaterial(got.stdout);
     const reply = validateReply(got.reply, { head: ready.record.head, round: ready.record.round });
     demand(got.replySha256 === hash(reply), '安全 runner 原文雜湊不符');
     const receipt = { project: args.project, change: String(args.change), head: ready.record.head, base: ready.record.base,
@@ -235,7 +239,7 @@ export async function runReview(args, { git = reviewGit, ask = platform.ask, run
       providerSha256: hash(readFileSync(fileURLToPath(import.meta.url))),
       runnerSha256: hash(readFileSync(new URL('./grok-scan.js', import.meta.url))),
       originalPromptSha256: ready.originalSha256, materialSha256: hash(ready.prompt), publicContextSha256: ready.contextSha256,
-      replySha256: got.replySha256, manifestSha256: got.manifestSha256, runnerRecipe: got.recipe, resultsDir: got.resultsDir, posted: false };
+      replySha256: got.replySha256, stdoutSha256: got.stdoutSha256, selection: got.selection, manifestSha256: got.manifestSha256, runnerRecipe: got.recipe, resultsDir: got.resultsDir, posted: false };
     writeFileSync(`${args.outFile}.receipt.json`, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     writeFileSync(args.outFile, reply, { flag: 'wx', mode: 0o600 });
     return { code: 0, lines: ['Grok 原文與收據已保存，尚未貼文；由外層逐字代貼並依 F7 核對，退出零不代表通過。'], receipt };

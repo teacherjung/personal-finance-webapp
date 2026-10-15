@@ -31,7 +31,7 @@ for (const scenario of cases) test(`runScan 收尾｜${scenario.name}`, { timeou
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo(), iso = isolated(), relayScript = fakeRelay();
   const liveSecret = 'SYNTHETIC-LIVE-SECRET-FOR-CLEANUP-ONLY';
-  const inst = fakeGrok({ model: 'grok-4.7', reply: scenario.incident ? liveSecret : 'FAKE-REPLY' });
+  const inst = fakeGrok({ formalTranscript: true, model: 'grok-4.7', reply: scenario.incident ? liveSecret : 'FAKE-REPLY' });
   const originalSpawn = childProcess.spawn, originalKill = process.kill, originalRm = fs.rmSync;
   /** @type {import('node:child_process').ChildProcess | undefined} */ let relay;
   /** @type {number | undefined} */ let ownedPgid;
