@@ -706,8 +706,8 @@ export function modelFieldText(mu) {
 /**
  * @typedef {object} ScanDeps 可注入的依賴——考題用假的 grok／轉送器／session 根目錄跑主流程
  * @property {string} [repo]
- * @property {string} [grokInstall] 預設 ~/.grok＝安裝樹，**完全不進沙箱**。只從它拿 bin/grok（APFS clone＋盒內 hash）；
- *   考題給假的（bin/grok 是假 grok）。r2 放行整棵唯讀＋clone 整棵：歷史 sessions 仍可讀、憑證整包落在 /private/tmp——Codex r3 抓到。
+ * @property {string} [grokInstall] 預設 ~/.grok＝安裝樹，**完全不進沙箱**。正式來源只取 downloads 內的固定版本（APFS clone＋盒內 hash），避免全域入口自動升版改變受驗對象。
+ *   考題注入時沿用假的 bin/grok。r2 放行整棵唯讀＋clone 整棵：歷史 sessions 仍可讀、憑證整包落在 /private/tmp——Codex r3 抓到。
  *   r6 #4：config.toml／agent_id **不再帶進盒子**（2026-08-23 實測 grok -p 不需要；先前未隔離的 Grok 可能已在那兩個檔裡埋東西）。
  * @property {string} [authDir] 預設 ~/.grok-sandbox-auth（0700，只含 auth.json）：沙箱跑的 grok 用這份登入狀態，
  *   第一次從真 ~/.grok/auth.json 種；**掃描前由父程序做 OIDC refresh**（沙箱裡連不到 auth.x.ai，grok 自己 refresh 不了——
@@ -733,7 +733,7 @@ export function modelFieldText(mu) {
  *   ⚠️ 但位置就是這個餌的全部意義：家目錄同時住著真 ~/.grok、~/.grok-sandbox-auth 與真的 store.db，
  *   是破出沙箱的人第一個會翻的地方。搬到別處餌照樣建得起來也照樣清得掉，只是不再演練「家目錄被擋住」——所以預設值不要順手改。
  *   ⚠️ 注入的目錄**必須已經存在**：`mkdtempSync(join(deps.liveRoot ?? homedir(), …))` 在它底下開子目錄，
- *   根目錄不存在時丟出的例外**沒有**被轉成退 2——與 `realpathSync(deps.grokInstall ?? …)` 是同一種既有形狀（裸 throw）。
+ *   根目錄不存在時仍可能在建立活金絲雀時丟出例外；此接縫不屬於執行檔來源檢查。
  * @property {number} [maxBlobBytes] 破口已知來源的單檔上限；預設 SESSION_CAPS.fileBytes。只給考題注入小門檻（理由見 knownShapeHitsFromTree）。
  * @property {typeof runCanary} [runCanary] 第②步的沙箱金絲雀；不注入時走 `?? runCanary`（本檔上方那一支）。**只給考題注入。**
  *   為什麼可注入：真金絲雀是**全機共用資源的使用者**——它搶一把住在 BOX_ROOT 的剪貼簿鎖（系統剪貼簿只有一份，
@@ -762,12 +762,24 @@ export function modelFieldText(mu) {
  * @returns {Promise<{ code: 0|1|2, summary: string[], review?: ReviewResult }>}
  */
 export async function runScan(args, deps = {}) {
-  const grokInstall = realpathSync(deps.grokInstall ?? join(homedir(), '.grok'));
-  const realGrokBin = realpathSync(join(grokInstall, 'bin', 'grok'));   // 只拿來 cp 進盒子；**不在沙箱外執行它**（hash 盒內副本、--version 在沙箱內跑）
+  const rawLog = deps.log ?? ((m) => console.log(m));
+  let grokInstall, realGrokBin;
+  try {
+    grokInstall = realpathSync(deps.grokInstall ?? join(homedir(), '.grok'));
+    const candidate = deps.grokInstall === undefined
+      ? join(grokInstall, 'downloads', `grok-${EXPECTED_GROK_VERSION}-macos-aarch64`)
+      : join(grokInstall, 'bin', 'grok');
+    const st = lstatSync(candidate);
+    if (!st.isFile() || st.isSymbolicLink()) throw new Error('binary source shape');
+    realGrokBin = realpathSync(candidate);
+  } catch {
+    const message = '⛔ 固定執行檔來源無法使用；核對 scripts/grok-scan.js 的固定版本下載檔後重跑，不回退浮動入口';
+    rawLog(message);
+    return { code: 2, summary: [message] };
+  }
   const authDir = deps.authDir ?? join(homedir(), '.grok-sandbox-auth');
   const resultsRoot = deps.resultsRoot ?? join(homedir(), '.grok-scan-results');
   const relayScript = deps.relayScript ?? join(HERE, 'grok-relay.js');
-  const rawLog = deps.log ?? ((m) => console.log(m));
   /**
    * ⚠️ **關門，不是列舉出口**（William 2026-09-01 裁示）。
    *
