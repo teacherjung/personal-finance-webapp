@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { selectFinalReply, verifyFinalSelection } from '../scripts/grok-final-reply.js';
+import { finalSelectionFailureCode, selectFinalReply, verifyFinalSelection } from '../scripts/grok-final-reply.js';
 
 const workspace = '/synthetic/box/src';
 const session = '00000000-0000-4000-8000-000000000001';
@@ -114,4 +114,50 @@ test('即使 range 指到第二個無標記 final，收據也不能掩蓋重複�
   got.selection.byteStart = Buffer.byteLength(content); got.selection.byteEnd = Buffer.byteLength(got.stdout);
   got.selection.stdoutBytes = Buffer.byteLength(got.stdout);
   assert.throws(() => verifyFinalSelection(got), /GROK_FINAL_SELECTION_INVALID/);
+});
+
+
+// 每題另造輸入；預期碼是失敗位置，不改哪種輸入可以通過。
+for (const [code, run] of [
+  ['VERSION_WORKSPACE', () => select(files(), final, 'unknown')],
+  ['ROOT_CARDINALITY', () => select(new Map())],
+  ['ROOT_ID', () => select(new Map([[path.replace(session, 'not-a-session'), bytes()]]))],
+  ['TRANSCRIPT_MISSING', () => select(new Map([[path.replace('chat_history', 'updates'), bytes()]]))],
+  ['TRANSCRIPT_UTF8', () => select(new Map([[path, Buffer.from([255])]]))],
+  ['TRANSCRIPT_TERMINATION', () => select(new Map([[path, bytes().subarray(0, -1)]]))],
+  ['TRANSCRIPT_JSON', () => select(new Map([[path, Buffer.from('{SYNTHETIC-PRIVATE-KEY-NAME}\n')]]))],
+  ['FINAL_OBJECT', () => select(new Map([[path, bytes([null])]]))],
+  ['FINAL_KEYS', () => select(new Map([[path, bytes([{ ...row(), 'SYNTHETIC-PRIVATE-KEY-NAME': 'private-value' }])]]))],
+  ['FINAL_ROLE_METADATA', () => select(new Map([[path, bytes([{ ...row(), model_fingerprint: 17 }])]]))],
+  ['FINAL_CONTENT', () => select(new Map([[path, bytes([row('')])]]))],
+  ['STDOUT_TEXT', () => select(files(), '')],
+  ['EXACT_MATCH', () => select(files(), 'SYNTHETIC-PRIVATE-STDOUT')],
+  ['UNIQUE_MATCH', () => select(files(), final + final)],
+  ['TRAILING_STDOUT', () => select(files(), final + 'SYNTHETIC-PRIVATE-FOOTER')],
+  ['PREFIX_MARKER', () => select(files(), '🤖 SYNTHETIC-PRIVATE-PREFIX' + final)],
+  ['SELECTION_RECEIPT', () => { const got = select(); got.stdoutSha256 = 'bad'; return verifyFinalSelection(got); }],
+  ['UNKNOWN', () => { const f = files(); f.keys = () => { throw new Error('/synthetic/private/path'); }; return select(f); }],
+]) test(`有限診斷碼：${code}`, () => {
+  assert.throws(run, error => {
+    assert.equal(error.message, 'GROK_FINAL_SELECTION_INVALID');
+    assert.equal(finalSelectionFailureCode(error), code);
+    assert.deepEqual(Object.keys(error), []);
+    assert.equal(error.cause, undefined);
+    return true;
+  });
+});
+
+test('診斷投影不讀外來 Error 屬性，也不接受偽造的合法碼、任意碼或非字串', () => {
+  const sentinel = '/synthetic/private/path-SENTINEL';
+  for (const error of [null, undefined, 17, sentinel, 'ROOT_ID', new Error(sentinel),
+    { code: 'ROOT_ID' }, { code: 17 }, { code: sentinel }, { stage: 'ROOT_ID' },
+    Object.assign(new Error(sentinel), { code: 'ROOT_ID', stack: sentinel }),
+    new Proxy({}, { get() { throw new Error(sentinel); } })]) {
+    assert.equal(finalSelectionFailureCode(error), 'UNKNOWN');
+  }
+  let failure;
+  try { select(new Map()); } catch (error) { failure = error; }
+  assert.ok(failure);
+  failure.code = sentinel; failure.message = sentinel; failure.stack = sentinel;
+  assert.equal(finalSelectionFailureCode(failure), 'ROOT_CARDINALITY');
 });

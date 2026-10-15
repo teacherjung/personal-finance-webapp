@@ -8,12 +8,31 @@ import { isMainModule } from '../lib/is-main.js';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u;
 const SHA = /^[a-f0-9]{64}$/u;
 const hash = (/** @type {string | Buffer} */ value) => createHash('sha256').update(value).digest('hex');
-/** @type {(ok: unknown) => asserts ok} */
-const demand = (ok) => { if (!ok) throw new Error('GROK_FINAL_SELECTION_INVALID'); };
-/** @param {unknown} value @returns {asserts value is string} */
-function text(value) {
-  demand(typeof value === 'string' && value.trim() !== '');
-  demand(Buffer.from(value, 'utf8').toString('utf8') === value);
+const FAILURE_CODES = Object.freeze([
+  'VERSION_WORKSPACE', 'ROOT_CARDINALITY', 'ROOT_ID', 'TRANSCRIPT_MISSING', 'TRANSCRIPT_UTF8',
+  'TRANSCRIPT_TERMINATION', 'TRANSCRIPT_JSON', 'FINAL_OBJECT', 'FINAL_KEYS', 'FINAL_ROLE_METADATA',
+  'FINAL_CONTENT', 'STDOUT_TEXT', 'EXACT_MATCH', 'UNIQUE_MATCH', 'TRAILING_STDOUT', 'PREFIX_MARKER',
+  'SELECTION_RECEIPT', 'UNKNOWN',
+]);
+// 不讀 Error 的公開屬性：外來 throw 可以偽造 code，或以 getter 夾帶原文。
+const failureCodes = new WeakMap();
+/** @param {unknown} error */
+export function finalSelectionFailureCode(error) {
+  const code = error && typeof error === 'object' ? failureCodes.get(error) : undefined;
+  return FAILURE_CODES.find(allowed => allowed === code) ?? 'UNKNOWN';
+}
+/** @param {string} code */
+function failure(code) {
+  const error = new Error('GROK_FINAL_SELECTION_INVALID');
+  failureCodes.set(error, code);
+  return error;
+}
+/** @type {(ok: unknown, code: string) => asserts ok} */
+const demand = (ok, code) => { if (!ok) throw failure(code); };
+/** @param {unknown} value @param {string} code @returns {asserts value is string} */
+function text(value, code) {
+  demand(typeof value === 'string' && value.trim() !== '', code);
+  demand(Buffer.from(value, 'utf8').toString('utf8') === value, code);
 }
 
 /** @typedef {{schema:string, cliVersion:string, encoding:string, transcriptPath:string, transcriptSha256:string,
@@ -23,24 +42,25 @@ function text(value) {
 /** 前端核對同一份 runner 收據；不取代 runner 對快照、身分、模型或 DLP 的驗證。
  * @param {SelectedReply} selected */
 export function verifyFinalSelection(selected) {
-  demand(selected && typeof selected === 'object');
+  demand(selected && typeof selected === 'object', 'SELECTION_RECEIPT');
   const { reply, replySha256, stdout, stdoutSha256, selection: s } = selected;
-  text(reply); text(stdout);
-  demand(replySha256 === hash(reply) && stdoutSha256 === hash(stdout));
-  demand(s && typeof s === 'object' && !Array.isArray(s));
-  demand(Object.keys(s).sort().join(',') === 'byteEnd,byteStart,cliVersion,encoding,replyBytes,rowCount,rowIndex,schema,stdoutBytes,transcriptPath,transcriptSha256');
-  demand(s.schema === 'grok-final-selection/v1' && s.cliVersion === '1.0.46' && s.encoding === 'decoded-stdout-utf8');
-  demand(typeof s.transcriptPath === 'string');
+  text(reply, 'FINAL_CONTENT'); text(stdout, 'STDOUT_TEXT');
+  demand(replySha256 === hash(reply) && stdoutSha256 === hash(stdout), 'SELECTION_RECEIPT');
+  demand(s && typeof s === 'object' && !Array.isArray(s), 'SELECTION_RECEIPT');
+  demand(Object.keys(s).sort().join(',') === 'byteEnd,byteStart,cliVersion,encoding,replyBytes,rowCount,rowIndex,schema,stdoutBytes,transcriptPath,transcriptSha256', 'SELECTION_RECEIPT');
+  demand(s.schema === 'grok-final-selection/v1' && s.cliVersion === '1.0.46' && s.encoding === 'decoded-stdout-utf8', 'SELECTION_RECEIPT');
+  demand(typeof s.transcriptPath === 'string', 'SELECTION_RECEIPT');
   const parts = s.transcriptPath.split('/');
-  demand(parts.length === 3 && parts[0].startsWith('%2F') && UUID.test(parts[1]) && parts[2] === 'chat_history.jsonl');
-  demand(SHA.test(s.transcriptSha256) && Number.isSafeInteger(s.rowCount) && s.rowCount > 0 && s.rowIndex === s.rowCount - 1);
+  demand(parts.length === 3 && parts[0].startsWith('%2F') && UUID.test(parts[1]) && parts[2] === 'chat_history.jsonl', 'SELECTION_RECEIPT');
+  demand(SHA.test(s.transcriptSha256) && Number.isSafeInteger(s.rowCount) && s.rowCount > 0 && s.rowIndex === s.rowCount - 1, 'SELECTION_RECEIPT');
   const all = Buffer.from(stdout, 'utf8'), final = Buffer.from(reply, 'utf8');
   demand(Number.isSafeInteger(s.byteStart) && s.byteStart >= 0 && Number.isSafeInteger(s.byteEnd)
-    && s.byteEnd === s.byteStart + final.length && s.stdoutBytes === all.length && s.replyBytes === final.length);
-  demand(all.subarray(s.byteStart, s.byteEnd).equals(final));
-  demand(all.indexOf(final) === s.byteStart && all.indexOf(final, s.byteStart + 1) === -1);
+    && s.byteEnd === s.byteStart + final.length && s.stdoutBytes === all.length && s.replyBytes === final.length, 'SELECTION_RECEIPT');
+  demand(all.subarray(s.byteStart, s.byteEnd).equals(final), 'EXACT_MATCH');
+  demand(all.indexOf(final) === s.byteStart && all.indexOf(final, s.byteStart + 1) === -1, 'UNIQUE_MATCH');
   const before = all.subarray(0, s.byteStart).toString('utf8'), after = all.subarray(s.byteEnd).toString('utf8');
-  demand((after === '' || after === '\n') && !before.includes('🤖'));
+  demand(after === '' || after === '\n', 'TRAILING_STDOUT');
+  demand(!before.includes('🤖'), 'PREFIX_MARKER');
   return selected;
 }
 
@@ -48,34 +68,39 @@ export function verifyFinalSelection(selected) {
  * @returns {SelectedReply} */
 export function selectFinalReply(files, workspace, stdout, cliVersion) {
   try {
-    demand(cliVersion === '1.0.46' && typeof workspace === 'string' && workspace.startsWith('/'));
+    demand(cliVersion === '1.0.46' && typeof workspace === 'string' && workspace.startsWith('/'), 'VERSION_WORKSPACE');
     const prefix = encodeURIComponent(workspace) + '/';
     const sessions = new Set([...files.keys()].filter(path => path.startsWith(prefix)).map(path => path.slice(prefix.length).split('/')[0]));
-    demand(sessions.size === 1);
+    demand(sessions.size === 1, 'ROOT_CARDINALITY');
     const session = [...sessions][0];
-    demand(UUID.test(session));
+    demand(UUID.test(session), 'ROOT_ID');
     const transcriptPath = prefix + session + '/chat_history.jsonl';
     const bytes = files.get(transcriptPath);
-    demand(bytes && bytes.length > 0);
-    const decoded = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
-    demand(decoded.endsWith('\n'));
+    demand(bytes && bytes.length > 0, 'TRANSCRIPT_MISSING');
+    let decoded;
+    try { decoded = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+    catch { throw failure('TRANSCRIPT_UTF8'); }
+    demand(decoded.endsWith('\n'), 'TRANSCRIPT_TERMINATION');
     const lines = decoded.slice(0, -1).split('\n');
     // 所有列須完整 JSON；除最後一列外只驗語法，不讀 reasoning／tool／較早訊息的內容。
-    const rows = lines.map(line => JSON.parse(line));
+    let rows;
+    try { rows = lines.map(line => JSON.parse(line)); }
+    catch { throw failure('TRANSCRIPT_JSON'); }
     const last = rows[rows.length - 1];
-    demand(last && typeof last === 'object' && !Array.isArray(last));
-    demand(Object.keys(last).sort().join(',') === 'content,model_fingerprint,model_id,reasoning_effort,type');
+    demand(last && typeof last === 'object' && !Array.isArray(last), 'FINAL_OBJECT');
+    demand(Object.keys(last).sort().join(',') === 'content,model_fingerprint,model_id,reasoning_effort,type', 'FINAL_KEYS');
     demand(last.type === 'assistant' && typeof last.model_id === 'string'
-      && typeof last.model_fingerprint === 'string' && typeof last.reasoning_effort === 'string');
+      && typeof last.model_fingerprint === 'string' && typeof last.reasoning_effort === 'string', 'FINAL_ROLE_METADATA');
     const reply = last.content;
-    text(reply); text(stdout);
+    text(reply, 'FINAL_CONTENT'); text(stdout, 'STDOUT_TEXT');
     const all = Buffer.from(stdout, 'utf8'), final = Buffer.from(reply, 'utf8');
     const byteStart = all.indexOf(final);
+    demand(byteStart >= 0, 'EXACT_MATCH');
     return verifyFinalSelection({ reply, replySha256: hash(reply), stdout, stdoutSha256: hash(stdout),
       selection: { schema: 'grok-final-selection/v1', cliVersion, encoding: 'decoded-stdout-utf8',
         transcriptPath, transcriptSha256: hash(bytes), rowCount: rows.length, rowIndex: rows.length - 1,
         byteStart, byteEnd: byteStart + final.length, stdoutBytes: all.length, replyBytes: final.length } });
-  } catch { throw new Error('GROK_FINAL_SELECTION_INVALID'); }
+  } catch (error) { throw failure(finalSelectionFailureCode(error)); }
 }
 
 if (isMainModule(import.meta.url)) {

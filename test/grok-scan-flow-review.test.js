@@ -242,24 +242,53 @@ test('完整 root final 與 CLI 進度分列保存，Unicode 範圍使用 UTF-8 
   assert.deepEqual(saved, result.review);
 });
 
-for (const [name, shell] of [
-  ['缺 root transcript', 'rm "$ws/fake-session/chat_history.jsonl"'],
-  ['最後 user 不能倒找 assistant', `printf '%s\n' '{"type":"user","content":"FAKE-REPLY"}' >> "$ws/fake-session/chat_history.jsonl"`],
-  ['多 root', 'mkdir "$ws/00000000-0000-4000-8000-000000000002"; cp "$ws/fake-session/chat_history.jsonl" "$ws/00000000-0000-4000-8000-000000000002/chat_history.jsonl"'],
-  ['重複 stdout', "printf 'FAKE-REPLY'"],
-  ['非 final 機器人標記', "printf '🤖 假前綴\\n'"],
+for (const [name, code, shell] of [
+  ['缺 root transcript', 'TRANSCRIPT_MISSING', 'rm "$ws/fake-session/chat_history.jsonl"'],
+  ['最後 user 不能倒找 assistant', 'FINAL_KEYS', `printf '%s\n' '{"type":"user","content":"FAKE-REPLY"}' >> "$ws/fake-session/chat_history.jsonl"`],
+  ['多 root', 'ROOT_CARDINALITY', 'mkdir "$ws/00000000-0000-4000-8000-000000000002"; cp "$ws/fake-session/chat_history.jsonl" "$ws/00000000-0000-4000-8000-000000000002/chat_history.jsonl"'],
+  ['重複 stdout', 'UNIQUE_MATCH', "printf 'FAKE-REPLY'"],
+  ['非 final 機器人標記', 'PREFIX_MARKER', "printf '🤖 假前綴\\n'"],
 ]) test(`安全 runner 不對不明 final fallback stdout：${name}`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
-  const { result, iso } = await reviewRun({ shell });
+  const { result, iso, box, logs } = await reviewRun({ shell });
   assert.equal(result.code, 2, result.summary.join('\n'));
-  assert.ok(result.summary.some(line => line.includes('完整最後回覆')));
+  assert.ok(result.summary.some(line => line.includes(`final-selection=${code}`)));
+  assert.ok(!logs.join('\n').includes('🤖 假前綴'));
   assert.equal(result.review, undefined); assert.deepEqual(readdirSync(iso.resultsRoot), []);
+  assert.equal(existsSync(box), false);
 });
 
 test('final 選取不能蓋過完整 stdout 的 DLP 事故', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
   const live = 'SYNTHETIC-FINAL-LIVE-SENTINEL-ONLY';
   const { result, iso } = await reviewRun({ shell: `printf '%s' '${live}'`, deps: { liveSecret: live } });
   assert.equal(result.code, 1, result.summary.join('\n')); assert.equal(result.review, undefined);
+  assert.ok(!result.summary.some(line => line.includes('final-selection=')));
   const directory = join(iso.resultsRoot, readdirSync(iso.resultsRoot)[0]);
   assert.equal(existsSync(join(directory, 'review-result.json')), false);
   assert.equal(existsSync(join(directory, 'incident.json')), true);
+});
+
+
+for (const [name, options] of [
+  ['模型', { fake: { model: 'grok-4.5' } }],
+  ['材料', { shell: 'printf changed > a.txt' }],
+  ['行為足跡', { fake: { noToolFootprint: true } }],
+  ['掃前試探', { deps: { runCanary: fakeCanary(1) } }],
+]) test(`前置安全檢查拒收時不產生 selector 碼或保留失敗結果：${name}`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const shell = (options.shell ?? '') + '\nrm "$ws/fake-session/chat_history.jsonl"';
+  const { result, iso, logs, box } = await reviewRun({ ...options, shell });
+  assert.equal(result.code, 2);
+  assert.ok(!logs.some(line => line.includes('final-selection=')));
+  assert.equal(result.review, undefined);
+  assert.deepEqual(readdirSync(iso.resultsRoot), []);
+  assert.equal(existsSync(box), false);
+});
+
+test('DLP 拒收時不以 selector 診斷留下原文或正式結果', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const { result, iso, logs } = await reviewRun({ shell: 'printf "%s" "fake-owner@example.test"; rm "$ws/fake-session/chat_history.jsonl"' });
+  assert.equal(result.code, 1);
+  assert.ok(!logs.some(line => line.includes('final-selection=')));
+  const directory = join(iso.resultsRoot, readdirSync(iso.resultsRoot)[0]);
+  assert.deepEqual(readdirSync(directory), ['incident.json', 'launch.json']);
+  assert.ok(!readFileSync(join(directory, 'incident.json'), 'utf8').includes('fake-owner@example.test'));
+  assert.equal(result.review, undefined);
 });
