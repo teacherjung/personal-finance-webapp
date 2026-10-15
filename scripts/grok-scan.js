@@ -60,7 +60,7 @@ import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
 import { gitEnv } from '../lib/git-env.js';
 import { refreshSandboxAuth, authNeedles, authNeedleFields } from './grok-auth-refresh.js';
 import { REFUSED_PREFIX, isToleratedRefusal } from './grok-relay.js';
-import { finalSelectionFailureCode, selectFinalReply } from './grok-final-reply.js';
+import { finalSelectionFailureCode, finalSelectionRootDiagnostic, selectFinalReply } from './grok-final-reply.js';
 import { isMainModule } from '../lib/is-main.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -1655,7 +1655,10 @@ export async function runScan(args, deps = {}) {
   if (formal) {
     let selected;
     try { selected = selectFinalReply(snap.files, src, reply, EXPECTED_GROK_VERSION); }
-    catch (error) { return failAndClean(`正式複審的完整最後回覆無法與 root 紀錄及 stdout 唯一對應（final-selection=${finalSelectionFailureCode(error)}）；核對固定 CLI 格式後重跑 scripts/grok-review.js`); }
+    catch (error) {
+      if (finalSelectionFailureCode(error) === 'ROOT_CARDINALITY') log(`final-root-structure=${JSON.stringify(finalSelectionRootDiagnostic(error))}`);
+      return failAndClean(`正式複審的完整最後回覆無法與 root 紀錄及 stdout 唯一對應（final-selection=${finalSelectionFailureCode(error)}）；核對固定 CLI 格式後重跑 scripts/grok-review.js`);
+    }
     const review = { ...args.review, ...selected, manifestSha256: sha256(manifestText ?? ''), base, head, source: 'Grok CLI', model, effort,
       observedModels: [...used.models], modelFloor: REVIEW_MODEL_FLOOR, modelQualified: true, recipe, resultsDir };
     writeFileSync(join(resultsDir, 'review-manifest.json'), manifestText ?? '', { mode: 0o600, flag: 'wx' });

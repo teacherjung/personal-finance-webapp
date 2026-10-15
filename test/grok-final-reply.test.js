@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { finalSelectionFailureCode, selectFinalReply, verifyFinalSelection } from '../scripts/grok-final-reply.js';
+import { finalSelectionFailureCode, finalSelectionRootDiagnostic, rootCardinalityProjection, selectFinalReply, verifyFinalSelection } from '../scripts/grok-final-reply.js';
 
 const workspace = '/synthetic/box/src';
 const session = '00000000-0000-4000-8000-000000000001';
@@ -160,4 +160,67 @@ test('診斷投影不讀外來 Error 屬性，也不接受偽造的合法碼、�
   assert.ok(failure);
   failure.code = sentinel; failure.message = sentinel; failure.stack = sentinel;
   assert.equal(finalSelectionFailureCode(failure), 'ROOT_CARDINALITY');
+});
+
+
+const rootFields = (rootComponents = 'ZERO', uuidComponents = 'ZERO', exactUuidTranscripts = 'ZERO', flags = {}) => ({
+  rootComponents, uuidComponents, exactUuidTranscripts, directWorkspaceFilePresent: false,
+  nonUuidNestedComponentPresent: false, otherWorkspaceTopComponentPresent: false, equivalentEncodedWorkspacePresent: false, ...flags,
+});
+const prefix = encodeURIComponent(workspace) + '/';
+for (const [name, keys, expected] of [
+  ['零元件', [], rootFields()],
+  ['唯一完整 UUID', [path], rootFields('ONE', 'ONE', 'ONE')],
+  ['UUID 加直屬檔', [path, prefix + 'metadata.json'], rootFields('MULTIPLE', 'ONE', 'ONE', { directWorkspaceFilePresent: true })],
+  ['UUID 加非 UUID 巢狀', [path, prefix + 'metadata/data.json'], rootFields('MULTIPLE', 'ONE', 'ONE', { nonUuidNestedComponentPresent: true })],
+  ['多 UUID', [path, path.replace(session, '00000000-0000-4000-8000-000000000002')], rootFields('MULTIPLE', 'MULTIPLE', 'MULTIPLE')],
+  ['多 UUID 只一精確 transcript', [path, path.replace(session, '00000000-0000-4000-8000-000000000002').replace('chat_history', 'updates')], rootFields('MULTIPLE', 'MULTIPLE', 'ONE')],
+  ['UUID 無 transcript', [path.replace('chat_history', 'updates')], rootFields('ONE', 'ONE', 'ZERO')],
+  ['子路徑不冒充精確 transcript', [path.replace('/chat_history', '/child/chat_history')], rootFields('ONE', 'ONE', 'ZERO')],
+  ['UUID 元件本身是直屬檔', [prefix + session], rootFields('ONE', 'ONE', 'ZERO', { directWorkspaceFilePresent: true })],
+  ['非 UUID 巢狀', [prefix + 'metadata/data.json'], rootFields('ONE', 'ZERO', 'ZERO', { nonUuidNestedComponentPresent: true })],
+  ['多直屬檔', [prefix + 'one.json', prefix + 'two.json'], rootFields('MULTIPLE', 'ZERO', 'ZERO', { directWorkspaceFilePresent: true })],
+  ['其他 workspace', [path.replace(encodeURIComponent(workspace), encodeURIComponent('/other/src'))], rootFields('ZERO', 'ZERO', 'ZERO', { otherWorkspaceTopComponentPresent: true })],
+  ['相同 workspace 與其他 workspace', [path, 'other/metadata.json'], rootFields('ONE', 'ONE', 'ONE', { otherWorkspaceTopComponentPresent: true })],
+  ['等價一次百分比編碼', [path.replaceAll('%2F', '%2f')], rootFields('ZERO', 'ZERO', 'ZERO', { otherWorkspaceTopComponentPresent: true, equivalentEncodedWorkspacePresent: true })],
+  ['二次編碼不可當等價', [path.replaceAll('%2F', '%252F')], rootFields('ZERO', 'ZERO', 'ZERO', { otherWorkspaceTopComponentPresent: true })],
+  ['壞百分比編碼', ['%ZZ/metadata.json'], rootFields('ZERO', 'ZERO', 'ZERO', { otherWorkspaceTopComponentPresent: true })],
+]) test(`root 結構只投影路徑鍵的固定分類：${name}`, () => {
+  const f = new Map(keys.map(key => [key, Buffer.from('SYNTHETIC-UNREAD-BUFFER')]));
+  f.get = () => { assert.fail('路徑投影不得讀 Buffer'); };
+  assert.deepEqual(rootCardinalityProjection(f, workspace), expected);
+});
+
+for (const [name, extra, flag] of [
+  ['直屬 metadata', 'SYNTHETIC-SECRET-NAME.json', 'directWorkspaceFilePresent'],
+  ['巢狀 metadata', 'SYNTHETIC-SECRET-NAME/nested.json', 'nonUuidNestedComponentPresent'],
+]) test(`root 診斷不能把 metadata 從正式候選排除而放行：${name}`, () => {
+  const f = files(); f.set(prefix + extra, Buffer.from('{}\n'));
+  assert.throws(() => select(f), error => {
+    assert.equal(finalSelectionFailureCode(error), 'ROOT_CARDINALITY');
+    const projected = finalSelectionRootDiagnostic(error);
+    assert.deepEqual(projected, rootFields('MULTIPLE', 'ONE', 'ONE', { [flag]: true }));
+    assert.ok(!JSON.stringify(projected).includes('SYNTHETIC')); assert.ok(!JSON.stringify(projected).includes(workspace));
+    assert.ok(!JSON.stringify(projected).includes(session)); return true;
+  });
+});
+
+test('root 結構品牌不讀外來 getter 或錯誤欄位，畸形路徑只回固定 UNKNOWN', () => {
+  const sentinel = 'SYNTHETIC-ROOT-SECRET'; let reads = 0;
+  const foreign = new Proxy({}, { get() { reads++; throw new Error(sentinel); }, ownKeys() { reads++; throw new Error(sentinel); } });
+  for (const value of [foreign, { diagnostic: rootFields(), code: 'ROOT_CARDINALITY' }, new Error(sentinel), null, 3, sentinel]) {
+    let projected; assert.doesNotThrow(() => { projected = finalSelectionRootDiagnostic(value); });
+    assert.equal(projected, 'UNKNOWN');
+  }
+  assert.equal(reads, 0);
+  assert.equal(rootCardinalityProjection(new Map([[/** @type {any} */ ({ toString() { reads++; return sentinel; } }), Buffer.alloc(0)]]), workspace), 'UNKNOWN');
+  const f = files(); f.keys = () => { throw foreign; };
+  assert.equal(rootCardinalityProjection(f, workspace), 'UNKNOWN');
+  assert.throws(() => select(f), error => finalSelectionFailureCode(error) === 'UNKNOWN' && finalSelectionRootDiagnostic(error) === 'UNKNOWN');
+  assert.equal(reads, 0);
+  assert.throws(() => select(new Map()), error => {
+    Object.defineProperty(error, 'diagnostic', { get() { reads++; throw new Error(sentinel); } });
+    assert.deepEqual(finalSelectionRootDiagnostic(error), rootFields());
+    assert.equal(reads, 0); return true;
+  });
 });

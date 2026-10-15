@@ -16,15 +16,66 @@ const FAILURE_CODES = Object.freeze([
 ]);
 // 不讀 Error 的公開屬性：外來 throw 可以偽造 code，或以 getter 夾帶原文。
 const failureCodes = new WeakMap();
+const rootDiagnostics = new WeakMap();
+const CARDINALITIES = Object.freeze(['ZERO', 'ONE', 'MULTIPLE']);
+const ROOT_FIELDS = Object.freeze(['rootComponents', 'uuidComponents', 'exactUuidTranscripts',
+  'directWorkspaceFilePresent', 'nonUuidNestedComponentPresent', 'otherWorkspaceTopComponentPresent', 'equivalentEncodedWorkspacePresent']);
+/** @typedef {{rootComponents:string, uuidComponents:string, exactUuidTranscripts:string,
+ * directWorkspaceFilePresent:boolean, nonUuidNestedComponentPresent:boolean,
+ * otherWorkspaceTopComponentPresent:boolean, equivalentEncodedWorkspacePresent:boolean}} RootDiagnostic */
+/** @param {unknown} error @returns {RootDiagnostic | 'UNKNOWN'} */
+export function finalSelectionRootDiagnostic(error) {
+  const value = error && typeof error === 'object' ? rootDiagnostics.get(error) : undefined;
+  if (!value || typeof value !== 'object') return 'UNKNOWN';
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Object.keys(descriptors).sort().join(',') !== [...ROOT_FIELDS].sort().join(',')) return 'UNKNOWN';
+  for (const [index, key] of ROOT_FIELDS.entries()) {
+    const descriptor = descriptors[key];
+    if (!Object.hasOwn(descriptor, 'value') || (index < 3 ? !CARDINALITIES.includes(descriptor.value) : typeof descriptor.value !== 'boolean')) return 'UNKNOWN';
+  }
+  return Object.freeze({ rootComponents: value.rootComponents, uuidComponents: value.uuidComponents,
+    exactUuidTranscripts: value.exactUuidTranscripts, directWorkspaceFilePresent: value.directWorkspaceFilePresent,
+    nonUuidNestedComponentPresent: value.nonUuidNestedComponentPresent,
+    otherWorkspaceTopComponentPresent: value.otherWorkspaceTopComponentPresent,
+    equivalentEncodedWorkspacePresent: value.equivalentEncodedWorkspacePresent });
+}
+/** @param {number} size */
+const cardinality = size => size === 0 ? 'ZERO' : size === 1 ? 'ONE' : 'MULTIPLE';
+/** @param {string[]} paths @param {string} prefix */
+const components = (paths, prefix) => new Set(paths.filter(path => path.startsWith(prefix)).map(path => path.slice(prefix.length).split('/')[0]));
+/** @param {string[]} paths @param {string} workspace @returns {RootDiagnostic} */
+function rootPathProjection(paths, workspace) {
+  const encoded = encodeURIComponent(workspace), prefix = encoded + '/';
+  const sessions = components(paths, prefix), uuids = [...sessions].filter(component => UUID.test(component));
+  const keys = new Set(paths), relative = paths.filter(path => path.startsWith(prefix)).map(path => path.slice(prefix.length));
+  const other = paths.map(path => path.split('/')[0]).filter(component => component !== encoded);
+  return Object.freeze({ rootComponents: cardinality(sessions.size), uuidComponents: cardinality(uuids.length),
+    exactUuidTranscripts: cardinality(uuids.filter(uuid => keys.has(prefix + uuid + '/chat_history.jsonl')).length),
+    directWorkspaceFilePresent: relative.some(path => !path.includes('/')),
+    nonUuidNestedComponentPresent: relative.some(path => path.includes('/') && !UUID.test(path.split('/')[0])),
+    otherWorkspaceTopComponentPresent: other.length > 0,
+    equivalentEncodedWorkspacePresent: other.some(component => { try { return decodeURIComponent(component) === workspace; } catch { return false; } }) });
+}
+/** Only path keys are inspected; malformed callers cannot expose an exception or a key.
+ * @param {Map<string, Buffer>} files @param {string} workspace @returns {RootDiagnostic | 'UNKNOWN'} */
+export function rootCardinalityProjection(files, workspace) {
+  try {
+    if (typeof workspace !== 'string' || !workspace.startsWith('/')) return 'UNKNOWN';
+    const paths = [...files.keys()];
+    if (!paths.every(path => typeof path === 'string')) return 'UNKNOWN';
+    return rootPathProjection(paths, workspace);
+  } catch { return 'UNKNOWN'; }
+}
 /** @param {unknown} error */
 export function finalSelectionFailureCode(error) {
   const code = error && typeof error === 'object' ? failureCodes.get(error) : undefined;
   return FAILURE_CODES.find(allowed => allowed === code) ?? 'UNKNOWN';
 }
-/** @param {string} code */
-function failure(code) {
+/** @param {string} code @param {RootDiagnostic | 'UNKNOWN'} [diagnostic] */
+function failure(code, diagnostic = 'UNKNOWN') {
   const error = new Error('GROK_FINAL_SELECTION_INVALID');
   failureCodes.set(error, code);
+  if (code === 'ROOT_CARDINALITY' && diagnostic !== 'UNKNOWN') rootDiagnostics.set(error, diagnostic);
   return error;
 }
 /** @type {(ok: unknown, code: string) => asserts ok} */
@@ -70,8 +121,10 @@ export function selectFinalReply(files, workspace, stdout, cliVersion) {
   try {
     demand(cliVersion === '1.0.46' && typeof workspace === 'string' && workspace.startsWith('/'), 'VERSION_WORKSPACE');
     const prefix = encodeURIComponent(workspace) + '/';
-    const sessions = new Set([...files.keys()].filter(path => path.startsWith(prefix)).map(path => path.slice(prefix.length).split('/')[0]));
-    demand(sessions.size === 1, 'ROOT_CARDINALITY');
+    const paths = [...files.keys()];
+    const sessions = components(paths, prefix);
+    const diagnostic = rootPathProjection(paths, workspace);
+    if (sessions.size !== 1) throw failure('ROOT_CARDINALITY', diagnostic);
     const session = [...sessions][0];
     demand(UUID.test(session), 'ROOT_ID');
     const transcriptPath = prefix + session + '/chat_history.jsonl';
@@ -100,7 +153,7 @@ export function selectFinalReply(files, workspace, stdout, cliVersion) {
       selection: { schema: 'grok-final-selection/v1', cliVersion, encoding: 'decoded-stdout-utf8',
         transcriptPath, transcriptSha256: hash(bytes), rowCount: rows.length, rowIndex: rows.length - 1,
         byteStart, byteEnd: byteStart + final.length, stdoutBytes: all.length, replyBytes: final.length } });
-  } catch (error) { throw failure(finalSelectionFailureCode(error)); }
+  } catch (error) { throw failure(finalSelectionFailureCode(error), finalSelectionRootDiagnostic(error)); }
 }
 
 if (isMainModule(import.meta.url)) {

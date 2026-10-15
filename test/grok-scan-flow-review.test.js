@@ -277,7 +277,7 @@ for (const [name, options] of [
   const shell = (options.shell ?? '') + '\nrm "$ws/fake-session/chat_history.jsonl"';
   const { result, iso, logs, box } = await reviewRun({ ...options, shell });
   assert.equal(result.code, 2);
-  assert.ok(!logs.some(line => line.includes('final-selection=')));
+  assert.ok(!logs.some(line => line.includes('final-selection=') || line.includes('final-root-structure=')));
   assert.equal(result.review, undefined);
   assert.deepEqual(readdirSync(iso.resultsRoot), []);
   assert.equal(existsSync(box), false);
@@ -286,9 +286,26 @@ for (const [name, options] of [
 test('DLP 拒收時不以 selector 診斷留下原文或正式結果', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
   const { result, iso, logs } = await reviewRun({ shell: 'printf "%s" "fake-owner@example.test"; rm "$ws/fake-session/chat_history.jsonl"' });
   assert.equal(result.code, 1);
-  assert.ok(!logs.some(line => line.includes('final-selection=')));
+  assert.ok(!logs.some(line => line.includes('final-selection=') || line.includes('final-root-structure=')));
   const directory = join(iso.resultsRoot, readdirSync(iso.resultsRoot)[0]);
   assert.deepEqual(readdirSync(directory), ['incident.json', 'launch.json']);
   assert.ok(!readFileSync(join(directory, 'incident.json'), 'utf8').includes('fake-owner@example.test'));
   assert.equal(result.review, undefined);
+});
+
+
+for (const [name, shell, expected] of [
+  ['多 UUID', 'mkdir "$ws/00000000-0000-4000-8000-000000000002"; cp "$ws/fake-session/chat_history.jsonl" "$ws/00000000-0000-4000-8000-000000000002/chat_history.jsonl"',
+    { rootComponents: 'MULTIPLE', uuidComponents: 'MULTIPLE', exactUuidTranscripts: 'MULTIPLE', directWorkspaceFilePresent: false, nonUuidNestedComponentPresent: false, otherWorkspaceTopComponentPresent: false, equivalentEncodedWorkspacePresent: false }],
+  ['UUID 加直屬 metadata', 'printf "{}\\n" > "$ws/SYNTHETIC-PRIVATE-METADATA.json"',
+    { rootComponents: 'MULTIPLE', uuidComponents: 'ONE', exactUuidTranscripts: 'ONE', directWorkspaceFilePresent: true, nonUuidNestedComponentPresent: false, otherWorkspaceTopComponentPresent: false, equivalentEncodedWorkspacePresent: false }],
+]) test(`安全 runner 在既有拒收之後只印 root 有限結構且清掉原材料：${name}`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const { result, iso, box, logs } = await reviewRun({ shell });
+  assert.equal(result.code, 2, result.summary.join('\n')); assert.equal(result.review, undefined);
+  assert.ok(result.summary.some(line => line.includes('final-selection=ROOT_CARDINALITY')));
+  const projected = logs.filter(line => line.startsWith('final-root-structure='));
+  assert.equal(projected.length, 1);
+  assert.deepEqual(JSON.parse(projected[0].slice('final-root-structure='.length)), expected);
+  assert.ok(!projected[0].includes('SYNTHETIC')); assert.ok(!projected[0].includes(box));
+  assert.deepEqual(readdirSync(iso.resultsRoot), []); assert.equal(existsSync(box), false);
 });
