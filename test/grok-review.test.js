@@ -248,14 +248,12 @@ test('投影不遮沒包住的路徑或憑證，也不代改 Grok 結論', () =>
   assert.throws(() => validateReply(reply, { head: HEAD, round: 1 }), /本機絕對路徑/u);
 });
 
-test('合成路徑例外只接受已核完整字面值，回覆與完整 stdout 保留原文', async t => {
-  for (const path of ['/tmp/probe-write-test', '/tmp/mut1.out']) {
-    const quoted = '`' + path + '`';
-    assert.equal(publicReply(quoted), quoted);
-    assert.throws(() => publicMaterial(quoted), /本機絕對路徑/u);
+test('合成路徑例外只接受已核完整字面值與固定診斷，回覆與完整 stdout 保留原文', async t => {
+  for (const path of ['/tmp/probe-write-test', '/tmp/mut1.out']) for (const suffix of ['', ': Operation not permitted']) {
+    const quoted = '`' + path + suffix + '`';
     const f = fixture(t), original = f.runner;
     const reply = replyOf().replace('未貼', quoted + '\n未貼');
-    const prefix = '合成命令被擋：' + quoted + '\n';
+    const prefix = '合成命令被擋🙂：' + quoted + '\r\n';
     f.runner = async input => {
       const r = await original(input);
       Object.assign(r.review, selectedReply(reply, prefix));
@@ -263,30 +261,60 @@ test('合成路徑例外只接受已核完整字面值，回覆與完整 stdout 
     };
     const r = await runReview(f.args, f);
     assert.equal(r.code, 0, r.lines.join('\n'));
-    assert.equal(readFileSync(f.args.outFile, 'utf8'), reply);
-    assert.equal(r.receipt.replySha256, digest(reply));
-    assert.equal(r.receipt.stdoutSha256, digest(prefix + reply + '\n'));
+    assert.equal(publicReply(quoted), quoted);
+    assert.throws(() => publicMaterial(quoted), /本機絕對路徑/u);
+    assert.equal(f.runnerCalls.length, 1);
+    assert.deepEqual(readFileSync(f.args.outFile), Buffer.from(reply));
+    const receipt = JSON.parse(readFileSync(`${f.args.outFile}.receipt.json`, 'utf8'));
+    for (const got of [r.receipt, receipt]) {
+      assert.equal(got.replySha256, digest(reply));
+      assert.equal(got.stdoutSha256, digest(prefix + reply + '\n'));
+      assert.deepEqual(got.selection, selectedReply(reply, prefix).selection);
+    }
   }
 });
 
-test('合成路徑例外不接受近似名稱、路徑變體、額外路徑或憑證', async t => {
-  for (const path of ['/tmp/probe-write-test-extra', '/tmp/probe-write-test/file',
-    '/tmp/probe-write-test/../private', '/tmp/mut1.out.bak', '/tmp/mut1.out/child',
-    '/tmp/mut1%2eout', '/tmp/mut2.out', '/private/tmp/mut1.out', '/Users/synthetic/private.txt']) {
-    const quoted = '`' + path + '`';
-    assert.throws(() => publicReply(quoted), /本機絕對路徑/u);
+for (const target of ['final', 'stdout']) test(`合成路徑例外拒收變形、額外路徑與憑證：${target}`, async t => {
+  const quoted = value => '`' + value + '`';
+  const rejected = [];
+  for (const path of ['/tmp/probe-write-test', '/tmp/mut1.out']) {
+    for (const suffix of [': Operation not permitted.', ': operation not permitted', ': Operation Not Permitted',
+      ':  Operation not permitted', ':Operation not permitted', ' : Operation not permitted',
+      ': Permission denied', ': Operation not permitted ', ': Operation not permitted\n', ': Operation not permitted: extra'])
+      rejected.push({ text: quoted(path + suffix), reason: /本機絕對路徑/u });
+    for (const suffix of ['', ': Operation not permitted']) {
+      for (const changed of [path + '-extra', path + '/file', path + '.bak', path + '/../private'])
+        rejected.push({ text: quoted(changed + suffix), reason: /本機絕對路徑/u });
+      const value = path + suffix;
+      for (const text of [value, '`' + value, value + '`', '``' + value + '``', '```' + value + '```'])
+        rejected.push({ text, reason: /本機絕對路徑/u });
+      rejected.push({ text: quoted(value) + ' /Users/synthetic/private.txt', reason: /本機絕對路徑/u });
+      rejected.push({ text: quoted(value) + ' github_pat_' + 'z'.repeat(24), reason: /憑證/u });
+      rejected.push({ text: quoted(value) + ' sk-' + 'z'.repeat(24), reason: /憑證/u });
+    }
+  }
+  for (const path of ['/tmp/mut1%2eout', '/tmp/%6dut1.out', '/tmp/probe%2dwrite-test', '/tmp/mut2.out',
+    '/private/tmp/mut1.out', '/Users/synthetic/private.txt', '/home/synthetic/private.txt', '/var/folders/synthetic/private.txt'])
+    for (const suffix of ['', ': Operation not permitted']) rejected.push({ text: quoted(path + suffix), reason: /本機絕對路徑/u });
+  for (const { text, reason } of rejected) {
     const f = fixture(t), original = f.runner;
+    const reply = target === 'final' ? replyOf().replace('未貼', text + '\n未貼') : replyOf();
+    const prefix = target === 'stdout' ? text + '\n' : '合成進度🙂\n';
+    if (target === 'final') assert.throws(() => validateReply(reply, { head: HEAD, round: 1 }), reason);
+    else assert.equal(validateReply(reply, { head: HEAD, round: 1 }), reply);
     f.runner = async input => {
       const r = await original(input);
-      Object.assign(r.review, selectedReply(replyOf(), quoted + '\n'));
+      Object.assign(r.review, selectedReply(reply, prefix));
       return r;
     };
-    assert.equal((await runReview(f.args, f)).code, 2);
+    const result = await runReview(f.args, f);
+    assert.equal(result.code, 2, `${target} ${text}`);
+    assert.equal(f.runnerCalls.length, 1);
+    assert.match(result.lines.join('\n'), reason);
+    assert.throws(() => publicReply(text), reason);
     absent(f);
+    assert.equal(existsSync(`${f.args.outFile}.receipt.json`), false);
   }
-  for (const text of ['/tmp/mut1.out', '``/tmp/mut1.out``', '`/tmp/mut1.out`/Users/synthetic/private.txt'])
-    assert.throws(() => publicReply(text), /本機絕對路徑/u);
-  assert.throws(() => publicReply('`/tmp/mut1.out` github_pat_' + 'z'.repeat(24)), /憑證/u);
 });
 
 test('平台查詢失敗與新一輪已出現，不把舊提示當有效', async (t) => {

@@ -77,7 +77,7 @@ export function publicMaterial(text) {
 /** 已核的合成重現名稱可照原文公開；只豁免完整反引號字面值，不授予檔案存取權。 */
 export function publicReply(text) {
   credentialFree(text);
-  const checked = text.replace(/(?<!`)`\/tmp\/(?:probe-write-test|mut1\.out)`(?!`)/gu, '[已核合成測試路徑]');
+  const checked = text.replace(/(?<!`)`\/tmp\/(?:probe-write-test|mut1\.out)(?:: Operation not permitted)?`(?!`)/gu, '[已核合成測試路徑]');
   publicMaterial(checked);
   return text;
 }
