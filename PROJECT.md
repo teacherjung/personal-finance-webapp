@@ -110,7 +110,7 @@
 - （交接原第 17 項）Grok 放行表沒對新版 CLI 重測過，要先有能錄下真實請求的代理｜值得做：下次 Grok 升版或放行表誤擋時｜放：掃描工具與考題｜代價：一支小工具、真掃一次（S051、S226） — **未分配**
 - （交接原第 18 項）掃描配方的「模型」欄還能跨多次發布累積帶出少量資訊（64 種狀態）｜值得做：掃描外送範圍擴大或配方改版時｜放：掃描工具配方那一行｜代價：收窄欄位（S229） — **未分配**
 - （交接原第 19 項）掃描腳本檔頭的升版沿革補 10/03 新版相容修正那筆（兩支腳本帶日期）｜值得做：下次升版時｜放：`scripts/grok-scan.js`、`scripts/grok-relay.js` 檔頭｜代價：幾分鐘（S155） — **未分配**
-- （交接原第 22 項）Grok 帳號用量狀況（429 等）只留本機，PR 只寫未執行加概略原因｜值得做：下次動協作文件 Grok 節時｜放：docs/project-collaboration.md Grok 節｜代價：一行（S084） — **未分配**
+- （交接原第 22 項）Grok 帳號用量狀況（429 等）只留本機，PR 只寫未執行加概略原因｜值得做：下次動協作文件 Grok 節時｜放：docs/project-collaboration.md Grok 節｜代價：一行（S084） — **本次 #692 處理中；已補本專案 Grok 用量回報條款，待複審與合併**
 - （交接原第 23 項）根目錄 `settings.json` 的 `acceptance.families` E 級腳本 pattern 仍含八個已刪腳本名，清除須連 `test/acceptance-table.test.js` 的舊名 E 級斷言一起核；不在 `.claude` 設定｜值得做：本次工具登記整批同步後，另支驗收分類清理；開工核實原刪除與分級均已完成，且無工作仍需重跑舊分級｜放：根目錄 `settings.json` 與 `test/acceptance-table.test.js`｜本次僅依 [GPT‑6.1 Sol 技術代裁](https://github.com/teacherjung/personal-finance-webapp/pull/689#issuecomment-6171743877) 校正待辦位置，**八名及舊名分類尚未清除**（S023；#646 說明「沒放進這一支的」）。
 
 ## 重要決定（已拍板，勿重議）
