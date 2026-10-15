@@ -74,6 +74,14 @@ export function publicMaterial(text) {
   return text;
 }
 
+/** 已核的合成重現名稱可照原文公開；只豁免完整反引號字面值，不授予檔案存取權。 */
+export function publicReply(text) {
+  credentialFree(text);
+  const checked = text.replace(/(?<!`)`\/tmp\/(?:probe-write-test|mut1\.out)`(?!`)/gu, '[已核合成測試路徑]');
+  publicMaterial(checked);
+  return text;
+}
+
 /** 僅投影獨立反引號內的完整路徑；無法界定的路徑留給 publicMaterial 拒收，不猜它在哪裡結束。 */
 export function projectPublicBody(record, url) {
   const original = record.body;
@@ -209,7 +217,7 @@ export function validateReply(reply, expected) {
   demand(lines.filter((line) => /^🤖/u.test(line)).length === 1, 'Grok 原文有多個結論標頭');
   for (const heading of ['### 本輪實際用的設定', '### 清單逐項結果', '### 發現']) demand(lines.includes(heading), 'Grok 原文缺正式結論小標');
   demand(lines.filter((line) => line !== '').at(-1) === '未貼', 'Grok 原文文末未獨立標示未貼');
-  publicMaterial(reply);
+  publicReply(reply);
   return reply;
 }
 
@@ -230,7 +238,7 @@ export async function runReview(args, { git = reviewGit, ask = platform.ask, run
     demand(got.modelFloor === REVIEW_MODEL_FLOOR && got.modelQualified === true && reviewModelsQualified(got.observedModels), '安全 runner 的模型資格收據不符');
     try { verifyFinalSelection(got); }
     catch { stop('安全 runner 的完整 stdout／final 雜湊或選取收據不符'); }
-    publicMaterial(got.stdout);
+    publicReply(got.stdout);
     const reply = validateReply(got.reply, { head: ready.record.head, round: ready.record.round });
     demand(got.replySha256 === hash(reply), '安全 runner 原文雜湊不符');
     const receipt = { project: args.project, change: String(args.change), head: ready.record.head, base: ready.record.base,

@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import launcher from '../tools/review-launch.js';
-import { parseReviewArgs, prepareReview, projectPublicBody, promptValues, publicMaterial, reviewGit, runReview, validateReply } from '../scripts/grok-review.js';
+import { parseReviewArgs, prepareReview, projectPublicBody, promptValues, publicMaterial, publicReply, reviewGit, runReview, validateReply } from '../scripts/grok-review.js';
 import { runScan } from '../scripts/grok-scan.js';
 import { cleanupTempRoots, fakeGrok, fakeRelay, isolated, SANDBOX_OK, SKIP_AFTER_CANARY, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
 import { assertChildGitEnvClean, injectDirtyGitEnv } from './helpers/dirty-git-env.js';
@@ -246,6 +246,47 @@ test('投影不遮沒包住的路徑或憑證，也不代改 Grok 結論', () =>
     assert.throws(() => projectPublicBody({ id: '5', body: tokenBody }, 'https://github.com/example/other-project/pull/108#issuecomment-5'), /憑證/u);
   const reply = replyOf().replace('未貼', '`/Users/sample/private.txt`\n未貼');
   assert.throws(() => validateReply(reply, { head: HEAD, round: 1 }), /本機絕對路徑/u);
+});
+
+test('合成路徑例外只接受已核完整字面值，回覆與完整 stdout 保留原文', async t => {
+  for (const path of ['/tmp/probe-write-test', '/tmp/mut1.out']) {
+    const quoted = '`' + path + '`';
+    assert.equal(publicReply(quoted), quoted);
+    assert.throws(() => publicMaterial(quoted), /本機絕對路徑/u);
+    const f = fixture(t), original = f.runner;
+    const reply = replyOf().replace('未貼', quoted + '\n未貼');
+    const prefix = '合成命令被擋：' + quoted + '\n';
+    f.runner = async input => {
+      const r = await original(input);
+      Object.assign(r.review, selectedReply(reply, prefix));
+      return r;
+    };
+    const r = await runReview(f.args, f);
+    assert.equal(r.code, 0, r.lines.join('\n'));
+    assert.equal(readFileSync(f.args.outFile, 'utf8'), reply);
+    assert.equal(r.receipt.replySha256, digest(reply));
+    assert.equal(r.receipt.stdoutSha256, digest(prefix + reply + '\n'));
+  }
+});
+
+test('合成路徑例外不接受近似名稱、路徑變體、額外路徑或憑證', async t => {
+  for (const path of ['/tmp/probe-write-test-extra', '/tmp/probe-write-test/file',
+    '/tmp/probe-write-test/../private', '/tmp/mut1.out.bak', '/tmp/mut1.out/child',
+    '/tmp/mut1%2eout', '/tmp/mut2.out', '/private/tmp/mut1.out', '/Users/synthetic/private.txt']) {
+    const quoted = '`' + path + '`';
+    assert.throws(() => publicReply(quoted), /本機絕對路徑/u);
+    const f = fixture(t), original = f.runner;
+    f.runner = async input => {
+      const r = await original(input);
+      Object.assign(r.review, selectedReply(replyOf(), quoted + '\n'));
+      return r;
+    };
+    assert.equal((await runReview(f.args, f)).code, 2);
+    absent(f);
+  }
+  for (const text of ['/tmp/mut1.out', '``/tmp/mut1.out``', '`/tmp/mut1.out`/Users/synthetic/private.txt'])
+    assert.throws(() => publicReply(text), /本機絕對路徑/u);
+  assert.throws(() => publicReply('`/tmp/mut1.out` github_pat_' + 'z'.repeat(24)), /憑證/u);
 });
 
 test('平台查詢失敗與新一輪已出現，不把舊提示當有效', async (t) => {
