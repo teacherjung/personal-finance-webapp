@@ -464,18 +464,34 @@ function assertStringListEqual(actual, expected, msg) {
 
 /**
  * SIGKILL 整個程序群組，並等到群裡沒有任何程序（kill(-pgid, 0) 回 ESRCH）。
- * 只有 ESRCH 算「群已空」；EPERM／EINVAL 等其他錯＝不知道群裡還有誰，**丟出去**（r6 #2：原本任何錯都當已空）。
+ * 只有 ESRCH 算「群已空」；成功送 SIGKILL 後的 signal0 EPERM 只在共用等待預算內重查，避免對未知群組繼續送破壞性訊號。
  * @param {number | null} pgid
  */
 export async function killGroupAndWait(pgid) {
   if (!pgid) return;
   const gone = (/** @type {unknown} */ e) => /** @type {NodeJS.ErrnoException} */ (e).code === 'ESRCH';
-  for (let i = 0; i < 200; i++) {   // 最多 ~10 秒
+  let waitsRemaining = 200;
+  while (waitsRemaining > 0) {
     try { process.kill(-pgid, 'SIGKILL'); } catch (e) { if (gone(e)) return; throw new Error(`kill(-${pgid}) 失敗：${/** @type {Error} */ (e).message}——不當作群已空`, { cause: e }); }
-    try { process.kill(-pgid, 0); } catch (e) { if (gone(e)) return; throw new Error(`kill(-${pgid}, 0) 失敗：${/** @type {Error} */ (e).message}`, { cause: e }); }
+    try { process.kill(-pgid, 0); } catch (e) {
+      if (gone(e)) return;
+      const failure = new Error(`kill(-${pgid}, 0) 失敗：${/** @type {Error} */ (e).message}`, { cause: e });
+      if (/** @type {NodeJS.ErrnoException} */ (e).code !== 'EPERM' || waitsRemaining < 3) throw failure;
+      for (let retry = 0; retry < 3; retry++) {
+        waitsRemaining--;
+        await new Promise((r) => setTimeout(r, 50));
+        try { process.kill(-pgid, 0); } catch (next) {
+          if (gone(next)) return;
+          if (/** @type {NodeJS.ErrnoException} */ (next).code === 'EPERM') continue;
+        }
+        throw failure;
+      }
+      throw failure;
+    }
+    waitsRemaining--;
     await new Promise((r) => setTimeout(r, 50));
   }
-  throw new Error(`grok 的程序群組 ${pgid} 10 秒內殺不乾淨——不碰盒子`);
+  throw new Error(`grok 的程序群組 ${pgid} 用完 200 次等待仍未確認清空——不碰盒子`);
 }
 
 /**
