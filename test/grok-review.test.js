@@ -18,6 +18,7 @@ after(cleanupTempRoots);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const TEMPLATE = readFileSync(join(ROOT, 'templates/review-request.md'), 'utf8');
 const HEAD = 'a'.repeat(40), BASE = 'b'.repeat(40);
+const USER_REPLY_LITERALS = ['/Users/sample', '/Users/synthetic', '/Users/someone', '/Users/Shared'];
 const digest = (text) => createHash('sha256').update(text).digest('hex');
 const replyOf = () => '🤖 Grok｜來源：Grok CLI｜審 `aaaaaaa`｜r1｜結論：通過\n\n### 本輪實際用的設定\n模型 grok-4.7；推理 xhigh。\n### 清單逐項結果\n合成測試資料。\n### 發現\n本輪提了 0 條。\n未貼\n';
 
@@ -249,8 +250,10 @@ test('投影不遮沒包住的路徑或憑證，也不代改 Grok 結論', () =>
 });
 
 test('合成路徑例外只接受已核完整字面值與固定診斷，回覆與完整 stdout 保留原文', async t => {
-  for (const path of ['/tmp/probe-write-test', '/tmp/mut1.out']) for (const suffix of ['', ': Operation not permitted']) {
-    const quoted = '`' + path + suffix + '`';
+  const literals = [...USER_REPLY_LITERALS, ...['/tmp/probe-write-test', '/tmp/mut1.out']
+    .flatMap(path => [path, path + ': Operation not permitted'])];
+  for (const literal of literals) {
+    const quoted = '`' + literal + '`';
     const f = fixture(t), original = f.runner;
     const reply = replyOf().replace('未貼', quoted + '\n未貼');
     const prefix = '合成命令被擋🙂：' + quoted + '\r\n';
@@ -262,6 +265,7 @@ test('合成路徑例外只接受已核完整字面值與固定診斷，回覆�
     const r = await runReview(f.args, f);
     assert.equal(r.code, 0, r.lines.join('\n'));
     assert.equal(publicReply(quoted), quoted);
+    assert.equal(publicReply(quoted, 'stdout'), quoted);
     assert.throws(() => publicMaterial(quoted), /本機絕對路徑/u);
     assert.equal(f.runnerCalls.length, 1);
     assert.deepEqual(readFileSync(f.args.outFile), Buffer.from(reply));
@@ -296,6 +300,46 @@ for (const target of ['final', 'stdout']) test(`合成路徑例外拒收變形�
   for (const path of ['/tmp/mut1%2eout', '/tmp/%6dut1.out', '/tmp/probe%2dwrite-test', '/tmp/mut2.out',
     '/private/tmp/mut1.out', '/Users/synthetic/private.txt', '/home/synthetic/private.txt', '/var/folders/synthetic/private.txt'])
     for (const suffix of ['', ': Operation not permitted']) rejected.push({ text: quoted(path + suffix), reason: /本機絕對路徑/u });
+  for (const path of USER_REPLY_LITERALS) {
+    for (const text of [path, '`' + path, path + '`', '``' + path + '``', '```' + path + '```'])
+      rejected.push({ text, reason: /本機絕對路徑/u });
+    for (const value of [path + '-extra', path + '.bak', path + '/file', path + '/../private',
+      path + ': Operation not permitted', path + ': Permission denied', path + ' ', path + ' && pwd', 'cat ' + path,
+      path.slice(0, -1) + path.slice(-1).toUpperCase(), '/Users/%' + path.charCodeAt(7).toString(16) + path.slice(8),
+      '/Users/\\u' + path.charCodeAt(7).toString(16).padStart(4, '0') + path.slice(8)])
+      rejected.push({ text: quoted(value), reason: /本機絕對路徑/u });
+    for (const changed of [path.replace('/Users/', '/users/'), path.replaceAll('/', '%2F'),
+      path.replace('/Users/', '/%55sers/'), path.replace('/Users/', '/Users%2f'),
+      [...path].map(char => '%' + char.charCodeAt(0).toString(16)).join(''),
+      path.replaceAll('/', '\\u002f'), path.replace('/Users/', '/\\u0055sers/'),
+      [...path].map(char => '\\u' + char.charCodeAt(0).toString(16).padStart(4, '0')).join(''),
+      path.replaceAll('/', '\\/'), path.replaceAll('/', '\\x2f'),
+      path.replaceAll('/', '\\X2F'), path.replaceAll('/', '\\u00252F')])
+      rejected.push({ text: quoted(changed), reason: /本機絕對路徑/u });
+    let nested = path;
+    for (let depth = 1; depth <= 4; depth++) {
+      nested = [...nested].map(char => '%' + char.charCodeAt(0).toString(16)).join('');
+      rejected.push({ text: quoted(nested), reason: depth > 3 ? /ENCODING_UNRESOLVED/u : /本機絕對路徑/u });
+    }
+    rejected.push({ text: quoted(path) + ' `/Users/unapproved`', reason: /本機絕對路徑/u });
+    for (const credential of ['github_pat_' + 'z'.repeat(24), 'sk-' + 'z'.repeat(24)]) {
+      rejected.push({ text: quoted(path) + ' ' + credential, reason: /憑證/u });
+      rejected.push({ text: quoted(path + '/' + credential), reason: /憑證/u });
+      for (const encoded of ['%' + credential.charCodeAt(0).toString(16) + credential.slice(1),
+        '\\x' + credential.charCodeAt(0).toString(16) + credential.slice(1),
+        '\\u00' + credential.charCodeAt(0).toString(16) + credential.slice(1)])
+        rejected.push({ text: quoted(path) + ' ' + encoded, reason: /憑證/u });
+    }
+  }
+  for (const path of ['/home/synthetic', '/private/synthetic', '/tmp/synthetic', '/var/folders/synthetic', 'file:///synthetic']) {
+    for (const changed of [path.toUpperCase(), path.replaceAll('/', '%2f'), path.replaceAll('/', '\\u002f'),
+      path.replaceAll('/', '\\x2f'), path.replaceAll('/', '\\/'), path.replaceAll('/', '\\x252f')])
+      rejected.push({ text: quoted(changed), reason: /本機絕對路徑/u });
+  }
+  for (const text of ['%80', '%ff', '\\x80', '\\XFF', '\\u0080', '\\U00ff'])
+    rejected.push({ text, reason: /ENCODING_UNSUPPORTED/u });
+  for (const text of ['\\x', '\\x2', '\\xGG', '\\u00', '\\u002', '\\U00GG', '%25252520'])
+    rejected.push({ text, reason: /ENCODING_UNRESOLVED/u });
   for (const { text, reason } of rejected) {
     const f = fixture(t), original = f.runner;
     const reply = target === 'final' ? replyOf().replace('未貼', text + '\n未貼') : replyOf();
@@ -312,6 +356,52 @@ for (const target of ['final', 'stdout']) test(`合成路徑例外拒收變形�
     assert.equal(f.runnerCalls.length, 1);
     assert.match(result.lines.join('\n'), reason);
     assert.throws(() => publicReply(text), reason);
+    absent(f);
+    assert.equal(existsSync(`${f.args.outFile}.receipt.json`), false);
+  }
+});
+
+test('輸出拒收視圖保留一般百分比、技術 Unicode 與非路徑跳脫的原文', async t => {
+  const text = '覆蓋率 75% + 25% = 100%；餘數 x%3 + 1；普通 %Q；空白 %20／%252520；ASCII \\x41；技術字元 \\u4e2d；JSON 斜線 \\/。';
+  assert.equal(publicReply(text), text);
+  const f = fixture(t), original = f.runner;
+  const reply = replyOf().replace('未貼', text + '\n未貼');
+  f.runner = async args => {
+    const result = await original(args);
+    Object.assign(result.review, selectedReply(reply, text + '\n'));
+    return result;
+  };
+  const result = await runReview(f.args, f);
+  assert.equal(result.code, 0, result.lines.join('\n'));
+  assert.deepEqual(readFileSync(f.args.outFile), Buffer.from(reply));
+  assert.equal(result.receipt.stdoutSha256, digest(text + '\n' + reply + '\n'));
+});
+
+test('隱私失敗指出輸入、完整 stdout 或 final 的檢查階段，不回顯命中內容', async t => {
+  const privateText = '/Users/unapproved/private.txt';
+  const input = fixture(t);
+  input.comments.push({ id: '5', body: privateText, createdAt: '2026-10-15T00:00:00Z' });
+  const inputResult = await runReview(input.args, input);
+  assert.equal(inputResult.code, 2);
+  assert.match(inputResult.lines.join('\n'), /輸入材料仍含本機絕對路徑/u);
+  assert.equal(input.runnerCalls.length, 0);
+  const output = fixture(t), original = output.runner;
+  output.runner = async args => {
+    const result = await original(args);
+    Object.assign(result.review, selectedReply(replyOf(), privateText + '\n'));
+    return result;
+  };
+  const outputResult = await runReview(output.args, output);
+  assert.equal(outputResult.code, 2);
+  assert.match(outputResult.lines.join('\n'), /完整 stdout仍含本機絕對路徑/u);
+  assert.equal(output.runnerCalls.length, 1);
+  assert.throws(() => validateReply(replyOf().replace('未貼', privateText + '\n未貼'), { head: HEAD, round: 1 }), error => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /final 回覆仍含本機絕對路徑/u);
+    return !error.message.includes(privateText);
+  });
+  for (const [f, result] of [[input, inputResult], [output, outputResult]]) {
+    assert.equal(result.lines.join('\n').includes(privateText), false);
     absent(f);
     assert.equal(existsSync(`${f.args.outFile}.receipt.json`), false);
   }

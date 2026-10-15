@@ -47,7 +47,6 @@
 
 - （常設指示落點，#692 r1 發現 3，屬實·進待辦）K6 要常設指示附日期與原話，但「套件檔無例外」在接近 28,000 位元組上限的指示檔只留日期與指路，原話保存在必讀協作附則，與該節「原話照錄」不一致／`AGENTS.md`「William 的常設指示」、`docs/project-collaboration.md`「套件檔常設指示」及專案設定中的指示檔位置／下次精簡 AGENTS.md 或再新增常設指示時，騰出空間保留原話，或先請擁有者確認 K6 在本專案的原話落點；不刪實質規範 — **未分配**
 - （長期驗收指路，#692 r1 發現 4，屬實·進待辦）F 級動作與兩側安裝手續指向「本次安裝與平台量測的界線（2026-10-14）」，通用完成條件與該次量測裁示混在同節，未來沿用時可能不易區分／`settings.json` 的 F 級 action、其產物 `PROJECT-SETTINGS.md` 與 `docs/money-guard-operations.md` 的兩側手續及該節／下次修改安裝驗收流程或下一支需沿用 F 級動作時，將通用完成條件另設不帶日期的小標，專屬裁示與未量缺項保留原處，再同步更新來源設定、產物與指路；本次未觀測到後續誤用 — **未分配**
-- （套件來源待辦，#692 r1 發現 5，屬實·進待辦）共用 canary 考題④的註解概括為只有禁區連接器白名單工具走家族網，未涵蓋 allowedTools 命中後也走家族網的路徑／套件 `tests/canary-server.test.js:220`（題名關鍵字「這個名字只有逐字拒絕清單擋得住」），理財為同步副本／下次在套件修改該考題或整理相關舊文字時，核對判斷正本並只改註解的理由與射程，再依 D5 整批同步回理財；本條只登記來源，尚未新增套件待辦或施工 — **未分配**
 
 - （裁示對象說明，#690 r1 發現 2）常設原話「需要裁示請直接問GPT6.1 Sol」與協作附則「直接問 William」等敘述未釐清適用範圍／`AGENTS.md` 常設指示與 `docs/project-collaboration.md`「審查」「審查回饋處置」「界線表」／取得委任範圍的明確裁示，或下一次修改詢問裁示的說明時，先確認哪些情況仍須本人決定，再同步文字；本支只照錄原話，不據此擴張委任或改寫擁有者專屬權限 — **未分配**
 
@@ -115,6 +114,8 @@
 - （交接原第 23 項）根目錄 `settings.json` 的 `acceptance.families` E 級腳本 pattern 仍含八個已刪腳本名，清除須連 `test/acceptance-table.test.js` 的舊名 E 級斷言一起核；不在 `.claude` 設定｜值得做：本次工具登記整批同步後，另支驗收分類清理；開工核實原刪除與分級均已完成，且無工作仍需重跑舊分級｜放：根目錄 `settings.json` 與 `test/acceptance-table.test.js`｜本次僅依 [GPT‑6.1 Sol 技術代裁](https://github.com/teacherjung/personal-finance-webapp/pull/689#issuecomment-6171743877) 校正待辦位置，**八名及舊名分類尚未清除**（S023；#646 說明「沒放進這一支的」）。
 
 ## 重要決定（已拍板，勿重議）
+
+- **共用 canary 理由註解（2026-10-16）**：依 [GPT‑6.1 Sol 技術代裁](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6201960211)，`tests/canary-server.test.js` 的排他敘述被精確登記、非金融名字仍走家族網的合成反例推翻，屬 RULES F6②，須在 #692 續審前修正。此檔依 D5 先回套件做最小理由註解補正，正常程序合併後官方整批同步；保留既有行為題與判準，不因嚴重度低列待辦，也不把註解錯誤說成真實交易工具已放行。此為技術代裁，非 William 本人新增指示；新套件補正不繼承指定 PR 的免掃。
 
 - **Codex 工具精確登記（2026-10-14）**：依本人本 Session 要求與 [GPT‑6.1 Sol 技術代裁](https://github.com/teacherjung/personal-finance-webapp/pull/689#issuecomment-6170031843)，整批同步套件已合併固定版本 `436ca9bd4277450812ceec00a509bf8cc9331f37`，保留理財原有專案值，加入經核選取的完整工具名字；名稱來源、快照雜湊與限制見 `docs/money-guard-operations.md`，不是全部工具實呼證明。金融禁令與逐次任務授權照原規矩。套件同步及 repo 考題不等於實機安裝：兩側固定複本、Codex 全停換組、本人重新信任與驗收結果須另留痕；直接環境量測依本檔待辦保留未完成。
   - **固定名冊與畫面操作入口的本人同意（2026-10-15）**：William 本人原話（Codex 轉述）：「同意350名，含解除兩個畫面操作入口的暫擋（建議）」；[本人留痕](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6185243608)。回答所對應的[具體問題](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6184985413)連到固定 350 名清單，明示包含解除 `mcp__cua_repl__js`、`mcp__cua_repl__js_reset` 的舊暫擋，以及它們可操作網頁、App 並可能接觸金融介面的能力；該回答同時作為本支 RULES A5 的本人點頭。名冊排序並逐筆加 LF 的 SHA-256＝`6e9afe261e49392f67aef73f832e414000c5e7803922d92cea93fb22716227d5`。交易、建單、移動資金與證券仍禁止；每次任務授權與工具原有確認要求照舊。這項同意不等於審查通過或實機安裝驗收。授權沿革依 [GPT‑6.1 Sol r3 補正裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6184984969)：[#106 的原問題](https://github.com/teacherjung/ai-collab-kit/pull/106#issuecomment-6179508031)未揭示這兩個入口的舊封鎖例外，不從當時的施工與同步選擇推定本人已同意解除；本次具體回答補足該範圍。

@@ -20,6 +20,8 @@ import { verifyFinalSelection } from './grok-final-reply.js';
 
 const SHA = /^[a-f0-9]{40}$/u;
 const MODEL = /^[A-Za-z0-9._-]+$/u;
+const LOCAL_PATH = /(?:file:\/\/|\/(?:Users|home|private|tmp)\/|\/var\/folders\/)/u;
+const PRIVACY_REPAIR = '；請查 docs/project-collaboration.md「Grok（本專案）」並補正送審來源，再重跑本輪發審指令';
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const escapeRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 /** @returns {never} */
@@ -63,29 +65,55 @@ export function promptValues(template, prompt) {
   return values;
 }
 
-function credentialFree(text) {
-  demand(!/(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]{16,}|\bsk-[A-Za-z0-9_-]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/u.test(text), '送審材料疑似含憑證');
+function credentialFree(text, phase) {
+  demand(!/(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]{16,}|\bsk-[A-Za-z0-9_-]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/u.test(text), `${phase}疑似含憑證${PRIVACY_REPAIR}`);
+}
+
+function localPathFree(text, phase, ignoreCase = false) {
+  demand(!(ignoreCase ? new RegExp(LOCAL_PATH, 'iu') : LOCAL_PATH).test(text), `${phase}仍含本機絕對路徑${PRIVACY_REPAIR}`);
+}
+
+function replyPathView(text, phase) {
+  const asciiEscape = /%([0-7][0-9a-f])|\\u00([0-7][0-9a-f])|\\x([0-7][0-9a-f])|\\\//giu;
+  let view = text;
+  // 限制展開次數，避免把未解完的文字當成已查清的路徑。
+  for (let pass = 0; pass <= 3; pass++) {
+    credentialFree(view, phase);
+    localPathFree(view, phase, true);
+    demand(!/%[89a-f][0-9a-f]|\\(?:u00|x)[89a-f][0-9a-f]/iu.test(view), `${phase}含未支援編碼（ENCODING_UNSUPPORTED）${PRIVACY_REPAIR}`);
+    demand(!/\\(?:u00(?![0-9a-f]{2})|x(?![0-9a-f]{2}))/iu.test(view), `${phase}編碼檢查未完成（ENCODING_UNRESOLVED）${PRIVACY_REPAIR}`);
+    if (pass === 3) {
+      demand(!asciiEscape.test(view), `${phase}編碼檢查未完成（ENCODING_UNRESOLVED）${PRIVACY_REPAIR}`);
+      return;
+    }
+    const next = view.replace(asciiEscape,
+      (match, percent, unicode, hex) => match === '\\/' ? '/' : String.fromCharCode(parseInt(percent ?? unicode ?? hex, 16)));
+    if (next === view) return;
+    view = next;
+  }
 }
 
 /** 已公開材料也可能殘留個人路徑；此檢查不聲稱能辨識任意編碼的機密。 */
 export function publicMaterial(text) {
-  credentialFree(text);
-  demand(!/(?:file:\/\/|\/(?:Users|home|private|tmp)\/|\/var\/folders\/)/u.test(text), '送審材料仍含本機絕對路徑');
+  credentialFree(text, '輸入材料');
+  localPathFree(text, '輸入材料');
   return text;
 }
 
-/** 已核的合成重現名稱可照原文公開；只豁免完整反引號字面值，不授予檔案存取權。 */
-export function publicReply(text) {
-  credentialFree(text);
-  const checked = text.replace(/(?<!`)`\/tmp\/(?:probe-write-test|mut1\.out)(?:: Operation not permitted)?`(?!`)/gu, '[已核合成測試路徑]');
-  publicMaterial(checked);
+/** 字面值例外不授予檔案存取權；原文仍供正式收件核對。 */
+export function publicReply(text, channel = 'final') {
+  const phase = channel === 'stdout' ? '完整 stdout' : 'final 回覆';
+  credentialFree(text, phase);
+  const checked = text.replace(/(?<!`)`(?:\/tmp\/(?:probe-write-test|mut1\.out)(?:: Operation not permitted)?|\/Users\/(?:sample|synthetic|someone|Shared))`(?!`)/gu, '[已核合成測試路徑]');
+  // 解碼只用於拒收剩餘文字，不把編碼或大小寫變體轉成可公開例外。
+  replyPathView(checked, phase);
   return text;
 }
 
 /** 僅投影獨立反引號內的完整路徑；無法界定的路徑留給 publicMaterial 拒收，不猜它在哪裡結束。 */
 export function projectPublicBody(record, url) {
   const original = record.body;
-  credentialFree(original);
+  credentialFree(original, '公開平台材料');
   let omittedPathCount = 0;
   const body = original.replace(/(?<!`)`((?:file:\/\/|\/(?:Users|home|private|tmp)\/|\/var\/folders\/)[^`\r\n]*)`(?!`)/gu, (_match, path) => {
     omittedPathCount++;
@@ -238,7 +266,7 @@ export async function runReview(args, { git = reviewGit, ask = platform.ask, run
     demand(got.modelFloor === REVIEW_MODEL_FLOOR && got.modelQualified === true && reviewModelsQualified(got.observedModels), '安全 runner 的模型資格收據不符');
     try { verifyFinalSelection(got); }
     catch { stop('安全 runner 的完整 stdout／final 雜湊或選取收據不符'); }
-    publicReply(got.stdout);
+    publicReply(got.stdout, 'stdout');
     const reply = validateReply(got.reply, { head: ready.record.head, round: ready.record.round });
     demand(got.replySha256 === hash(reply), '安全 runner 原文雜湊不符');
     const receipt = { project: args.project, change: String(args.change), head: ready.record.head, base: ready.record.base,
