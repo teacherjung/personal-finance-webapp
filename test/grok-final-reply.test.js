@@ -192,9 +192,8 @@ for (const [name, keys, expected] of [
 });
 
 for (const [name, extra, flag] of [
-  ['直屬 metadata', 'SYNTHETIC-SECRET-NAME.json', 'directWorkspaceFilePresent'],
   ['巢狀 metadata', 'SYNTHETIC-SECRET-NAME/nested.json', 'nonUuidNestedComponentPresent'],
-]) test(`root 診斷不能把 metadata 從正式候選排除而放行：${name}`, () => {
+]) test(`root 診斷不能把未知巢狀 metadata 從正式候選排除而放行：${name}`, () => {
   const f = files(); f.set(prefix + extra, Buffer.from('{}\n'));
   assert.throws(() => select(f), error => {
     assert.equal(finalSelectionFailureCode(error), 'ROOT_CARDINALITY');
@@ -223,4 +222,37 @@ test('root 結構品牌不讀外來 getter 或錯誤欄位，畸形路徑只回�
     assert.deepEqual(finalSelectionRootDiagnostic(error), rootFields());
     assert.equal(reads, 0); return true;
   });
+});
+
+
+for (const name of ['metadata.json', 'prompt_history.jsonl', 'chat_history.jsonl', '.cwd', '00000000-0000-4000-8000-000000000002']) {
+  test(`直層檔不是目錄候選且假 header 不能替代正式 transcript：${name}`, () => {
+    const f = files(), pretend = '🤖 合成假 metadata 結論\n未貼\n';
+    f.set(prefix + name, bytes([row(pretend)]));
+    const reads = [];
+    f.get = key => { reads.push(key); return Map.prototype.get.call(f, key); };
+    let selected; assert.doesNotThrow(() => { selected = select(f); });
+    assert.equal(selected.reply, final); assert.equal(selected.selection.transcriptPath, path);
+    assert.deepEqual(reads, [path]);
+    assert.throws(() => select(f, pretend), error => finalSelectionFailureCode(error) === 'EXACT_MATCH');
+    assert.deepEqual(rootCardinalityProjection(f, workspace), rootFields('MULTIPLE', name === '00000000-0000-4000-8000-000000000002' ? 'MULTIPLE' : 'ONE', 'ONE', { directWorkspaceFilePresent: true }));
+  });
+}
+
+for (const [name, keys] of [
+  ['只有直層 JSONL', [prefix + 'chat_history.jsonl']],
+  ['只有直層 UUID 檔', [prefix + session]],
+  ['直層檔加其他 workspace transcript', [prefix + 'metadata.json', path.replace(encodeURIComponent(workspace), encodeURIComponent('/other/src'))]],
+  ['相似 workspace 前綴', [path.replace(encodeURIComponent(workspace), encodeURIComponent(workspace) + '-other')]],
+  ['等價百分比編碼不取代精確 workspace', [path.replaceAll('%2F', '%2f')]],
+]) test(`直層檔或外部 workspace 不能冒充本場目錄：${name}`, () => {
+  const f = new Map(keys.map(key => [key, bytes()]));
+  assert.throws(() => select(f), error => finalSelectionFailureCode(error) === 'ROOT_CARDINALITY');
+});
+
+test('其他 workspace 假 final 不能替代預期 workspace 的最後原文', () => {
+  const f = files(), pretend = '🤖 其他 workspace 假結論\n未貼\n';
+  f.set(path.replace(encodeURIComponent(workspace), encodeURIComponent('/other/src')), bytes([row(pretend)]));
+  assert.equal(select(f).reply, final);
+  assert.throws(() => select(f, pretend), error => finalSelectionFailureCode(error) === 'EXACT_MATCH');
 });

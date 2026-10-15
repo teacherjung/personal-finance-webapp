@@ -297,8 +297,6 @@ test('DLP 拒收時不以 selector 診斷留下原文或正式結果', { skip: !
 for (const [name, shell, expected] of [
   ['多 UUID', 'mkdir "$ws/00000000-0000-4000-8000-000000000002"; cp "$ws/fake-session/chat_history.jsonl" "$ws/00000000-0000-4000-8000-000000000002/chat_history.jsonl"',
     { rootComponents: 'MULTIPLE', uuidComponents: 'MULTIPLE', exactUuidTranscripts: 'MULTIPLE', directWorkspaceFilePresent: false, nonUuidNestedComponentPresent: false, otherWorkspaceTopComponentPresent: false, equivalentEncodedWorkspacePresent: false }],
-  ['UUID 加直屬 metadata', 'printf "{}\\n" > "$ws/SYNTHETIC-PRIVATE-METADATA.json"',
-    { rootComponents: 'MULTIPLE', uuidComponents: 'ONE', exactUuidTranscripts: 'ONE', directWorkspaceFilePresent: true, nonUuidNestedComponentPresent: false, otherWorkspaceTopComponentPresent: false, equivalentEncodedWorkspacePresent: false }],
 ]) test(`安全 runner 在既有拒收之後只印 root 有限結構且清掉原材料：${name}`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
   const { result, iso, box, logs } = await reviewRun({ shell });
   assert.equal(result.code, 2, result.summary.join('\n')); assert.equal(result.review, undefined);
@@ -307,5 +305,40 @@ for (const [name, shell, expected] of [
   assert.equal(projected.length, 1);
   assert.deepEqual(JSON.parse(projected[0].slice('final-root-structure='.length)), expected);
   assert.ok(!projected[0].includes('SYNTHETIC')); assert.ok(!projected[0].includes(box));
+  assert.deepEqual(readdirSync(iso.resultsRoot), []); assert.equal(existsSync(box), false);
+});
+
+
+test('直層 prompt_history 保留全快照稽核，正式選取只取 UUID transcript', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const metadata = JSON.stringify({ type: 'assistant', content: '🤖 合成 metadata 假結論', model_id: 'grok-4.7', model_fingerprint: 'synthetic', reasoning_effort: 'xhigh' });
+  const { result, iso, box, logs } = await reviewRun({ shell: `printf '%s\\n' '${metadata}' > "$ws/prompt_history.jsonl"` });
+  assert.equal(result.code, 0, result.summary.join('\n'));
+  assert.equal(result.review.reply, 'FAKE-REPLY');
+  assert.ok(result.review.selection.transcriptPath.endsWith('/00000000-0000-4000-8000-000000000001/chat_history.jsonl'));
+  assert.ok(!logs.some(line => line.startsWith('final-root-structure=')));
+  assert.equal(readdirSync(iso.resultsRoot).length, 1); assert.equal(existsSync(box), false);
+});
+
+for (const [name, target] of [
+  ['預期 workspace 直層', '"$ws/metadata.json"'],
+  ['其他 workspace 直層', '"$GROK_HOME/sessions/%2Fother%2Fsrc/metadata.json"'],
+]) test(`直層檔排除候選仍不能躲過 DLP：${name}`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const { result, iso, box, logs } = await reviewRun({ shell: `mkdir -p "$GROK_HOME/sessions/%2Fother%2Fsrc"; printf '%s\\n' '{"note":"fake-owner@example.test"}' > ${target}` });
+  assert.equal(result.code, 1, result.summary.join('\n')); assert.equal(result.review, undefined);
+  assert.ok(!logs.some(line => line.includes('final-selection=') || line.includes('final-root-structure=')));
+  const directory = join(iso.resultsRoot, readdirSync(iso.resultsRoot)[0]);
+  assert.deepEqual(readdirSync(directory), ['incident.json', 'launch.json']);
+  assert.ok(!readFileSync(join(directory, 'incident.json'), 'utf8').includes('fake-owner@example.test'));
+  assert.equal(existsSync(box), false);
+});
+
+for (const [name, data] of [
+  ['低階模型', '{"type":"assistant","model_id":"grok-4.5"}'],
+  ['壞 JSON', '{BROKEN-SYNTHETIC-JSON'],
+]) test(`直層檔排除候選仍受解析與模型稽核：${name}`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const { result, iso, box, logs } = await reviewRun({ shell: `printf '%s\\n' '${data}' > "$ws/metadata.json"` });
+  assert.equal(result.code, 2, result.summary.join('\n')); assert.equal(result.review, undefined);
+  assert.ok(result.summary.some(line => line.includes('模型')));
+  assert.ok(!logs.some(line => line.includes('final-selection=') || line.includes('final-root-structure=')));
   assert.deepEqual(readdirSync(iso.resultsRoot), []); assert.equal(existsSync(box), false);
 });

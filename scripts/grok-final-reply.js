@@ -122,7 +122,8 @@ export function selectFinalReply(files, workspace, stdout, cliVersion) {
     demand(cliVersion === '1.0.46' && typeof workspace === 'string' && workspace.startsWith('/'), 'VERSION_WORKSPACE');
     const prefix = encodeURIComponent(workspace) + '/';
     const paths = [...files.keys()];
-    const sessions = components(paths, prefix);
+    // 直層檔不是對話目錄；保留非 UUID 巢狀元件，避免先挑合格者而漏掉競爭候選。
+    const sessions = components(paths.filter(path => path.startsWith(prefix) && path.slice(prefix.length).includes('/')), prefix);
     const diagnostic = rootPathProjection(paths, workspace);
     if (sessions.size !== 1) throw failure('ROOT_CARDINALITY', diagnostic);
     const session = [...sessions][0];
