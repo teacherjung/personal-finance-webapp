@@ -221,20 +221,24 @@ test('正式複審接受已登記的 4.6 以上單一或混合模型，保留指
   }
 });
 
-test('正式複審模型核對失敗只回已核名稱與固定旗標，仍清除未合格結果', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+test('正式複審模型核對失敗只回已核集合，仍清除未合格結果', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
   const unknown = 'SYNTHETIC-UNRECOGNIZED-MODEL-61713';
   const hostile = '/synthetic/account/SENTINEL-61713\\t';
   const overLimit = JSON.stringify({ model_id: 'grok-4.6', nodes: Array(MODEL_WALK_MAX_NODES).fill(0) });
   for (const [fake, expected] of [
-    [{ model: 'grok-4.5' }, '查不出來；另有不在清單上的 model_id'],
-    [{ model: 'grok-4.8' }, '查不出來；另有不在清單上的 model_id'],
-    [{ model: 'grok-4.7-unregistered' }, '查不出來；另有不在清單上的 model_id'],
+    [{ model: 'grok-4.5' }, '查不出來'],
+    [{ model: 'grok-4.8' }, '查不出來'],
+    [{ model: 'grok-4.7-unregistered' }, '查不出來'],
     [{ model: undefined }, '查不出來'],
-    [{ model: unknown }, '查不出來；另有不在清單上的 model_id'],
-    [{ sessionLines: ['{"model_id":"grok-4.5"}'] }, 'grok-4.7；另有不在清單上的 model_id'],
-    [{ sessionLines: [JSON.stringify({ model_id: hostile })] }, 'grok-4.7；另有不在清單上的 model_id'],
-    [{ sessionLines: [overLimit] }, 'grok-4.7；有紀錄讀不完整、整行不採用'],
-    [{ sessionLines: ['{"model_id":"grok-4.6"}', '{"model_id":61713}'] }, 'grok-4.6＋grok-4.7；另有不在清單上的 model_id'],
+    [{ model: unknown }, '查不出來'],
+    [{ sessionLines: ['{"model_id":"grok-4.5"}'] }, 'grok-4.7'],
+    [{ sessionLines: [JSON.stringify({ model_id: hostile })] }, 'grok-4.7'],
+    [{ sessionLines: [overLimit] }, 'grok-4.7'],
+    [{ model: undefined, sessionLines: [overLimit] }, '查不出來'],
+    [{ model: undefined, sessionLines: [overLimit, JSON.stringify({ model_id: unknown })] }, '查不出來'],
+    [{ sessionLines: [overLimit, JSON.stringify({ model_id: unknown })] }, 'grok-4.7'],
+    [{ model: undefined, sessionLines: ['{"model_id":"grok-4.6"}', overLimit, JSON.stringify({ model_id: unknown })] }, 'grok-4.6'],
+    [{ sessionLines: ['{"model_id":"grok-4.6"}', '{"model_id":61713}'] }, 'grok-4.6＋grok-4.7'],
   ]) {
     const { result, iso, box } = await reviewRun({ fake });
     assert.equal(result.code, 2);
