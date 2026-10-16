@@ -24,7 +24,12 @@ export function openModalShell({ title, size = 'md', bodyHtml, backdrop = true }
     <div class="modal-head"><h2>${esc(title)}</h2><button class="x-close">×</button></div>
     <div class="modal-body">${bodyHtml}</div>
   </div></div>`;
-  const close = () => { root.innerHTML = ''; owns.release(); };   // r9：關窗即撤銷擁有權（有主才撤，與 openForm 一致）
+  const dialog = root.querySelector('.modal');
+  const close = () => {
+    // 換頁會撤銷資料寫入權，但目前窗仍須能關；DOM 身分只擋舊窗清掉後來的輸入。
+    if (root.querySelector('.modal') !== dialog) return;
+    root.innerHTML = ''; owns.release();
+  };
   root.querySelector('.x-close').onclick = close;
   if (backdrop) bindBackdropClose(root, close);
   bindModalAccessibility(root, close, returnFocusTo);

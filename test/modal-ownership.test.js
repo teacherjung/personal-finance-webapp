@@ -787,3 +787,541 @@ test('共用彈窗外殼｜呼叫端覆寫叉叉為取消後，Esc 要走最新�
   assert.equal(answer, false);
   assert.equal(root.innerHTML, '');
 });
+
+const settleModalFocus = () => new Promise(resolve => setTimeout(resolve, 0));
+
+async function prepareReturnFocusCase() {
+  const app = await bootAccessibilityApp();
+  const root = document.getElementById('modal-root');
+  root.innerHTML = '';
+  await settleModalFocus();
+  const view = document.getElementById('view');
+  view.innerHTML = '<h1 id="returnHeading">目前頁面</h1><button id="returnOpener">開窗</button><button id="chosenFocus">其他操作</button>';
+  document.getElementById('nav').innerHTML = '<a href="#settings" data-route="settings" aria-current="page">設定</a>';
+  const opener = document.getElementById('returnOpener');
+  opener.focus();
+  app.openInfo('回復焦點', '<p>合成說明</p>');
+  await Promise.resolve();
+  return { app, root, view, opener, heading: document.getElementById('returnHeading') };
+}
+
+async function renderFocusRoute(app, hash) {
+  const originalFetch = globalThis.fetch;
+  const originalChart = Object.getOwnPropertyDescriptor(globalThis, 'Chart');
+  // 焦點題需要正式路由的 DOM；圖表繪圖由其領域考題驗證。
+  Object.defineProperty(globalThis, 'Chart', { configurable: true, value: class { destroy() {} } });
+  globalThis.fetch = async input => {
+    const path = new URL(String(input), 'http://localhost').pathname;
+    const data = /\/(transactions|subscriptions|cards|history)$/.test(path) ? []
+      : /\/health$/.test(path) ? { items: [], dismissed: 0 }
+        : /orphans/.test(path) ? { items: [] } : {};
+    return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    globalThis.window.history.replaceState(null, '', hash);
+    await app.router();
+    await settleModalFocus();
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalChart) Object.defineProperty(globalThis, 'Chart', originalChart);
+    else delete globalThis.Chart;
+  }
+}
+
+test('關窗回焦｜原入口仍可用時優先，標題不新增 tabindex', async () => {
+  const { root, opener, heading } = await prepareReturnFocusCase();
+  root.querySelector('.x-close').click();
+  await settleModalFocus();
+  assert.equal(document.activeElement, opener);
+  assert.equal(heading.hasAttribute('tabindex'), false);
+});
+
+test('關窗回焦｜同頁替換入口後回目前標題，離焦收回臨時 tabindex', async () => {
+  const { root, view, opener } = await prepareReturnFocusCase();
+  view.innerHTML = '<h1 id="replacementHeading">重畫後的頁面</h1><button id="afterReturn">下一個操作</button>';
+  assert.equal(opener.isConnected, false);
+  const heading = document.getElementById('replacementHeading');
+  root.querySelector('.x-close').click();
+  await settleModalFocus();
+  assert.equal(document.activeElement, heading);
+  assert.equal(heading.getAttribute('tabindex'), '-1');
+  document.getElementById('afterReturn').focus();
+  assert.equal(heading.hasAttribute('tabindex'), false);
+});
+
+for (const [name, nextHash] of [['同頁 router 重畫', '#settings'], ['真正換頁', '#subscriptions']]) {
+  test(`關窗回焦｜${name} 移除入口後採當下頁面標題`, async () => {
+    const { app, root, view } = await prepareReturnFocusCase();
+    root.querySelector('.x-close').click();
+    await settleModalFocus();
+    await renderFocusRoute(app, '#settings');
+    const opener = document.createElement('button');
+    opener.textContent = '本題入口';
+    view.append(opener); opener.focus();
+    app.openInfo('路由測試', '<p>本題內容</p>');
+    await Promise.resolve();
+    const beforeNav = app.currentNavSeq();
+    await renderFocusRoute(app, nextHash);
+    const heading = view.querySelector('h1');
+    assert.ok(heading, '合成 API 要讓正式頁面確實渲染標題');
+    assert.equal(opener.isConnected, false);
+    assert.equal(app.currentNavSeq() === beforeNav, nextHash === '#settings');
+    root.querySelector('.x-close').click();
+    await settleModalFocus();
+    assert.equal(document.activeElement, heading);
+  });
+}
+
+for (const kind of ['disabled', 'hidden', 'ancestor-hidden', 'inert']) {
+  test(`關窗回焦｜原入口 ${kind} 時退回標題`, async () => {
+    const { root, view, opener, heading } = await prepareReturnFocusCase();
+    if (kind === 'disabled') opener.disabled = true;
+    if (kind === 'hidden') opener.hidden = true;
+    if (kind === 'ancestor-hidden' || kind === 'inert') {
+      const wrapper = document.createElement('div');
+      view.append(wrapper); wrapper.append(opener);
+      if (kind === 'inert') wrapper.setAttribute('inert', '');
+      else wrapper.style.display = 'none';
+    }
+    root.querySelector('.x-close').click();
+    await settleModalFocus();
+    assert.equal(document.activeElement, heading);
+  });
+}
+
+test('關窗回焦｜隱藏標題略過，沒有可用標題才回目前導航', async () => {
+  const { root, view, opener } = await prepareReturnFocusCase();
+  opener.remove();
+  view.innerHTML = '<div hidden><h1>不可見標題</h1></div>';
+  const nav = document.querySelector('#nav [aria-current="page"]');
+  root.querySelector('.x-close').click();
+  await settleModalFocus();
+  assert.equal(document.activeElement, nav);
+});
+
+test('關窗回焦｜沒有可用入口標題與導航時，不猜其他按鈕', async () => {
+  const { root, view, opener } = await prepareReturnFocusCase();
+  opener.remove(); view.querySelector('h1').remove();
+  document.getElementById('nav').hidden = true;
+  try {
+    root.querySelector('.x-close').click();
+    await settleModalFocus();
+    assert.equal(document.activeElement, document.body);
+  } finally { document.getElementById('nav').hidden = false; }
+});
+
+for (const value of ['-1', '0', '3']) {
+  test(`關窗回焦｜標題既有 tabindex=${value} 在回焦與離焦後保持`, async () => {
+    const { root, opener, heading } = await prepareReturnFocusCase();
+    opener.remove(); heading.setAttribute('tabindex', value);
+    root.querySelector('.x-close').click();
+    await settleModalFocus();
+    assert.equal(document.activeElement, heading);
+    assert.equal(heading.getAttribute('tabindex'), value);
+    document.getElementById('chosenFocus').focus();
+    assert.equal(heading.getAttribute('tabindex'), value);
+  });
+}
+
+test('關窗回焦｜標題不能接焦點時收回臨時 tabindex，改回導航', async () => {
+  const { root, opener, heading } = await prepareReturnFocusCase();
+  opener.remove(); heading.focus = () => {};
+  root.querySelector('.x-close').click();
+  await settleModalFocus();
+  assert.equal(heading.hasAttribute('tabindex'), false);
+  assert.equal(document.activeElement, document.querySelector('#nav [aria-current="page"]'));
+});
+
+test('關窗回焦｜使用者已選其他有效焦點時不搶回原入口', async () => {
+  const { root } = await prepareReturnFocusCase();
+  const chosen = document.getElementById('chosenFocus');
+  root.querySelector('.x-close').click(); chosen.focus();
+  await settleModalFocus();
+  assert.equal(document.activeElement, chosen);
+});
+
+test('關窗回焦｜排程等待期間使用者選了焦點，執行時仍尊重選擇', async () => {
+  const { root } = await prepareReturnFocusCase();
+  const nativeQueue = globalThis.queueMicrotask;
+  const queued = [];
+  globalThis.queueMicrotask = callback => { queued.push(callback); };
+  try {
+    root.querySelector('.x-close').click();
+    await Promise.resolve();
+    assert.equal(queued.length, 1);
+    const chosen = document.getElementById('chosenFocus');
+    chosen.focus();
+    queued.shift()();
+    assert.equal(document.activeElement, chosen);
+  } finally {
+    globalThis.queueMicrotask = nativeQueue;
+    while (queued.length) queued.shift()();
+  }
+});
+
+test('關窗回焦｜目前焦點已停用，不當作有效的使用者選擇', async () => {
+  const { root, opener } = await prepareReturnFocusCase();
+  const chosen = document.getElementById('chosenFocus');
+  chosen.focus(); chosen.disabled = true;
+  assert.equal(document.activeElement, chosen);
+  root.querySelector('.x-close').click();
+  await settleModalFocus();
+  assert.equal(document.activeElement, opener);
+});
+
+test('關窗回焦｜原入口仍連線但 focus 無效時改回標題', async () => {
+  const { root, opener, heading } = await prepareReturnFocusCase();
+  opener.focus = () => {};
+  root.querySelector('.x-close').click();
+  await settleModalFocus();
+  assert.equal(document.activeElement, heading);
+});
+
+test('關窗回焦｜先略過隱藏標題，再選可見標題', async () => {
+  const { root, view, opener, heading } = await prepareReturnFocusCase();
+  opener.remove();
+  const hidden = document.createElement('h1');
+  hidden.hidden = true; hidden.textContent = '隱藏的標題';
+  view.prepend(hidden);
+  root.querySelector('.x-close').click();
+  await settleModalFocus();
+  assert.equal(document.activeElement, heading);
+});
+
+test('關窗回焦｜聚焦後有其他程式調整 tabindex，離焦不覆蓋新值', async () => {
+  const { root, opener, heading } = await prepareReturnFocusCase();
+  opener.remove();
+  root.querySelector('.x-close').click();
+  await settleModalFocus();
+  assert.equal(document.activeElement, heading);
+  heading.setAttribute('tabindex', '0');
+  document.getElementById('chosenFocus').focus();
+  assert.equal(heading.getAttribute('tabindex'), '0');
+});
+
+for (const closeNext of [false, true]) {
+  test(`關窗回焦｜新窗${closeNext ? '開過且已關空' : '仍開著'}時，舊排程不得呼叫 focus`, async () => {
+    const { app, root, opener } = await prepareReturnFocusCase();
+    const nativeQueue = globalThis.queueMicrotask;
+    const queued = [];
+    let focuses = 0;
+    const nativeFocus = opener.focus.bind(opener);
+    opener.focus = options => { focuses++; nativeFocus(options); };
+    globalThis.queueMicrotask = callback => { queued.push(callback); };
+    try {
+      root.querySelector('.x-close').click();
+      await Promise.resolve();
+      assert.equal(queued.length, 1, '先保留第一窗實際排出的回焦工作');
+      const oldRestore = queued.shift();
+      app.openInfo('新窗', '<p>後來的窗</p>');
+      assert.equal(queued.length, 1);
+      queued.shift()();
+      if (closeNext) { root.querySelector('.x-close').click(); await Promise.resolve(); }
+      oldRestore();
+      assert.equal(focuses, 0, '不可由後來合法回焦掩蓋舊排程曾搶過焦點');
+      if (!closeNext) { root.querySelector('.x-close').click(); await Promise.resolve(); }
+      while (queued.length) queued.shift()();
+      assert.equal(document.activeElement, opener);
+    } finally {
+      globalThis.queueMicrotask = nativeQueue;
+      while (queued.length) queued.shift()();
+      root.innerHTML = '';
+      await settleModalFocus();
+    }
+  });
+}
+
+test('共用彈窗外殼｜舊 close 不清掉新窗與本題專屬未儲存輸入', async () => {
+  const { root } = await prepareReturnFocusCase();
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  const { openModalShell } = await import('../public/modules/modal-shell.js');
+  const old = openModalShell({ title: '先前的窗', bodyHtml: '<p>舊內容</p>' });
+  const fresh = openModalShell({ title: '新的窗', bodyHtml: '<input id="freshUnsavedValue" data-modal-initial>' });
+  const input = document.getElementById('freshUnsavedValue');
+  input.value = '本題獨有且尚未儲存的內容';
+  const dialog = root.querySelector('.modal');
+  old.close();
+  assert.equal(root.querySelector('.modal'), dialog);
+  assert.equal(document.getElementById('freshUnsavedValue'), input);
+  assert.equal(input.value, '本題獨有且尚未儲存的內容');
+  fresh.close(); await settleModalFocus();
+});
+
+test('共用彈窗外殼｜目前窗真正換頁後仍可由本人關閉', async () => {
+  const { app, root } = await prepareReturnFocusCase();
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  const { openModalShell } = await import('../public/modules/modal-shell.js');
+  const current = openModalShell({ title: '跨頁保留的窗', bodyHtml: '<p>仍是目前窗</p>' });
+  await renderFocusRoute(app, '#settings?case=current-close');
+  assert.ok(root.querySelector('.modal'));
+  current.close(); await settleModalFocus();
+  assert.equal(root.querySelector('.modal'), null);
+});
+
+test('關窗回焦｜已回原入口後，同頁稍晚重畫移除入口，補回新標題一次', async () => {
+  const { root, view, opener } = await prepareReturnFocusCase();
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  assert.equal(document.activeElement, opener);
+  view.innerHTML = '<h1 id="lateHeading">儲存後的新畫面</h1>';
+  await settleModalFocus();
+  const heading = document.getElementById('lateHeading');
+  assert.equal(document.activeElement, heading);
+  view.innerHTML = '<h1>另一回重畫</h1>';
+  await settleModalFocus();
+  assert.equal(document.activeElement, document.body);
+});
+
+for (const type of ['pointerdown', 'keydown', 'touchstart', 'wheel']) {
+  test(`關窗回焦｜回焦後收到 ${type}，稍晚重畫不再補償`, async () => {
+    const { root, view, opener } = await prepareReturnFocusCase();
+    root.querySelector('.x-close').click(); await settleModalFocus();
+    assert.equal(document.activeElement, opener);
+    opener.dispatchEvent(new globalThis.window.Event(type, { bubbles: true }));
+    view.innerHTML = '<h1>操作之後的畫面</h1>';
+    await settleModalFocus();
+    assert.equal(document.activeElement, document.body);
+  });
+}
+
+test('關窗回焦｜其他焦點接管後即使也被移除，舊補償不得復活', async () => {
+  const { root, view, opener } = await prepareReturnFocusCase();
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  assert.equal(document.activeElement, opener);
+  document.getElementById('chosenFocus').focus();
+  view.innerHTML = '<h1>外部焦點接管後的畫面</h1>';
+  await settleModalFocus();
+  assert.equal(document.activeElement, document.body);
+});
+
+for (const type of ['blur', 'hashchange']) {
+  test(`關窗回焦｜視窗收到 ${type} 後撤銷稍晚重畫補償`, async () => {
+    const { root, view, opener } = await prepareReturnFocusCase();
+    root.querySelector('.x-close').click(); await settleModalFocus();
+    assert.equal(document.activeElement, opener);
+    globalThis.window.dispatchEvent(new globalThis.window.Event(type));
+    view.innerHTML = '<h1>視窗狀態已變</h1>';
+    await settleModalFocus();
+    assert.equal(document.activeElement, document.body);
+  });
+}
+
+test('關窗回焦｜完整網址在觀察器送達前改變也不補償', async () => {
+  const { root, view, opener } = await prepareReturnFocusCase();
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  assert.equal(document.activeElement, opener);
+  const hash = globalThis.location.hash;
+  globalThis.window.history.replaceState(null, '', '#settings?case=after-return');
+  view.innerHTML = '<h1>另一個網址的畫面</h1>';
+  await settleModalFocus();
+  assert.equal(document.activeElement, document.body);
+  globalThis.window.history.replaceState(null, '', hash);
+});
+
+test('關窗回焦｜新窗取得焦點後，舊目標移除不穿過新窗補償', async () => {
+  const { app, root, view, opener } = await prepareReturnFocusCase();
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  assert.equal(document.activeElement, opener);
+  app.openInfo('後來的新窗', '<p>焦點由本窗管理</p>');
+  await Promise.resolve();
+  const fresh = root.querySelector('.modal');
+  view.innerHTML = '<h1>重畫不能穿透新窗</h1>';
+  await settleModalFocus();
+  assert.equal(document.activeElement, fresh);
+  root.querySelector('.x-close').click(); await settleModalFocus();
+});
+
+test('關窗回焦｜原入口的 focus 事件另交焦點，不再嘗試標題', async () => {
+  const { root, opener } = await prepareReturnFocusCase();
+  const chosen = document.getElementById('chosenFocus');
+  opener.addEventListener('focus', () => chosen.focus(), { once: true });
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  assert.equal(document.activeElement, chosen);
+});
+
+test('關窗回焦｜標題的 focus 事件另交焦點，不再嘗試導航', async () => {
+  const { root, opener, heading } = await prepareReturnFocusCase();
+  opener.remove();
+  const chosen = document.getElementById('chosenFocus');
+  heading.addEventListener('focus', () => chosen.focus(), { once: true });
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  assert.equal(document.activeElement, chosen);
+  assert.equal(heading.hasAttribute('tabindex'), false);
+});
+
+for (const closeNext of [false, true]) {
+  test(`關窗回焦｜focus 事件開新窗${closeNext ? '並立即關空' : ''}，舊嘗試不回焦標題`, async () => {
+    const { app, root, view, opener, heading } = await prepareReturnFocusCase();
+    let headingFocuses = 0;
+    heading.addEventListener('focus', () => { headingFocuses++; });
+    opener.addEventListener('focus', () => {
+      app.openInfo('focus 事件開的新窗', '<p>後來的工作</p>');
+      if (closeNext) root.querySelector('.x-close').click();
+    }, { once: true });
+    root.querySelector('.x-close').click(); await settleModalFocus();
+    assert.equal(headingFocuses, 0);
+    if (closeNext) {
+      assert.equal(document.activeElement, opener);
+      view.innerHTML = '<h1>舊嘗試不可留下觀察</h1>';
+      await settleModalFocus();
+      assert.equal(document.activeElement, document.body);
+    }
+    else {
+      assert.equal(document.activeElement, root.querySelector('.modal'));
+      root.querySelector('.x-close').click(); await settleModalFocus();
+    }
+  });
+}
+
+test('關窗回焦｜聚焦標題被移除時還原臨時屬性，補償不連鎖', async () => {
+  const { root, view, opener, heading } = await prepareReturnFocusCase();
+  opener.remove();
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  assert.equal(document.activeElement, heading);
+  view.innerHTML = '<h1 id="compensatedHeading">一次補償</h1>';
+  await settleModalFocus();
+  assert.equal(heading.hasAttribute('tabindex'), false);
+  const next = document.getElementById('compensatedHeading');
+  assert.equal(document.activeElement, next);
+  view.innerHTML = '<h1>不再補焦</h1>';
+  await settleModalFocus();
+  assert.equal(next.hasAttribute('tabindex'), false);
+  assert.equal(document.activeElement, document.body);
+});
+
+for (const type of ['pagehide', 'visibilitychange']) {
+  test(`關窗回焦｜${type} 解除後不補焦`, async () => {
+    const { root, view, opener } = await prepareReturnFocusCase();
+    root.querySelector('.x-close').click(); await settleModalFocus();
+    assert.equal(document.activeElement, opener);
+    const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, 'hidden');
+    try {
+      if (type === 'visibilitychange') {
+        Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+        document.dispatchEvent(new globalThis.window.Event('visibilitychange'));
+      } else globalThis.window.dispatchEvent(new globalThis.window.Event(type));
+      view.innerHTML = '<h1>解除之後不接管</h1>';
+      await settleModalFocus();
+      assert.equal(document.activeElement, document.body);
+    } finally {
+      if (hiddenDescriptor) Object.defineProperty(document, 'hidden', hiddenDescriptor);
+      else delete document.hidden;
+    }
+  });
+}
+
+test('關窗回焦｜主動 blur 與移除同回合不可區分，按一次移除補償處理', async () => {
+  const { root, view, opener } = await prepareReturnFocusCase();
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  assert.equal(document.activeElement, opener);
+  opener.blur();
+  view.innerHTML = '<h1 id="ambiguousBlurHeading">同回合移除的退路</h1>';
+  await settleModalFocus();
+  assert.equal(document.activeElement, document.getElementById('ambiguousBlurHeading'));
+  view.innerHTML = '<h1>不得連鎖</h1>';
+  await settleModalFocus();
+  assert.equal(document.activeElement, document.body);
+});
+
+test('關窗回焦｜主動 blur 完成微任務後才重畫，取消一次補償', async () => {
+  const { root, view, opener } = await prepareReturnFocusCase();
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  assert.equal(document.activeElement, opener);
+  opener.blur();
+  await Promise.resolve();
+  view.innerHTML = '<h1>明確讓焦之後的畫面</h1>';
+  await settleModalFocus();
+  assert.equal(document.activeElement, document.body);
+});
+
+test('關窗回焦｜只撤銷補償時保留仍持焦標題的暫時屬性，離焦才還原', async () => {
+  const { root, opener, heading } = await prepareReturnFocusCase();
+  opener.remove();
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  assert.equal(document.activeElement, heading);
+  heading.dispatchEvent(new globalThis.window.Event('keydown', { bubbles: true }));
+  assert.equal(heading.getAttribute('tabindex'), '-1');
+  document.getElementById('chosenFocus').focus();
+  assert.equal(heading.hasAttribute('tabindex'), false);
+});
+
+test('關窗回焦｜共用表單先提交關窗，再完成非同步重畫仍回標題', async () => {
+  const { app, root, view, opener } = await prepareReturnFocusCase();
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  let finishRead;
+  const read = new Promise(resolve => { finishRead = resolve; });
+  let submissions = 0;
+  app.openForm({
+    title: '晚完成重畫的合成表單',
+    fields: [{ key: 'name', label: '本題內容' }],
+    values: { name: '尚未送出的合成值' },
+    onSubmit: async () => {
+      submissions++;
+      void read.then(() => { view.innerHTML = '<h1 id="formReadHeading">提交後完成的畫面</h1>'; });
+    },
+  });
+  await Promise.resolve();
+  root.querySelector('form').dispatchEvent(new globalThis.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settleModalFocus();
+  assert.equal(submissions, 1);
+  assert.equal(root.querySelector('.modal'), null);
+  assert.equal(document.activeElement, opener);
+  finishRead();
+  await settleModalFocus();
+  assert.equal(document.activeElement, document.getElementById('formReadHeading'));
+  assert.equal(submissions, 1);
+});
+
+for (const type of ['pointerdown', 'keydown', 'touchstart', 'wheel', 'focusin', 'hashchange']) {
+  test(`關窗回焦｜blur 分類等待時出現 ${type}，舊微任務不得恢復補償`, async () => {
+    const { root, view, opener } = await prepareReturnFocusCase();
+    root.querySelector('.x-close').click(); await settleModalFocus();
+    assert.equal(document.activeElement, opener);
+    opener.blur();
+    if (type === 'focusin') document.getElementById('chosenFocus').focus();
+    else if (type === 'hashchange') globalThis.window.dispatchEvent(new globalThis.window.Event(type));
+    else opener.dispatchEvent(new globalThis.window.Event(type, { bubbles: true }));
+    view.innerHTML = '<h1>接管訊號優先</h1>';
+    await settleModalFocus();
+    assert.equal(document.activeElement, document.body);
+  });
+}
+
+test('關窗回焦｜blur 微任務晚於新窗開過且關空，不干擾新窗合法回焦', async () => {
+  const { app, root, view, opener } = await prepareReturnFocusCase();
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  assert.equal(document.activeElement, opener);
+  const nativeQueue = globalThis.queueMicrotask;
+  const queued = [];
+  globalThis.queueMicrotask = callback => { queued.push(callback); };
+  try {
+    opener.blur();
+    assert.equal(queued.length, 1);
+    const oldBlur = queued.shift();
+    app.openInfo('blur 排程後的新窗', '<p>獨立的合法回焦</p>');
+    root.querySelector('.x-close').click(); await Promise.resolve();
+    view.innerHTML = '<h1 id="newOwnerHeading">新窗的退路</h1>';
+    const heading = document.getElementById('newOwnerHeading');
+    let focuses = 0;
+    heading.addEventListener('focus', () => { focuses++; });
+    oldBlur();
+    assert.equal(focuses, 0);
+    while (queued.length) queued.shift()();
+    assert.equal(document.activeElement, heading);
+    assert.equal(focuses, 1);
+  } finally {
+    globalThis.queueMicrotask = nativeQueue;
+    while (queued.length) queued.shift()();
+  }
+});
+
+test('關窗回焦｜root 被移除後，不對仍存在的頁面補焦', async () => {
+  const { root, view, opener } = await prepareReturnFocusCase();
+  root.querySelector('.x-close').click(); await settleModalFocus();
+  assert.equal(document.activeElement, opener);
+  try {
+    root.remove();
+    view.innerHTML = '<h1>根節點失效後的畫面</h1>';
+    await settleModalFocus();
+    assert.equal(document.activeElement, document.body);
+  } finally { document.body.append(root); }
+});
