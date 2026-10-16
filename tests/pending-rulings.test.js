@@ -24,7 +24,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
-const { run, evaluate, deciderOf, cites, realDate, readPart, cliArgsProblem } = require('../tools/pending-rulings.js');
+const { run, evaluate, deciderOf, cites, realDate, readPart, cliArgsProblem, RULES_SHOWN } = require('../tools/pending-rulings.js');
+const { excerpt, read: readRules } = require('../tools/build-rules.js');
 const { PlatformError } = require('../tools/platform.js');
 const { runInCopy } = require('./helpers/kit-copy.js');
 
@@ -379,4 +380,12 @@ test('⑭驗收留痕：形狀合的另列、印出來，不進待裁也不算�
     assert.ok(b.near[0].why.includes(why), `${x.body}\n→ ${b.near[0].why}`);
   }
   assert.equal(evaluate([c('## ✅ 版本 22 實證通過\n雲端補上了')], D).near.length, 0, '別的打勾標題不是驗收留痕，也不算像');
+});
+
+test('指令列在輸出後面印 D1 與 I 節原文（開工看待裁、怎麼問、問了就等、怎麼留痕）；只多印、退出碼不變', () => {
+  assert.deepEqual(RULES_SHOWN, ['D1', 'I']);
+  const copy = runInCopy('tools/pending-rulings.js', ['--pr', '5'], { files: ['rules.json'] });
+  assert.equal(copy.status, 2, copy.stdout + copy.stderr);
+  assert.match(copy.stdout, /^待裁清單不收任何參數/u, '工具自己的輸出照舊在前面');
+  assert.ok(copy.stdout.includes(`\n${excerpt(readRules(), RULES_SHOWN)}\n`), `沒印出 D1 與 I 節原文：\n${copy.stdout}`);
 });

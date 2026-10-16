@@ -91,7 +91,7 @@ function sourceRepo(scratch, editForbidden) {
   return { src, forbidden };
 }
 
-/** 照 Codex 起鉤子的方式跑印出來的指令（登入 shell、工作目錄在倉庫外、標準輸入是平台會給的 JSON 或壞輸入）。 */
+/** 登入 shell 與 JSON 都是考題模擬；不量平台實際啟動方式、環境、信任或工具連線。 */
 const hook = (/** @type {string} */ command, /** @type {string} */ input, cwd = tmpdir()) =>
   spawnSync('/bin/sh', ['-lc', command], { cwd, env: { ...gitEnv() }, input, encoding: 'utf8', timeout: 20_000, killSignal: 'SIGKILL' });
 const asTool = (/** @type {string} */ name) => JSON.stringify({ tool_name: name, tool_input: {} });
@@ -274,3 +274,46 @@ test('③雙保險：白名單誤放建單工具時**家族網**仍擋——壞�
   // 對照組：同一份壞清單裡，名單內、家族網接不到的仍放行（證明上面不是「什麼都擋」）
   allows(hook(command, asTool(`${MONEY_SERVER}get_watchlist`)), '對照組：名單內且家族網接不到的名字要放行（真跑指令）');
 }, breakAllowlist));
+
+const EXACT_REGISTRATION_HINT = '；核對 settings.json 的 forbidden.allowedTools、tools/guard-copy.js 與 tools/forbidden-tools.js，修正後重跑 node --test test/codex-global-hook.test.js';
+
+test('個別工具登記：Codex 抽出的複本保留全名，印出的接線放行代表名並拒絕近似名', () => withCopy(({ command, forbidden, copyForbidden }) => {
+  assert.ok(Array.isArray(forbidden.allowedTools), '來源的 forbidden.allowedTools 必須是陣列' + EXACT_REGISTRATION_HINT);
+  assert.ok(Array.isArray(copyForbidden.allowedTools), '複本的 forbidden.allowedTools 必須是陣列' + EXACT_REGISTRATION_HINT);
+  assert.deepEqual(copyForbidden.allowedTools, forbidden.allowedTools, '抽出複本時個別登記全名有遺失或改寫' + EXACT_REGISTRATION_HINT);
+  const registered = ['mcp__codex_app__list_artifacts', 'mcp__codex_apps__github__get_repo', 'mcp__cua_repl__js'];
+  const absent = ['mcp__codex_app__list_artifact', 'mcp__codex_apps__github__get_Repo', 'mcp__cua_repl__read_registration_probe_unknown'];
+  for (const name of registered) {
+    assert.ok(forbidden.allowedTools.includes(name), `前提：代表名須在來源個別登記上：${name}` + EXACT_REGISTRATION_HINT);
+    allows(hook(command, asTool(name)), `Codex 個別登記代表名：${name}` + EXACT_REGISTRATION_HINT);
+  }
+  for (const name of absent) {
+    assert.ok(!forbidden.allowedTools.includes(name), `前提：近似名未經登記：${name}` + EXACT_REGISTRATION_HINT);
+    const reason = denies(hook(command, asTool(name)), `Codex 未登記近似名：${name}` + EXACT_REGISTRATION_HINT);
+    assert.equal(reasonClass(reason), 'registry', `近似名應由登記制拒絕：${name}` + EXACT_REGISTRATION_HINT);
+  }
+}));
+
+test('個別工具登記誤填：抽成複本的接線仍由逐字拒絕清單與金融白名單擋下', () => withCopy(({ command, copyForbidden }) => {
+  const original = realForbidden();
+  assert.ok(Array.isArray(original.allowedTools), '原設定的 forbidden.allowedTools 必須是陣列' + EXACT_REGISTRATION_HINT);
+  const unknown = `${MONEY_SERVER}read_registration_probe_unknown`;
+  const denied = [CANARY, ...FORBIDDEN_TOOLS];
+  assert.ok(Array.isArray(copyForbidden.allowedTools), '複本的 forbidden.allowedTools 必須是陣列' + EXACT_REGISTRATION_HINT);
+  assert.deepEqual(copyForbidden, { ...original, allowedTools: [...original.allowedTools, ...denied, unknown] },
+    '壞清單只准往 allowedTools 加探針，其餘欄位保持原值' + EXACT_REGISTRATION_HINT);
+  for (const name of denied) {
+    assert.ok(copyForbidden.allowedTools.includes(name) && copyForbidden.deny.includes(name), `前提：${name} 同時在個別登記與拒絕清單` + EXACT_REGISTRATION_HINT);
+    const reason = denies(hook(command, asTool(name)), `誤登記逐字禁止名：${name}` + EXACT_REGISTRATION_HINT);
+    assert.equal(reasonClass(reason), 'denylist', `逐字拒絕清單須優先：${name}` + EXACT_REGISTRATION_HINT);
+  }
+  assert.ok(copyForbidden.servers.includes(MONEY_SERVER.slice(5, -2)), '前提：合成未知名掛在已登記金融連接器' + EXACT_REGISTRATION_HINT);
+  assert.ok(!copyForbidden.allowlist.includes('read_registration_probe_unknown'), '前提：合成未知名不在金融白名單' + EXACT_REGISTRATION_HINT);
+  assert.ok(copyForbidden.allowedTools.includes(unknown) && !copyForbidden.deny.includes(unknown), '前提：合成未知名只加進個別登記，未被逐字拒絕' + EXACT_REGISTRATION_HINT);
+  const reason = denies(hook(command, asTool(unknown)), '誤登記金融白名單外的合成名字' + EXACT_REGISTRATION_HINT);
+  assert.equal(reasonClass(reason), 'whitelist', '金融白名單不能被個別登記取代' + EXACT_REGISTRATION_HINT);
+  allows(hook(command, asTool('mcp__codex_app__list_artifacts')), '對照組：壞清單仍放行原核准代表名' + EXACT_REGISTRATION_HINT);
+}, (forbidden) => {
+  assert.ok(Array.isArray(forbidden.allowedTools), '來源的 forbidden.allowedTools 必須是陣列' + EXACT_REGISTRATION_HINT);
+  return { ...forbidden, allowedTools: [...forbidden.allowedTools, CANARY, ...FORBIDDEN_TOOLS, `${MONEY_SERVER}read_registration_probe_unknown`] };
+}));

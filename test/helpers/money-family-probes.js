@@ -21,9 +21,8 @@
  * 字面數量釘（EXPECTED_*）要跟著有意識地改。
  *
  * 2026-09-27（⑧，套件登記制同步進來）起本檔另住三樣東西，同樣全專案只有這一份：
- *   ・`familyNetFixture()`＝家族網夾具：登記制之後，mcp__ 名字只有碰錢連接器白名單上的工具才走到家族網——
- *     掛在沒登記的連接器上＝整個被登記制擋、掛在不碰錢的連接器上＝整個放行，兩種都**沒有問到家族網**。
- *     要驗「家族網對各種寫法都擋、對長得像的名字不誤殺」，就得讓探針走碰錢白名單那條路（說明在函式上方）；
+ *   ・`familyNetFixture()`＝家族網夾具：為了避免探針只量到登記結果，另備隔離清單供家族網考題使用。
+ *     夾具的原因、承重與限制見函式上方；通用判準見 docs/money-guard-two-pattern-tables.md「兩張樣式表」；
  *   ・`reasonClass()`＝拒絕理由的類別：登記制之後有一批探針「照樣擋、但擋的理由換了」，只斷言擋＝假綠，所以每一組斷言理由類別；
  *   ・`HARMLESS`＝「這一組不是全擋」的對照名字（原本三支考題各寫死一份）。
  */
@@ -244,8 +243,8 @@ export const EXPECTED_OUT_OF_MATCHER = 5;
  * 隨 python 那組退役），比對前**不做任何正規化**（Codex #540 r1 H2：
  * 原本先把 `-` `.` 收成 `_` 再轉小寫，於是 `GET_ACCOUNT_BALANCES`／`get-account-balances`
  * 這些**不在名單上**的名字都通過了＝把名單擴張成等價類，未來新增的同形工具會繞過）。
- * ⚠️ 誠實劃界：連接器身分是那串 UUID。**重連換了 UUID＝新編號沒登記＝整個連接器被登記制擋**（連唯讀查詢也擋；
- * 名字像錢的那幾支，理由的尾句照接規則 3 那一句（當誤觸或冒名、回報裁示者）——FORBIDDEN_AFTER_RECONNECT 那兩支就是這個情境）。
+ * ⚠️ 重連換 UUID 後是否被攔下，還須核對完整工具名的登記；不能從連接器未登記推成整個連接器必擋。
+ * FORBIDDEN_AFTER_RECONNECT 驗的是該組未登記假名，名字像錢時理由尾句接規則 3（當誤觸或冒名、回報裁示者）。
  * 那時的手續（新編號登記進哪一欄、下單類新全名補到哪幾層、登記前先問 William）＝docs/money-guard-operations.md。
  * ⚠️ 白名單掃的是**每一段** `__`（與家族網的候選切法對齊，Grok #540 掃第 1 條：
  * 原本只認第一段，於是 `mcp__prefix__<uuid>__market_order` 這種多段前綴整層不開火）。
@@ -321,17 +320,13 @@ export const FAMILY_NET_PROBES = [...FORBIDDEN_AFTER_RECONNECT, ...FORBIDDEN_FAM
 
 /**
  * 家族網夾具（全專案只有這一份；docs/money-guard-operations.md「考題」那一則指到這裡）。
- * 為什麼：登記制之後，mcp__ 名字只有碰錢連接器白名單上的工具才走到家族網（沒登記＝整個擋、不碰錢＝整個放行，都沒問到它）。
- * 做法：把 names 裡每個名字的連接器登記成**碰錢**（servers）、工具名那一段放上白名單（allowlist），讓每個名字都走
- * 「碰錢白名單 → 家族網雙保險」那條路。原本登記在 safeServers 的連接器（跨連接器那四支）**從那一欄搬走**——
- * 只加進 servers、不從 safeServers 拿掉＝同名兩欄＝設定壞掉、全擋（大小寫不分，跟攔截器同一把尺）。
- * 詞表（verbs／nouns／readPrefixes／patterns／patternsReadSafe）、拒絕清單、名稱**照真清單一字不動**（用到的考題另外斷言這幾欄等於真清單）：
- * 真清單的 verbs 少了 FAMILY_VERBS 的任何一個、readPrefixes 少了 READ_VERBS 的任何一個、nouns 少了 FAMILY_NOUNS 的任何一個
- * ＝走夾具的題就紅（2026-09-29 逐字拿掉、用行程內 decide() 重量，走**本版完整的 115 支矩陣**：動詞 31/31、名詞 25/25）。
- * ⚠️ 只看 `place_{名詞}` 那一組時名詞是 24/25（security 例外）——那是較窄的範圍，不是本段所指的完整夾具。
- * ⚠️ 唯讀前綴 14/14 是另一組**放行**探針量的（刪前綴之後從放行變拒絕），不在這 115 支裡。
- * 正本每個詞都有探針扣著＝`test/money-vocab-probe-coverage.test.js`（裁示者 2026-09-29 裁 a）；
- * 正本比空白範本少一個字＝`tests/forbidden-defaults.test.js` ①。沿革在變更 647 的 PR 說明。
+ * 為什麼：探針若先因登記結果結束，「擋了」不等於量到家族網，所以另備這份金融白名單路徑的夾具。
+ * 從 safeServers 搬走同名連接器，是為了避免同名兩欄變成壞設定、讓壞設定的拒絕代考家族網。
+ * 通用判準見 docs/money-guard-two-pattern-tables.md「兩張樣式表」；本夾具不證明其他登記路徑或平台實際工具的行為。
+ * 詞表承重與未承重例外的路標＝`test/money-vocab-probe-coverage.test.js`；預設防縮水＝`tests/forbidden-defaults.test.js`。
+ * 歷史量測（2026-09-29，變更 647）：逐字拿掉詞、用行程內 decide() 跑當時完整的 115 支矩陣，動詞 31/31、名詞 25/25。
+ * ⚠️ 當時只看 `place_{名詞}` 那一組時名詞是 24/25（security 例外），是較窄的量測範圍。
+ * ⚠️ 當時唯讀前綴 14/14 由另一組放行探針量得（刪前綴之後從放行變拒絕），不在該 115 支裡；不拿歷史數字當今日覆蓋率。
  * ⚠️ 只給考題用：只進行程內 decide()、或考題自己在暫存目錄抽的複本，**不進正式清單**（把假連接器登記進正式清單＝
  * 那些名字在真的對話裡的判法跟著變）。
  * ⚠️ 預設的 names 含 FORBIDDEN_AFTER_RECONNECT＝create_order_instruction／delete_order_instruction 也被放上白名單：

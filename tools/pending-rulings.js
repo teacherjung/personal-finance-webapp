@@ -23,9 +23,15 @@
 // 誠實劃界：「已裁」是推導不是事實（引了編號不等於
 // 在回答它）；原話那一行只驗形狀，驗不出引號裡是不是他真的說的；分頁是那條登記指令的責任。
 // 退出碼：0＝算出來了（含「沒有還沒回的」）；2＝算不出來（設定沒填、平台問不到）。刻意沒有 1。
+// 指令列在輸出後面印 D1 與 I 節的原文（開工先看待裁、怎麼問、問了就等、怎麼留痕）。只多印，不改退出碼；
+// 模組用法（待裁閘、送審產生器、本週成果產生器引的 evaluate 等）不受影響。
 'use strict';
 const { ask, PlatformError } = require('./platform.js');
 const { read: readSettings } = require('./settings-data.js');
+const { ruleFooter } = require('./build-rules.js');
+
+/** 開工與問裁示時印的那幾條（按需印條文；I＝整節）。 */
+const RULES_SHOWN = ['D1', 'I'];
 
 const UNSET = '未設定';
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
@@ -238,8 +244,8 @@ if (require.main === module) {
   let result;
   const argProblem = cliArgsProblem(process.argv.slice(2));
   try { result = argProblem ? { code: 2, lines: [argProblem] } : run(); } catch (e) { result = { code: 2, lines: [`待裁清單：沒預期到的錯誤（${(e && e.code) || (e && e.message) || '不明'}）——算不出來。`] }; }
-  process.stdout.write(`${result.lines.join('\n')}\n`);
+  process.stdout.write(`${[...result.lines, ...ruleFooter(RULES_SHOWN)].join('\n')}\n`);
   process.exit(result.code);
 }
 
-module.exports = { run, evaluate, render, deciderOf, cites, realDate, readPart, cliArgsProblem };
+module.exports = { run, evaluate, render, deciderOf, cites, realDate, readPart, cliArgsProblem, RULES_SHOWN };

@@ -151,7 +151,7 @@ test('範本與規矩｜「放行只認指定的那一位」在兩處要一致�
   }
 });
 
-test('標準來源字串表（settings.json 的 sources 五筆）與標頭範本的「作廢上一則」救法要站著（切換日起改綁套件登記與範本）', () => {
+test('標準來源字串表（settings.json 的 sources）與標頭範本的「作廢上一則」救法要站著（切換日起改綁套件登記與範本）', () => {
   // ⚠️ 誠實劃界：文件題只證明「規則寫在該寫的地方、沒有被靜靜刪掉」，
   //    證明不了任何人真的照著打字（那要靠審查與上面那道相似提醒）。
   //    但機制只活在腳本裡＝打字漂掉的人**不知道該用哪個字串、也不知道怎麼救**，
@@ -171,6 +171,7 @@ test('標準來源字串表（settings.json 的 sources 五筆）與標頭範本
     ['Codex 桌面 session', 'Codex 桌面'],
     ['Claude 桌面 session', 'Claude 桌面'],
     ['William 本人（畫面驗收／產品裁決）', 'William 本人'],
+    ['Grok CLI 隔離盒起的正式複審', 'Grok CLI'],
   ];
   assert.deepEqual(sources.map((s) => [s.tool, s.string]), want,
     'settings.json 的 sources 與標準來源字串表對不上（少一筆、多一筆、或字串被改）\n（沒有建議值，每個人就會自己編一個；改了要連 PROJECT-SETTINGS.md 那張表一起改）');

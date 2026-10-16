@@ -10,12 +10,13 @@
 // 範本的格子一改，「範本的格子跟產生器的表一一對上」那一題就紅。只留 <三選一> 給複審者填。
 // 啟動指令的正本在專案設定（reviewers 每一位的 command），這裡只替換記號；替換進去的值只收不用加引號的字元，
 // 路徑有空白就不產生——樣板自己已經寫了引號，這裡再包一層就會壞掉。
-// 樹開在系統暫存區（或 --dir 指定的地方）：README 寫明 Codex 的沙箱准寫暫存區，突變副本放那裡它才改得到。
+// 樹開在系統暫存區（或 --dir 指定的地方）：要放在複審者的沙箱寫得進的地方（README 寫明 Codex 的沙箱准寫暫存區），突變副本放那裡它才改得到。
 //
 // ⚠️ 守不到的：
 //   ①不擋也不驗：印出來之後有沒有照用、提示有沒有再被手改、複審者實際用的模型與推理（只有它自報）都看不到——F1、F3、F11 仍靠自覺；
 //   ②印的事實是平台與 git 那一刻給的：之後又推了新版本，印出來的就過期（收樹時核 HEAD 沒變，但不會重新產生）；
 //   ③風險級別只印分級腳本照檔案算的那一級；實作者往重調、裁示者改級，要自己改提示的風險級別與本輪範圍兩格（範圍照分級表跟著級別重查）；
+//     快速通道（AI）（F12）照分級腳本判的結果把本輪範圍印成只核差異，「這一位連兩輪沒通過」只看平台上這一位貼的結論標頭；
 //   ④「相關裁示」只列問在本支、配到的 ⚖️（判斷用待裁清單工具那一份），對話裡講過、沒貼留痕的列不到；
 //   ⑤收樹只核兩棵樹（狀態不看被忽略的檔）；複審者在暫存區另建的東西只列出比開樹晚的第一層、不刪，也不保證列齊（別的程式同時寫的也會被列進來）。
 // 退出碼：0＝做好了；1＝收樹時核到樹不乾淨、HEAD 變了或上了鎖而沒收，或收到一半（要人看）；2＝做不了（設定沒填、平台問不到、git 出錯、路徑不安全、範本對不上、參數不對）。⚠️ 不是閘。
@@ -31,7 +32,7 @@ const { parseInstant } = require('./time-point.js');
 const { fieldValue, canonicalRole, rolesOf } = require('./gates/check-collab-fields.js');
 const { headerOf, evaluate: evaluateVerdicts } = require('./gates/check-review-verdicts.js');
 const { evaluate: evaluateRulings, deciderOf } = require('./pending-rulings.js');
-const { run: riskRun } = require('./risk-tier.js');
+const { run: riskRun, gitIn } = require('./risk-tier.js');
 
 const UNSET = '未設定';
 const TEMPLATE = path.join(__dirname, '..', 'templates', 'review-request.md');
@@ -130,6 +131,27 @@ function roundsOf(comments, reviewer, source, roles) {
   return { round: last.h.round + 1, previous: last };
 }
 
+/**
+ * 這一位（角色＋來源字串，跟 roundsOf 同一個讀法）在這一支有沒有連續兩輪都沒「通過」（F12：快速通道（AI）連兩輪沒過，改走一般流程）。
+ * 每一輪算不算「通過」照結論閘的判法，不另寫一套（Codex #96 r1 R2）：把那一輪這一位貼的結論單獨交給結論閘看——
+ * 缺固定小標的「通過」不算、同一輪相反結論或對不同版本各給結論＝衝突、算阻擋；那一輪沒有一則算數的「通過」＝沒過。輪次要相鄰。
+ */
+function twoMissesInARow(comments, reviewer, source, roles) {
+  const want = String(source).trim().replace(/\s+/gu, ' ');
+  const rounds = new Map();
+  for (const c of comments) {
+    const h = headerOf(c.body, roles);
+    if (!h || h.role !== reviewer || h.source !== want) continue;
+    if (!rounds.has(h.round)) rounds.set(h.round, []);
+    rounds.get(h.round).push(c);
+  }
+  const passedIn = (k) => {
+    const state = evaluateVerdicts(rounds.get(k), '', reviewer, roles).reviewers[`${reviewer}（${want}）`];
+    return Boolean(state) && !state.blocking;
+  };
+  return [...rounds.keys()].some((k) => rounds.has(k + 1) && !passedIn(k) && !passedIn(k + 1));
+}
+
 function git(cwd, args) {
   const r = spawnSync('git', args, { cwd, env: gitEnv(), encoding: 'utf8' });
   if (r.error) throw new LaunchError(`git 起不來：${r.error.message}`);
@@ -216,7 +238,10 @@ function launch(changeArg, reviewerArg, { settings = readSettings(), platform = 
   const all = askPlatform(platform, settings, 'allComments', {});
   const rulings = evaluateRulings(all, decider);
   if (rulings.unsure) throw new LaunchError(`相關裁示算不出來（${rulings.unsure}）`);
-  const risk = riskRun(id, { settings, platform });
+  // 先 fetch 再算風險：判「快速通道（AI）」要讀本機 git 的主幹與受審版本（F12），沒 fetch 會因為找不到版本而判成不走
+  const root = git(cwd, ['rev-parse', '--show-toplevel']);
+  const fetched = gitOk(root, ['fetch', '--quiet']);
+  const risk = riskRun(id, { settings, platform, git: gitIn(root) });
   if (risk.code !== 0) throw new LaunchError(`風險級別算不出來：${risk.lines.join(' ')}`);
   // 風險級別要是受審那一版的：產生提示的這幾秒裡有人推了新版本，算出來的級別與範圍就屬於另一版——拒絕、要求重跑（理財 #672 r3）
   if (risk.result.head !== head) throw new LaunchError(`產生送審提示期間這一支換了版本（受審 ${String(head).slice(0, 12)}，算風險時是 ${String(risk.result.head).slice(0, 12)}）：審查樹與風險範圍會對不上，重跑一次`);
@@ -228,13 +253,17 @@ function launch(changeArg, reviewerArg, { settings = readSettings(), platform = 
   if (verdicts.unsure) throw new LaunchError('這一支有結論留言的時間讀不出來：上一輪判不了');
   const state = previous ? verdicts.reviewers[`${reviewer}（${previous.h.source}）`] : null;
   const passed = Boolean(state) && !state.blocking && state.round === previous.h.round;
-  const scope = scopeOf((settings.reviewTiers || {})[tier], round, passed);
+  // 快速通道（AI）（F12）：第 1 輪起只核差異；這一位連兩輪沒「通過」，這一輪起照這一級走一般流程
+  const lane = risk.result.fastLaneAI === true;
+  const exhausted = lane && twoMissesInARow(comments, reviewer, entry.source, usable);
+  const scope = lane && !exhausted ? '只核差異' : scopeOf((settings.reviewTiers || {})[tier], round, passed);
   if (!scope) throw new LaunchError(`複審與掃描分級表「${tier}」那一列讀不出第 ${round} 輪該全審還是只核差異`);
+  const tierWhy = !lane ? '照表算的'
+    : exhausted ? '照表算的；這一支原本走快速通道（AI），這一位已經連兩輪沒「通過」，這一輪起照這一級走一般流程（F12）'
+      : '照表算的；分級腳本判這一支走快速通道（AI）：第 1 輪起只核差異、不掃描（F12）';
   const commentLink = (changeId, comment) => substitute(rl.commentLink, { project, change: changeId, comment }, '留言網址樣板').text;
   const related = rulings.ruled.filter((x) => String(x.ask.change) === String(id)).map((x) => commentLink(x.by.change, x.by.id));
 
-  const root = git(cwd, ['rev-parse', '--show-toplevel']);
-  const fetched = gitOk(root, ['fetch', '--quiet']);
   for (const [what, sha] of [['受審版本', head], ['基底', base]]) {
     if (!gitOk(root, ['cat-file', '-e', `${sha}^{commit}`])) throw new LaunchError(`本機倉庫沒有${what} ${sha}${fetched ? '' : '（git fetch 也沒成功）'}：開不了樹`);
   }
@@ -249,7 +278,7 @@ function launch(changeArg, reviewerArg, { settings = readSettings(), platform = 
   const values = {
     project, change: id, reviewer, implementer, source: entry.source, head, headShort: head.slice(0, 7), baseBranch: change.baseBranch, base, round,
     changeLink: substitute(rl.changeLink, { project, change: id }, 'PR 網址樣板').text,
-    tier, tierWhy: '照表算的', scope,
+    tier, tierWhy, scope,
     previous: previous ? commentLink(id, previous.c.id) : '沒有',
     rulings: related.length ? related.join('、') : '沒有',
     reviewTree: tree, mutationCopy: mutation,
@@ -294,7 +323,10 @@ function launch(changeArg, reviewerArg, { settings = readSettings(), platform = 
   }
   const lines = [
     `送審產生器｜變更 ${id}｜複審者 ${reviewer}（來源 ${entry.source}）｜r${round}｜受審 ${head.slice(0, 7)}｜基底 ${change.baseBranch} 的 ${base.slice(0, 7)}`,
-    `  風險級別：${tier}（照表算的；要往重調或裁示者改級，提示的風險級別與本輪範圍兩格要一起照分級表改）；本輪範圍：${scope}`,
+    `  風險級別：${tier}（${lane && !exhausted
+      ? '照表算的；這一支走快速通道（AI）：本輪範圍照 F12 只核差異、不照分級表，往重調或裁示者改級只改風險級別那一格'
+      : '照表算的；要往重調或裁示者改級，提示的風險級別與本輪範圍兩格要一起照分級表改'}）；本輪範圍：${scope}`,
+    lane ? `  快速通道（AI）：${exhausted ? '這一位已經連兩輪沒「通過」，這一輪起照這一級走一般流程（要掃的照 G1 掃）' : '分級腳本判可以，這一輪只核差異、不掃描'}（F12）` : null,
     `  上一輪的結論：${values.previous}；相關裁示：${values.rulings}`,
     `  審查樹：${tree}（HEAD ${head.slice(0, 7)}）`,
     `  突變副本：${mutation}（HEAD ${head.slice(0, 7)}）`,
@@ -463,4 +495,4 @@ if (require.main === module) {
   process.exit(result.code);
 }
 
-module.exports = { main, launch, close, fill, promptPart, substitute, scopeOf, roundsOf, parseArgs, templateProblems, freshEntries, lockedTrees, FILL, SAFE, COMMAND_TOKENS, LaunchError };
+module.exports = { main, launch, close, fill, promptPart, substitute, scopeOf, roundsOf, twoMissesInARow, parseArgs, templateProblems, freshEntries, lockedTrees, FILL, SAFE, COMMAND_TOKENS, LaunchError };

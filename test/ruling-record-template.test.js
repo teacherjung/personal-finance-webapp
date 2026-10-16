@@ -8,7 +8,7 @@
 // 先切出範本的三節（## 問／## 裁示落地／## 合規撤回，各剛好一節），在節裡找指示句（「第一行逐字…：」「第一段逐字照下面這行填…：」
 // 「內文三行都要有：」，各剛好一句），抽**指示句下面那幾行**當樣板——不管它長什麼樣，照填餵解析器。這是切換前 test/pending-rulings.test.js（:182）
 // 「固定標籤＋緊接的整行」的做法。正本不是平文字（註解、圍欄、引言、原始 HTML、刪除線、縮排式程式碼）＝直接紅，不剝。
-// ⚠️ 證不到的：原話是不是他真的說的、署名是不是本人（本專案三方共用同一個貼文帳號）——沒有機器在看；
+// ⚠️ 證不到的：原話是不是他真的說的、署名是不是本人（本專案參與者共用同一個貼文帳號）——沒有機器在看；
 //    解析器對各種藏法（圍欄、註解、引用）的判斷是套件考題的射程，這裡只留一題對照範本自己寫的那句「網址寫在開頭那一段」。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -162,7 +162,8 @@ test('❓ 照範本填＝還沒回；⚖️ 照範本填（每個登記的轉述
 
 test('⚖️ 名單以外的轉述者、或原話行走樣＝關不了題（補集抽樣，不是「除了這些以外都收」的證明）', () => {
   const q = ask();
-  for (const outsider of ['Grok', 'claude', 'William 本人', '']) {
+  for (const outsider of ['UnregisteredReviewer', 'claude', 'William 本人', '']) {
+    assert.ok(!settings.participants.some((p) => p.id === outsider), '反例須未登記，避免角色新增後仍把合法來源當成外人');
     assert.ok(!D.ids.includes(outsider), `測試資料寫錯：「${outsider}」其實在登記名單裡`);
     assert.equal(evaluate([q, c(rulingBody(outsider, q.id))], D).open.length, 1, `「${outsider} 轉述」不在登記名單裡，不該關題`);
   }
@@ -197,7 +198,8 @@ test('🚫 照範本填（三種理由各一 × 每個登記的撤回者）＝�
 test('🚫 名單以外的撤回者、理由改同義詞、依據留空＝不算數（原題仍待裁）', () => {
   const q = ask();
   const w = D.ids.find((x) => x !== D.id) ?? '';
-  for (const outsider of ['Grok', 'claude', '']) {
+  for (const outsider of ['UnregisteredReviewer', 'claude', '']) {
+    assert.ok(!settings.participants.some((p) => p.id === outsider), '反例須未登記，避免角色新增後仍把合法來源當成外人');
     assert.ok(!D.ids.includes(outsider), `測試資料寫錯：「${outsider}」其實在登記名單裡`);
     assert.equal(evaluate([q, c(withdrawBody(outsider, REASONS[0], q.id))], D).open.length, 1, `「${outsider} 撤回」不在登記名單裡，不該算數`);
   }

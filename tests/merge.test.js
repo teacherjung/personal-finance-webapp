@@ -24,7 +24,9 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mergeRun: realMergeRun, runCommand, parseArgs, UNSET, ENABLED } = require('../tools/merge.js');
+const { mergeRun: realMergeRun, runCommand, parseArgs, rulesAfter, UNSET, ENABLED } = require('../tools/merge.js');
+const { excerpt, read: readRules } = require('../tools/build-rules.js');
+const { runInCopy, unfilled } = require('./helpers/kit-copy.js');
 
 const HEAD = 'a'.repeat(40);
 const PEOPLE = [{ role: 'AI 甲', id: 'Alpha' }, { role: 'AI 乙', id: 'Beta' }];
@@ -295,4 +297,42 @@ test('⑪真的預設執行器：按合併鍵時清掉 platform.clearEnv 登記�
   } finally {
     for (const [k, v] of [['KIT_PICK_SITE_TEST', prev.A], ['KIT_KEEP_TEST', prev.B]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
+});
+
+test('⑫跑完印相關規矩原文：合了印 H6（接著驗收）、沒合印 H1（先問紅的是哪一題）；讀不到規矩資料照常、退出碼不變', () => {
+  assert.deepEqual(rulesAfter(0), ['H6']);
+  for (const code of [1, 2]) assert.deepEqual(rulesAfter(code), ['H1'], `退 ${code}`);
+  // 指令列真的接上了：複本裡沒給變更編號＝退 2（用法），後面接 H1 原文
+  const withRules = runInCopy('tools/merge.js', [], { files: ['rules.json'] });
+  assert.equal(withRules.status, 2, withRules.stdout + withRules.stderr);
+  assert.match(withRules.stdout, /^用法：node tools\/merge\.js/u, '工具自己的輸出照舊在前面');
+  assert.ok(withRules.stdout.includes(`\n${excerpt(readRules(), ['H1'])}\n`), `沒印出 H1 原文：\n${withRules.stdout}`);
+  // 複本沒有 rules.json：只多空行加一行說明、指回 RULES.md，不帶複本的路徑（B5），退出碼一樣是 2
+  const noRules = runInCopy('tools/merge.js', [], { after: (dir) => dir });
+  assert.equal(noRules.status, 2, noRules.stdout + noRules.stderr);
+  assert.match(noRules.stdout, /這一步相關的規矩是 H1，但條文印不出來：讀不到 rules\.json（ENOENT）/u);
+  assert.ok(!noRules.stdout.includes(noRules.after), `不可以帶出路徑：\n${noRules.stdout}`);
+});
+
+test('⑬指令列真的合成功（假平台、假閘、假合併指令，都在複本裡）：退 0、假合併真的跑了、後面接 H6 不是 H1；讀不到規矩資料照樣退 0', () => {
+  const settings = unfilled();
+  settings.mainBranch = 'main';
+  settings.gates = [{ name: '假閘', rules: 'H1', command: 'node', args: ['fake-gate.js'], state: ENABLED }];
+  settings.mergeCommand = { command: 'node', args: ['fake-merge.js', '{change}'] };
+  settings.platform.operations.change = ['node', 'fake-change.js', '{change}'];
+  const change = { id: '7', title: '假變更', body: '', baseBranch: 'main', headBranch: 'feature', headSha: HEAD, state: 'OPEN', isDraft: false, isCrossRepo: false, autoMergeOn: false, changedFileCount: null, author: 'someone' };
+  const seed = {
+    'fake-change.js': `process.stdout.write(${JSON.stringify(JSON.stringify(change))});\n`,
+    'fake-gate.js': 'process.exit(0);\n',
+    'fake-merge.js': "process.stdout.write('FAKE-MERGED ' + process.argv[2] + '\\n');\n",
+  };
+  const merged = runInCopy('tools/merge.js', ['7'], { settings, seed, files: ['rules.json'] });
+  assert.equal(merged.status, 0, merged.stdout + merged.stderr);
+  assert.match(merged.stdout, /FAKE-MERGED 7/u, '假合併指令真的跑了（不然這一題驗的不是成功那條路）');
+  assert.ok(merged.stdout.includes(`\n${excerpt(readRules(), ['H6'])}\n`), `合了要接 H6 原文：\n${merged.stdout}`);
+  assert.ok(!merged.stdout.includes('【H1】'), '合了不印 H1');
+  const noRules = runInCopy('tools/merge.js', ['7'], { settings, seed });
+  assert.equal(noRules.status, 0, noRules.stdout + noRules.stderr);
+  assert.match(noRules.stdout, /FAKE-MERGED 7/u);
+  assert.match(noRules.stdout, /這一步相關的規矩是 H6，但條文印不出來/u, '讀不到規矩資料只多空行加一行說明，合併結果照舊');
 });

@@ -9,46 +9,25 @@
 // 都呼叫這同一支。原專案是把整段判斷各抄一份進兩個設定檔、再用考題互鎖不讓它們漂——這裡從結構上
 // 就只有一份，不需要互鎖。
 //
-// 判斷（全部讀專案設定的 forbidden 那一塊，程式裡不寫任何禁區的名字）：
-//   ①輸入拿不到工具名、工具名不是合法字元集＝拒絕（fail-closed）；
-//   ②禁區清單沒設、沒有任何一條有效規則、清單欄位壞掉、登記名不是連接器的名字（`mcp` 本身、`mcp__` 開頭、
-//     全是底線／點／連字號）、同一個登記名同時登記在碰錢與不碰錢兩欄（大小寫不分）＝拒絕
-//     （裝了攔截器卻沒填清單，比沒裝更危險——它會讓人以為有在擋；這一族全在逐字拒絕之前，設定壞掉時測試鈕拿到的理由也是「設定壞掉」）；
-//   ③工具名逐字在拒絕清單上＝拒絕（測試鈕靠這一道，所以它排在登記制之前：登記為不碰錢的連接器也擋得住它）；
-//   ④工具屬於「動禁區的連接器」（servers）＝白名單制：不在唯讀名單上就拒絕（名字裡**任何一段**是連接器都算，
-//     不只開頭那一段）；在唯讀名單上也不直接放行，照樣走下面的家族網（雙保險）；
-//   ⑤登記制（裁示者 2026-09-26 裁「沒登記且不在白名單的一律禁」、2026-09-27 裁「名單空＝全擋」）——
-//     **只套 mcp__ 開頭的名字**：鉤子的 matcher 是 ^mcp__，真流量只有這種名字；不是 mcp__ 開頭的名字
-//     只有考題與自造名字會走到，保留原本的路徑（直接走⑥）。
-//     ・servers 與 safeServers 都是空的＝一律拒絕（新專案裝了要先填名單才能用任何連接器；訊息說怎麼填）；
-//     ・標準形狀 mcp__<登記名>__<工具名>（工具名非空、不以 _ 開頭、不含 __）或只有登記名、而登記名在 safeServers＝整個放行、不再往下判
-//       （不碰錢＝沒有禁區可守，家族網對它只會誤擋；會對外送東西但不碰錢的那一級靠 AI 自覺，不是機器守著）；
-//       登記名出現在別的位置＝分不清是哪個連接器＝當沒登記拒絕（為什麼不沿用碰錢那一欄的寬尺＝safeConnectorOf 的註解）；
-//     ・兩欄都沒登記＝拒絕，訊息說出是哪個名字、登記名是名字裡的哪一段、要登記到哪一欄、改完要做的手續。
-//     ・safeServers 只對 mcp__ 名字算「一條有效規則」：不是 mcp__ 的名字走⑥，那條路上它永遠比不到，只填它＝零規則＝照②擋
-//       （不然「只登記不碰錢的連接器、其餘全空」會讓⑥連錢形狀的名字都放行）。
-//     ・登記制的拒絕（名單空、沒登記、分不清）：機器從名字**看不出**像禁區的（家族網與兩張樣式表都沒命中——看不出不等於沒碰），
-//       鉤子輸出的尾句不說誤觸或冒名，改說看不出、可能碰禁區就照規矩 B3 先通報擁有者、登記前先問；
-//       名字**像**禁區的（像不像怎麼判＝「兩張樣式表」，寧可多報）尾句說疑似誤觸或冒名、拒絕並立即回報擁有者、要登記進哪一欄都先問擁有者，
-//       訊息寫明像禁區的連接器絕不自己登記成不碰禁區（kind: 'registry-money'；裁示者 2026-09-27、2026-09-28；見 hookOutput）。
-//   ⑥家族網：工具名正規化（駝峰拆底線、點與連字號換底線、轉小寫）後，動詞接名詞、或名詞接動詞、
-//     或額外樣式命中＝拒絕。⚠️ **哪一道吃唯讀前綴的豁免、代價與射程＝「兩張樣式表」**
-//     （正本＝`docs/money-guard-two-pattern-tables.md`；本檔一律只指路、不重述）。
-//     登記制之後，mcp__ 名字只有碰錢連接器白名單上的工具靠這裡決定擋不擋（登記制的拒絕另外拿同一套判尾句）。
-//   其餘放行（不印任何東西）。
+// 判定順序、逐工具登記與家族網的射程見正本「兩張樣式表」（docs/money-guard-two-pattern-tables.md）。
+// 這裡不重述，避免判定改動時留下一份過期的機制說明。
 //
 // 誠實劃界：只認工具名，不看參數；家族網是列舉的詞表，沒列到的動詞或名詞擋不住（詞表住在專案設定裡：套件空白範本給預設、
 // 專案不准少於它——tests/forbidden-defaults.test.js）；
 // 每一方的鉤子要各自安裝、信任、啟用，沒啟用的那一方等於沒有；家族網會蓋過唯讀名單（名單上的工具若命中家族網，
 // 一樣拒絕——要放行就改家族網，不是加名單）；登記名對不對、漏登記某個連接器，機器看不到——把碰錢的連接器
-// 登記成不碰錢＝它每一支標準形狀的工具靜靜放行；登記名填成工具名那一段（合法的登記名形狀、文法擋不了）不會靜靜放行：
-// 不碰錢那一欄當「分不清」擋、碰錢那一欄把那一段當成碰錢連接器擋、同連接器其餘工具當沒登記擋——都看得見（考題 ⑮②e）；
-// 打成不存在的名字＝那個連接器全擋、看得見（`mcp` 本身、`mcp__` 開頭、全是符號的由文法擋掉，也看得見）。
+// 登記成不碰錢＝它每一支標準形狀的工具靜靜放行。登記方式與誤填的影響見正本「兩張樣式表」。
 'use strict';
 const { read: readSettings } = require('./settings-data.js');
 
 const UNSET = '未設定';
 const LEGAL_NAME = /^[A-Za-z0-9_.-]{1,200}$/u;
+
+function isFullMcpName(name) {
+  if (typeof name !== 'string' || !LEGAL_NAME.test(name) || !name.startsWith('mcp__')) return false;
+  const parts = name.slice(5).split('__');
+  return parts.length >= 2 && parts.every((part) => part.length > 0);
+}
 
 function normalize(x) {
   return String(x)
@@ -91,7 +70,7 @@ const REGISTRY_NAME_HINT = '登記名＝工具名 mcp__ 後面、下一個 __ �
  * 登記名（兩欄同一把尺）不可以長成這幾種——它們不是「打錯」，而是「填成名字裡的別段」：逐字 `mcp`＝每一個 mcp__ 名字的
  * 位置 0 都是它；`mcp__` 開頭＝把工具名的前綴抄進來；全是底線／點／連字號＝這裡不當它是連接器的名字。三種都是填的人
  * 不知道登記名是哪一段，而測試鈕本來就該擋、按它分不出這件事，所以由文法先擋、說出登記名是哪一段（考題 ⑮⑨）。
- * 填成工具名那一段（例如把 run_thing 當登記名）是合法形狀、文法擋不了，但它不會靜靜放行：不碰錢那一欄當「分不清」擋、
+ * 未另以 allowedTools 登記時，填成工具名那一段（例如把 run_thing 當登記名）是合法形狀、文法擋不了，但它不會靜靜放行：不碰錢那一欄當「分不清」擋、
  * 碰錢那一欄把那一段當成碰錢連接器擋、同連接器其餘工具當沒登記擋（考題 ⑮②e）。
  */
 const badRegistryName = (s) => s === 'mcp' || s.startsWith('mcp__') || /^[_.-]+$/u.test(s);
@@ -130,6 +109,8 @@ function safeConnectorOf(toolName, safeServers) {
 
 /** 登記制的訊息尾巴：改了 forbidden 那一塊之後的手續（正本＝套件 README「搬進一個專案」第 3 步）。 */
 const AFTER_EDIT = '改完照套件 README「搬進一個專案」第 3 步：同一支變更重印釘指紋那一行、每台機器補複本、重按信任';
+// 合成設定的考題驗不到專案改好的清單；安裝自測也不能代替原始名字與授權的核對。
+const EXACT_RECHECK = '修改清單後照 tools/guard-copy.js 檔頭的對應裝法；合併後以該版本重跑固定複本 guard-copy 指令的 JSON 自我試跑（不實際呼叫工具；不驗名單是否完整），並完成該側安裝與無害測試鈕驗收';
 
 /**
  * ⚠️ **唯讀前綴豁免的範圍、代價與射程＝「兩張樣式表」**，正本在
@@ -154,6 +135,11 @@ function decide(toolName, forbidden) {
     lists[key] = listField(f, key);
     if (lists[key] === null) return { deny: true, why: `專案設定裡禁區清單的「${key}」不是字串陣列、或有一項不合文法（空白、非法字元）：設定壞掉，一律拒絕` };
   }
+  const exactNames = f.allowedTools === undefined ? [] : f.allowedTools;
+  if (!Array.isArray(exactNames) || [...exactNames].some((name) => !isFullMcpName(name))) {
+    return { deny: true, why: `禁區清單的 allowedTools 設定壞掉：請修正 settings.json 的 forbidden.allowedTools 為完整 MCP 原始工具名的字串陣列（mcp__ 開頭、連接器與工具各段非空、合法字元且不超過 200 字元）；${EXACT_RECHECK}` };
+  }
+  const allowedTools = new Set(exactNames);
   // 登記名的形狀（兩欄同一把尺）：填成名字裡的別段不是打錯（三種為什麼不收＝badRegistryName 上方），所以當設定壞掉擋下、說出登記名是哪一段
   for (const key of ['servers', 'safeServers']) {
     const bad = lists[key].find(badRegistryName);
@@ -165,6 +151,18 @@ function decide(toolName, forbidden) {
   const safeLower = new Set(safeServers.map((s) => s.toLowerCase()));
   const both = servers.filter((s) => safeLower.has(s.toLowerCase()));
   if (both.length) return { deny: true, why: `專案設定裡禁區清單的「${both[0]}」同時登記在 servers（碰${f.name}）與 safeServers（不碰${f.name}；大小寫不分）：設定壞掉，一律拒絕` };
+  // 同字樣命中不能遮住後面的大小寫變體；判準與限制見正本「兩張樣式表」。
+  for (const name of exactNames) {
+    const foldedName = name.toLowerCase();
+    for (const server of servers) {
+      for (const after of boundaryHits(foldedName, server.toLowerCase())) {
+        const at = name.length - after.length - server.length;
+        if (name.slice(at, at + server.length) !== server) {
+          return { deny: true, why: `allowedTools 與 servers 的金融登記名「${server}」有大小寫衝突：設定壞掉；請核對 settings.json 的 forbidden.allowedTools 與正本 docs/money-guard-two-pattern-tables.md，不改寫原始名字來放行；${EXACT_RECHECK}` };
+        }
+      }
+    }
+  }
   const allow = new Set(lists.allowlist);
   const deny = new Set(lists.deny);
   let patterns, patternsReadSafe;
@@ -173,9 +171,8 @@ function decide(toolName, forbidden) {
   try { patternsReadSafe = lists.patternsReadSafe.map((p) => new RegExp(p, 'u')); }
   catch { return { deny: true, why: '專案設定裡禁區清單的「連唯讀前綴也擋」樣式不是合法的正規式：設定壞掉，一律拒絕' }; }
   // 只填名字、沒有任何一條有效規則＝跟沒填一樣（r1 High③：原本只看 name，其餘全空就全部放行）
-  // safeServers 也算一條規則——但只對 mcp__ 名字：只登記了不碰錢的連接器、其餘全空的專案，登記制本身就是它的規則（沒登記＝擋）；
-  // 不是 mcp__ 的名字走舊路徑，那條路上 safeServers 永遠比不到，只填它＝零規則＝照舊 fail-closed（不然舊路徑連錢形狀的名字都放行）
-  const registryRule = toolName.startsWith('mcp__') && safeServers.length > 0;
+  // 登記欄位不能替非 MCP 路徑冒充有效規則；判準見正本「兩張樣式表」。
+  const registryRule = toolName.startsWith('mcp__') && (safeServers.length > 0 || allowedTools.size > 0);
   const hasRule = servers.length || registryRule || deny.size || (verbs.length && nouns.length) || patterns.length || patternsReadSafe.length;
   if (!hasRule) return { deny: true, why: `禁區「${f.name}」沒有任何一條有效規則（連接器、拒絕清單、家族網、額外樣式都是空的）：裝了攔截器卻沒有規則，一律拒絕` };
 
@@ -226,21 +223,19 @@ function decide(toolName, forbidden) {
   };
   // 登記制（裁示者 2026-09-26／27）：只套 mcp__ 開頭的名字——鉤子只送這種名字進來；不是 mcp__ 開頭的
   // 只有考題與自造名字會走到，保留原本的路徑。碰錢連接器白名單上的工具不在這裡放行（往下照樣走家族網）。
-  if (toolName.startsWith('mcp__') && !onMoneyServer) {
+  if (toolName.startsWith('mcp__') && !onMoneyServer && safeConnectorOf(toolName, safeServers)) return { deny: false };
+  if (toolName.startsWith('mcp__') && !onMoneyServer && !allowedTools.has(toolName)) {
     // 名字像禁區的（家族網或兩張樣式表命中；像不像怎麼判＝「兩張樣式表」）：照樣擋，但不可以說「不是碰到、不必上報」——
     // #16 讓登記制的拒絕一律那樣說，券商重新連線、編號換了之後，它的下單工具也會被那樣說，跟規矩 B2 衝突
     // （⑧ 盤點抓到；裁示者 2026-09-27「全照建議」①a）。尾句說疑似誤觸或冒名、立即回報擁有者、登記前先問（hookOutput 看 kind）。
     // 看不出像錢的也不再說「不是碰到錢、不必上報」：看不出不等於沒碰（券商換了編號之後叫的唯讀工具就看不出），訊息改說
     // 可能碰錢就照規矩 B3 先通報、登記前先問（B3 本來就這樣要求；這裡只是訊息跟上）。
-    // 不碰錢＝整個放行、不再判：家族網對它只會誤擋；會對外送東西但不碰錢的那一級靠 AI 自覺、不是機器守著。
-    // 只認標準形狀（safeConnectorOf）：登記名出現在別的位置不是放行的依據。名單空時 safeServers 是空的、這裡永遠不放行。
-    if (safeConnectorOf(toolName, safeServers)) return { deny: false };
     const looks = familyHit(false);
     const kind = looks ? 'registry-money' : 'registry';
     const moneyNote = `名字長得像會動到${f.name}的工具（${looks}）；名字像${f.name}的連接器絕不自己登記進 forbidden.safeServers（真的會動到${f.name}，例如券商重新連線、編號換了，就登記進 forbidden.servers、下單類工具的新全名補進 forbidden.deny）`;
     const b3Note = `名字看不出會動到${f.name}——看不出不等於沒碰：這個連接器可能動到${f.name}的話（例如券商重新連線、編號換了），照規矩 B3 先通報擁有者、登記前先問`;
     const seg = toolName.slice(5).split('__')[0];
-    if (!servers.length && !safeServers.length) {
+    if (!servers.length && !safeServers.length && !allowedTools.size) {
       return { deny: true, kind, why: looks
         ? `連接器名單還沒填：settings.json 的 forbidden.servers 與 forbidden.safeServers 都是空的，名單空＝所有連接器工具一律拒絕（裁示者 2026-09-27）。${moneyNote}。其他連接器照步驟填名單（${REGISTRY_NAME_HINT}；這個名字的是「${seg}」）；${AFTER_EDIT}`
         : `連接器名單還沒填：settings.json 的 forbidden.servers 與 forbidden.safeServers 都是空的，名單空＝所有連接器工具一律拒絕（裁示者 2026-09-27）。先填連接器名單——會動到${f.name}的連接器填 servers（並在 allowlist 列出准用的唯讀工具）、不會動到${f.name}的填 safeServers（${REGISTRY_NAME_HINT}；這個名字的是「${seg}」）；${AFTER_EDIT}（${b3Note}）` };
@@ -255,9 +250,12 @@ function decide(toolName, forbidden) {
     if (looks) {
       return { deny: true, kind, why: `連接器工具「${toolName}」沒有登記：它的連接器（${REGISTRY_NAME_HINT}；這個名字的是「${seg}」）不在 settings.json 的 forbidden.servers 也不在 forbidden.safeServers——沒登記的連接器一律拒絕（裁示者 2026-09-26）。${moneyNote}；${AFTER_EDIT}` };
     }
-    return { deny: true, kind, why: `連接器工具「${toolName}」沒有登記：它的連接器（${REGISTRY_NAME_HINT}；這個名字的是「${seg}」）不在 settings.json 的 forbidden.servers（會動到${f.name}的連接器，白名單制）也不在 forbidden.safeServers（不會動到${f.name}的連接器，整個放行）——沒登記的連接器一律拒絕（裁示者 2026-09-26）。要用它，先把連接器的登記名填進其中一欄；${AFTER_EDIT}（${b3Note}）` };
+    const registrationHint = allowedTools.size
+      ? `完整名字也不在 settings.json 的 forbidden.allowedTools；核對原始名字與授權後修正該欄；${EXACT_RECHECK}`
+      : '要用它，先把連接器的登記名填進其中一欄';
+    return { deny: true, kind, why: `連接器工具「${toolName}」沒有登記：它的連接器（${REGISTRY_NAME_HINT}；這個名字的是「${seg}」）不在 settings.json 的 forbidden.servers（會動到${f.name}的連接器，白名單制）也不在 forbidden.safeServers（不會動到${f.name}的連接器，整個放行）——沒登記的連接器一律拒絕（裁示者 2026-09-26）。${registrationHint}；${AFTER_EDIT}（${b3Note}）` };
   }
-  // 家族網與兩張樣式表（⑥）：唯讀前綴照「兩張樣式表」脫罪
+  // 唯讀前綴的射程見正本「兩張樣式表」。
   const hit = familyHit(true);
   return hit ? { deny: true, why: hit } : { deny: false };
 }

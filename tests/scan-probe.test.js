@@ -4,7 +4,7 @@
 //   ①沒有隔離提供者／前綴沒填／禁區清單空＝退 2、什麼都不跑（什麼都沒試就說有效，比沒有試探更危險）；
 //   ②對照組不活（盒外就讀不到假機密）＝退 2；盒內連自己的檔都讀不到或寫不進＝退 2（「全部失敗」不算擋住）；
 //     ⚠️ 寫那一道的正面控制是 2026-09-13 稽核補的：盒內起不了 /bin/sh 時，寫探針的非零退出碼原本會被
-//     當成「擋住」，一個真的寫入洞就被判成可以掃（稽核用真沙盒實測）。本檔最後一題釘住這一格。
+//     當成「擋住」，一個真的寫入洞就被判成可以掃（稽核用真沙盒實測）。「盒內起不了寫入機制」那一題釘住這一格。
 //   ③任一禁區從盒內讀得到＝退 1；退出碼非零但輸出裡帶著假機密＝仍算讀得到；
 //   ④寫進禁區：檔案真的落地＝退 1，不看退出碼；
 //   ⑤探針逾時或被殺＝測不出＝退 2，不算擋住；
@@ -64,6 +64,61 @@ function fakeRunner(reply) {
   };
 }
 const readSecretFromArgv = (argv) => { const f = argv.find((a) => path.basename(a) === 'fake-secret.txt'); return f ? fs.readFileSync(f, 'utf8').trim() : ''; };
+
+test('提供者是「借用」：試探與埋都退 2、逐字指路到出借的專案、什麼都不跑、不碰禁區（就算前綴與禁區有填也不用）', () => {
+  const zone = tempZone();
+  const listDir = tempZone();
+  try {
+    const msg = (who) => `隔離是借用的，試探、埋、收在 ${who} 那邊跑（用它的 tools/scan-probe.js 與它的設定；怎麼跑見本專案設定的掃描者那一格）。這裡不測、不假裝測過。`;
+    for (const [iso, who] of [
+      [{ provider: '借用', lender: '出借的甲', wrap: [process.execPath, FAKE, '{box}'], boxRoot: UNSET, forbidden: [zone] }, '出借的甲'],
+      [{ provider: '借用', wrap: [], forbidden: [] }, '出借的專案'],
+      [{ provider: '借用', lender: UNSET, wrap: [], forbidden: [] }, '出借的專案'],
+    ]) {
+      const { run, calls } = fakeRunner(() => ({}));
+      const r = probeRun({ settings: settingsWith(iso), run });
+      assert.equal(r.code, 2);
+      assert.deepEqual(r.lines, [msg(who)]);
+      assert.equal(calls.length, 0, '借用時不該跑任何東西');
+      const out = path.join(listDir, 'list.txt');
+      const p = plantCanaries({ settings: settingsWith(iso), outFile: out });
+      assert.equal(p.code, 2);
+      assert.deepEqual(p.lines, [msg(who)]);
+      assert.ok(!fs.existsSync(out), '借用時不該寫清單檔');
+    }
+    assert.deepEqual(fs.readdirSync(zone), [], '借用時不該在禁區埋任何東西');
+  } finally {
+    fs.rmSync(zone, { recursive: true, force: true });
+    fs.rmSync(listDir, { recursive: true, force: true });
+  }
+});
+
+test('提供者是「借用」＋機器表那一列沒啟用：指令入口照樣先講借用、指路過去（不是「還沒啟用」那句）', () => {
+  const settings = { machines: [{ name: MACHINE, state: '已安裝未啟用' }], scanner: { isolation: { provider: '借用', lender: '出借的甲', wrap: [], forbidden: [] } } };
+  for (const argv of [[], ['--plant', path.join(os.tmpdir(), 'scan-probe-never-written.txt')]]) {
+    const r = cli({ settings }, argv);
+    assert.equal(r.code, 2);
+    assert.match(r.lines.join('\n'), /^隔離是借用的，試探、埋、收在 出借的甲 那邊跑/u, argv.join(' ') || '試探');
+  }
+});
+
+test('提供者是「借用」：收（--sweep）不讀設定、照常只收清單上核對過的（收不擋；設定頁與 README 照這樣寫，#83 複審後掃）', () => {
+  const zone = tempZone();
+  const listDir = tempZone();
+  try {
+    const out = path.join(listDir, 'list.txt');
+    assert.equal(plantCanaries({ settings: honest([zone]), outFile: out }).code, 0);
+    assert.equal(fs.readdirSync(zone).filter((n) => n.startsWith('.scan-canary-')).length, 1, '前提：真的埋了一個');
+    const swept = cli({ settings: settingsWith({ provider: '借用', lender: '出借的甲', wrap: [], forbidden: [] }) }, ['--sweep', out]);
+    assert.equal(swept.code, 0, swept.lines.join('\n'));
+    assert.doesNotMatch(swept.lines.join('\n'), /隔離是借用的/u, '收不走借用的拒絕');
+    assert.deepEqual(fs.readdirSync(zone), [], '收完禁區是空的');
+    assert.deepEqual(fs.readdirSync(listDir), [], '清單檔與位置檔都收掉了');
+  } finally {
+    fs.rmSync(zone, { recursive: true, force: true });
+    fs.rmSync(listDir, { recursive: true, force: true });
+  }
+});
 
 test('沒有隔離提供者、前綴沒填、禁區清單空：都退 2、什麼都不跑', () => {
   for (const iso of [

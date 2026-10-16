@@ -15,9 +15,9 @@
 // 而不是像第一版那樣：Grok 沒跑、轉送器中途死、零 session——全部退 0。
 //
 // ⚠️ 誠實劃界：
-// ・非 macOS 上，沙箱套不上 ⇒ **`--version` 檢查**（它在沙箱裡跑、位置在金絲雀之前）就會先停下來；
-//   有 SANDBOX_OK guard 的題直接 skip，沒有 guard 的路徑則停在那一關。所以「沙箱之前」的路徑
-//   （寫死 SHA、指示檔、破口已知來源）在 CI 也考得到；之後的路徑只在 macOS 考得到。
+// ・非 macOS 上無法套用實際沙箱或啟動其中的未信任 CLI；本族不把這些路徑當成已驗證。
+//   有 SANDBOX_OK guard 的題直接 skip；沒有 guard 的題可在能力檢查或沙箱命令失敗處停止。
+//   「沙箱之前」的路徑（寫死 SHA、指示檔、破口已知來源）在 CI 也考得到；之後的路徑只在 macOS 考得到。
 // ・假 grok 不會真的連 xAI；它只回一段字。考的是主流程怎麼對待它的退出碼與輸出，不是掃描品質。
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -110,7 +110,7 @@ export function tinyRepo(/** @type {{ firstCommitFiles?: Record<string, string>,
  *   原本只跳脫單引號，於是帶 `"` 的回覆會被 shell 切成好幾個字、`printf '%s'` 只印第一個。
  *   那是**靜靜壞掉**：考題照樣綠，但它根本沒測到想測的東西（2026-09-01 寫「命中含機密」那題時踩到）。
  */
-export function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean, noToolFootprint?: boolean, model?: string, sessionLines?: string[] }} */ o = {}) {
+export function fakeGrok(/** @type {{ version?: string, status?: number, reply?: string, noSession?: boolean, noToolFootprint?: boolean, model?: string, sessionLines?: string[], formalTranscript?: boolean }} */ o = {}) {
   const d = keep(mkdtempSync(join(tmpdir(), 'fake-grok-install-')));
   mkdirSync(join(d, 'bin')); mkdirSync(join(d, 'sessions')); writeFileSync(join(d, 'config.toml'), ''); writeFileSync(join(d, 'auth.json'), fakeAuth());
   const p = join(d, 'bin', 'grok');
@@ -127,9 +127,15 @@ export function fakeGrok(/** @type {{ version?: string, status?: number, reply?:
   const body = [logLine, ...(o.sessionLines ?? [])].join('\n') + '\n';
   const session = o.noSession ? '' : `
 ws="$GROK_HOME/sessions/$(printf '%s' "$PWD" | /usr/bin/sed 's|/|%2F|g')"; mkdir -p "$ws/fake-session" && printf '%s' '${body}' > "$ws/fake-session/updates.jsonl"`;
+  const finalRow = JSON.stringify({ type: 'assistant', content: o.reply ?? 'FAKE-REPLY', model_id: o.model,
+    model_fingerprint: 'synthetic', reasoning_effort: 'xhigh' });
+  const transcript = o.formalTranscript && !o.noSession
+    ? `\nprintf '%s\\n' '${finalRow.replace(/'/g, "'\\''")}' > "$ws/fake-session/chat_history.jsonl"` : '';
+  const finish = o.formalTranscript && !o.noSession
+    ? '\nmv "$ws/fake-session" "$ws/00000000-0000-4000-8000-000000000001"' : '';
   writeFileSync(p, `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "grok ${o.version ?? EXPECTED_GROK_VERSION} (fake)"; exit 0; fi${session}
-printf '%s' "${(o.reply ?? 'FAKE-REPLY').replace(/["\\$`]/g, '\\$&')}" # REPLY-LINE
+if [ "$1" = "--version" ]; then echo "grok ${o.version ?? EXPECTED_GROK_VERSION} (fake)"; exit 0; fi${session}${transcript}
+printf '%s' "${(o.reply ?? 'FAKE-REPLY').replace(/["\\$`]/g, '\\$&')}" # REPLY-LINE${finish}
 exit ${o.status ?? 0}
 `);
   chmodSync(p, 0o755);

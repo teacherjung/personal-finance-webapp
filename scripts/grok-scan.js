@@ -24,6 +24,8 @@
 //   一律經這支跑；**不准手動啟動 grok 的 CLI、不在任何 repo 目錄啟動它**（在 repo 目錄啟動時它會自動讀 AGENTS.md 規則入口，
 //   而它的正式通道都在站外＝材料制；主目錄有 data/store.db，連在那裡啟動都算違規）。
 //   base／head 兩顆都寫死 SHA，不用 origin/main 這類會移動的名稱。
+//   正式複審由 scripts/grok-review.js 呼叫 runScan 的 review 用途；材料分基底、受審、突變副本。
+//   下列「當未跑仍可續行」只指 G3 掃描，正式複審失敗不能產生結論。
 //
 // ## 三個失效條件（判成「當未跑／不掃」的，一律在 PR說明固定小標下逐字寫「未執行：<原因>」，不擋合併）
 //   ・CLI 版本不同＝當未跑：轉送器的目的地是從 1.0.3 執行檔 strings 出來的、1.0.13 於 2026-09-05（PR #564）與 1.0.40 於 2026-09-22 各重驗相同，升版要重驗。
@@ -58,6 +60,7 @@ import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
 import { gitEnv } from '../lib/git-env.js';
 import { refreshSandboxAuth, authNeedles, authNeedleFields } from './grok-auth-refresh.js';
 import { REFUSED_PREFIX, isToleratedRefusal } from './grok-relay.js';
+import { finalSelectionFailureCode, finalSelectionRootDiagnostic, selectFinalReply } from './grok-final-reply.js';
 import { isMainModule } from '../lib/is-main.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -96,6 +99,61 @@ export const SESSION_CAPS = Object.freeze({ files: 4000, depth: 12, fileBytes: 1
 
 /** 錯誤只留碼、不留訊息：例外的 message 會帶出本機路徑（資料夾名含擁有者的名字），而摘要要貼進公開的 PR。 */
 const errCode = (/** @type {unknown} */ e) => /** @type {{ code?: string }} */ (e)?.code ?? '不明';
+
+const sha256 = (/** @type {string | Buffer} */ value) => createHash('sha256').update(value).digest('hex');
+
+/** 正式複審不用 archive：export-ignore／export-subst 會讓材料偏離 Git blob。
+ * 非一般檔、子模組與捷徑尚未提供材料化方式，遇到就停止，不偷偷省略。
+ * @param {string} repo @param {string} revision @param {string} dest
+ */
+function writeReviewSnapshot(repo, revision, dest) {
+  const list = spawnSync('git', ['--no-replace-objects', '-C', repo, 'ls-tree', '-rz', '--full-tree', revision], { encoding: 'utf8', env: gitEnv(), maxBuffer: 64 * 1024 * 1024 });
+  if (list.status !== 0) throw new Error('列不出複審快照；核對 base/head 後重跑 scripts/grok-review.js');
+  /** @type {Record<string, { sha256: string, mode: number }>} */ const files = Object.create(null);
+  for (const line of list.stdout.split('\0').filter(Boolean)) {
+    const m = /^(100644|100755) blob ([0-9a-f]{40,64})\t(.+)$/.exec(line);
+    if (!m || m[3].split('/').some((part) => !part || part === '.' || part === '..') || [...m[3]].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)) throw new Error('複審快照有不支援的路徑或檔案型別；處理材料來源後重跑 scripts/grok-review.js');
+    const path = m[3];
+    if (path.split('/')[0].toLowerCase() === 'node_modules' || ['data/store.db', 'data/store.json', '.env', '.env.local'].includes(path)) throw new Error('複審快照含禁帶入盒的路徑；核對提交內容後重跑 scripts/grok-review.js');
+    const blob = spawnSync('git', ['--no-replace-objects', '-C', repo, 'cat-file', 'blob', m[2]], { env: gitEnv(), maxBuffer: 64 * 1024 * 1024 });
+    if (blob.status !== 0) throw new Error('讀不出複審 blob；核對提交物件後重跑 scripts/grok-review.js');
+    const target = join(dest, path);
+    mkdirSync(dirname(target), { recursive: true });
+    const mode = m[1] === '100755' ? 0o755 : 0o644;
+    writeFileSync(target, blob.stdout, { flag: 'wx', mode });
+    chmodSync(target, mode);
+    files[path] = { sha256: sha256(blob.stdout), mode };
+  }
+  return { files };
+}
+
+/** 只核對程式快照；node_modules 是另外複製的相依材料，不在此內容清單。
+ * 這是前後比對，不能證明中途從未寫入；F1 唯讀限制仍交由複審者遵守。
+ * @param {string} root
+ */
+function reviewSnapshotState(root) {
+  /** @type {Record<string, { sha256: string, mode: number }>} */ const files = Object.create(null);
+  const walk = (/** @type {string} */ rel) => {
+    const dir = join(root, rel);
+    if (!lstatSync(dir).isDirectory() || lstatSync(dir).isSymbolicLink()) throw new Error('複審快照目錄被替換');
+    for (const name of readdirSync(dir).sort()) {
+      if (!rel && name === 'node_modules') continue;
+      const path = rel ? `${rel}/${name}` : name;
+      const full = join(root, path);
+      const st = lstatSync(full);
+      if (st.isDirectory()) walk(path);
+      else if (st.isFile() && !st.isSymbolicLink() && st.size <= 64 * 1024 * 1024) {
+        const fd = openSync(full, fsConst.O_RDONLY | fsConst.O_NOFOLLOW);
+        try { files[path] = { sha256: sha256(readFileSync(fd)), mode: st.mode & 0o777 }; } finally { closeSync(fd); }
+      } else throw new Error('複審快照含非一般檔或超過讀取上限');
+    }
+  };
+  walk('');
+  return { files };
+}
+
+/** @typedef {{ project: string, change: string, reviewer: string, source: string, round: number, previousHead?: string }} ReviewIdentity */
+/** @typedef {import('./grok-final-reply.js').SelectedReply & { manifestSha256: string, base: string, head: string, source: string, model: string, effort: string, observedModels: string[], modelFloor: string, modelQualified: boolean, recipe: string, resultsDir: string }} ReviewResult */
 
 /**
  * 被掃倉庫的身分：只認 GitHub 的 https／ssh 遠端，解析成 `owner/name`；認不出就回 null（呼叫端換成固定字串）。
@@ -406,18 +464,34 @@ function assertStringListEqual(actual, expected, msg) {
 
 /**
  * SIGKILL 整個程序群組，並等到群裡沒有任何程序（kill(-pgid, 0) 回 ESRCH）。
- * 只有 ESRCH 算「群已空」；EPERM／EINVAL 等其他錯＝不知道群裡還有誰，**丟出去**（r6 #2：原本任何錯都當已空）。
+ * 只有 ESRCH 算「群已空」；成功送 SIGKILL 後的 signal0 EPERM 只在共用等待預算內重查，避免對未知群組繼續送破壞性訊號。
  * @param {number | null} pgid
  */
-async function killGroupAndWait(pgid) {
+export async function killGroupAndWait(pgid) {
   if (!pgid) return;
   const gone = (/** @type {unknown} */ e) => /** @type {NodeJS.ErrnoException} */ (e).code === 'ESRCH';
-  for (let i = 0; i < 200; i++) {   // 最多 ~10 秒
+  let waitsRemaining = 200;
+  while (waitsRemaining > 0) {
     try { process.kill(-pgid, 'SIGKILL'); } catch (e) { if (gone(e)) return; throw new Error(`kill(-${pgid}) 失敗：${/** @type {Error} */ (e).message}——不當作群已空`, { cause: e }); }
-    try { process.kill(-pgid, 0); } catch (e) { if (gone(e)) return; throw new Error(`kill(-${pgid}, 0) 失敗：${/** @type {Error} */ (e).message}`, { cause: e }); }
+    try { process.kill(-pgid, 0); } catch (e) {
+      if (gone(e)) return;
+      const failure = new Error(`kill(-${pgid}, 0) 失敗：${/** @type {Error} */ (e).message}`, { cause: e });
+      if (/** @type {NodeJS.ErrnoException} */ (e).code !== 'EPERM' || waitsRemaining < 3) throw failure;
+      for (let retry = 0; retry < 3; retry++) {
+        waitsRemaining--;
+        await new Promise((r) => setTimeout(r, 50));
+        try { process.kill(-pgid, 0); } catch (next) {
+          if (gone(next)) return;
+          if (/** @type {NodeJS.ErrnoException} */ (next).code === 'EPERM') continue;
+        }
+        throw failure;
+      }
+      throw failure;
+    }
+    waitsRemaining--;
     await new Promise((r) => setTimeout(r, 50));
   }
-  throw new Error(`grok 的程序群組 ${pgid} 10 秒內殺不乾淨——不碰盒子`);
+  throw new Error(`grok 的程序群組 ${pgid} 用完 200 次等待仍未確認清空——不碰盒子`);
 }
 
 /**
@@ -426,7 +500,7 @@ async function killGroupAndWait(pgid) {
  * @param {string} box realpath
  * @param {(m: string) => void} log
  */
-function sweepEscapees(box, log) {
+export function sweepEscapees(box, log) {
   const r = spawnSync('/usr/sbin/lsof', ['-n', '-P', '-u', String(process.getuid?.() ?? ''), '-d', 'cwd,txt,rtd', '-F', 'pn'], { encoding: 'utf8', timeout: 20_000, maxBuffer: 64 * 1024 * 1024 });
   if (r.status !== 0 && r.status !== 1) { log(`（lsof 掃蕩跑不了：status ${r.status}——略過，best-effort）`); return 0; }
   /** @type {Set<number>} */ const hits = new Set();
@@ -441,7 +515,7 @@ function sweepEscapees(box, log) {
 }
 
 /** 向 OS 要一個目前沒人用的 127.0.0.1 port（每掃不同：上一掃離開來的程序，其沙箱只准連舊 port） */
-function freePort() {
+export function freePort() {
   return new Promise((ok, bad) => {
     const s = createServer();
     s.on('error', bad);
@@ -515,6 +589,20 @@ export const KNOWN_MODELS = Object.freeze([
   'grok-4.6', 'grok-4.6-build',   // 2026-09-05〜2026-09-21 實際用的（本機結果包實測）
   'grok-4.7', 'grok-4.7-build',   // 2026-09-21 傍晚起（同上）
 ]);
+
+// 公開投影清單與複審資格各有用途：日後增加可顯示名稱，不能順便授予正式複審資格。
+const REVIEW_MODEL_LEVELS = Object.freeze({
+  'grok-4.6': '4.6', 'grok-4.6-build': '4.6',
+  'grok-4.7': '4.7', 'grok-4.7-build': '4.7',
+});
+export const REVIEW_MODEL_FLOOR = '4.6';
+/** 名稱逐項登記，不從未知名稱的版本外觀推定資格。
+ * @param {unknown} models
+ */
+export function reviewModelsQualified(models) {
+  return Array.isArray(models) && models.length > 0
+    && models.every(model => typeof model === 'string' && Object.hasOwn(REVIEW_MODEL_LEVELS, model));
+}
 
 /** 會被當成模型紀錄來解析的檔名（r1 #2：材料與提示文字**不算**紀錄）。 */
 const MODEL_LOG_EXT = Object.freeze(['.json', '.jsonl']);
@@ -595,6 +683,25 @@ export function modelsUsedIn(files) {
   }
   return { models: [...models].sort(), rejected, incomplete };
 }
+
+/**
+ * 正式複審不能用可讀的紀錄替損毀的紀錄背書；掃描留痕仍由 modelsUsedIn 的既有契約處理。
+ * 只查模型紀錄副檔名的解碼與解析；模型值與走訪上限另由正式用途的 used 檢查判斷。
+ * @param {Map<string, Buffer>} files
+ */
+function modelLogsParseCompletely(files) {
+  const dec = new TextDecoder('utf-8', { fatal: true });
+  try {
+    for (const [rp, buf] of files) {
+      if (!MODEL_LOG_EXT.some((e) => rp.endsWith(e))) continue;
+      const text = dec.decode(buf);
+      if (rp.endsWith('.jsonl')) {
+        for (const line of text.split('\n')) if (line.trim()) JSON.parse(line);
+      } else JSON.parse(text);
+    }
+    return true;
+  } catch { return false; }
+}
 /**
  * 公開欄那一格的字串。**這是整個公開投影的唯一出口**，所以它的值域是**事先寫死、可以列舉的**。
  *
@@ -630,8 +737,8 @@ export function modelFieldText(mu) {
 /**
  * @typedef {object} ScanDeps 可注入的依賴——考題用假的 grok／轉送器／session 根目錄跑主流程
  * @property {string} [repo]
- * @property {string} [grokInstall] 預設 ~/.grok＝安裝樹，**完全不進沙箱**。只從它拿 bin/grok（APFS clone＋盒內 hash）；
- *   考題給假的（bin/grok 是假 grok）。r2 放行整棵唯讀＋clone 整棵：歷史 sessions 仍可讀、憑證整包落在 /private/tmp——Codex r3 抓到。
+ * @property {string} [grokInstall] 預設 ~/.grok＝安裝樹，**完全不進沙箱**。正式來源只取 downloads 內的固定版本（APFS clone＋盒內 hash），避免全域入口自動升版改變受驗對象。
+ *   考題注入時沿用假的 bin/grok。r2 放行整棵唯讀＋clone 整棵：歷史 sessions 仍可讀、憑證整包落在 /private/tmp——Codex r3 抓到。
  *   r6 #4：config.toml／agent_id **不再帶進盒子**（2026-08-23 實測 grok -p 不需要；先前未隔離的 Grok 可能已在那兩個檔裡埋東西）。
  * @property {string} [authDir] 預設 ~/.grok-sandbox-auth（0700，只含 auth.json）：沙箱跑的 grok 用這份登入狀態，
  *   第一次從真 ~/.grok/auth.json 種；**掃描前由父程序做 OIDC refresh**（沙箱裡連不到 auth.x.ai，grok 自己 refresh 不了——
@@ -657,7 +764,7 @@ export function modelFieldText(mu) {
  *   ⚠️ 但位置就是這個餌的全部意義：家目錄同時住著真 ~/.grok、~/.grok-sandbox-auth 與真的 store.db，
  *   是破出沙箱的人第一個會翻的地方。搬到別處餌照樣建得起來也照樣清得掉，只是不再演練「家目錄被擋住」——所以預設值不要順手改。
  *   ⚠️ 注入的目錄**必須已經存在**：`mkdtempSync(join(deps.liveRoot ?? homedir(), …))` 在它底下開子目錄，
- *   根目錄不存在時丟出的例外**沒有**被轉成退 2——與 `realpathSync(deps.grokInstall ?? …)` 是同一種既有形狀（裸 throw）。
+ *   根目錄不存在時仍可能在建立活金絲雀時丟出例外；此接縫不屬於執行檔來源檢查。
  * @property {number} [maxBlobBytes] 破口已知來源的單檔上限；預設 SESSION_CAPS.fileBytes。只給考題注入小門檻（理由見 knownShapeHitsFromTree）。
  * @property {typeof runCanary} [runCanary] 第②步的沙箱金絲雀；不注入時走 `?? runCanary`（本檔上方那一支）。**只給考題注入。**
  *   為什麼可注入：真金絲雀是**全機共用資源的使用者**——它搶一把住在 BOX_ROOT 的剪貼簿鎖（系統剪貼簿只有一份，
@@ -681,17 +788,29 @@ export function modelFieldText(mu) {
 
 /**
  * 主流程。回傳 { code, summary }；不自己 process.exit（考題要讀回傳值）。
- * @param {{ base: string, head: string, promptFile: string, outFile?: string, repo?: string }} args
+ * @param {{ base: string, head: string, promptFile: string, outFile?: string, repo?: string, purpose?: 'scan'|'review', model?: string, effort?: string, review?: ReviewIdentity }} args
  * @param {ScanDeps} [deps]
- * @returns {Promise<{ code: 0|1|2, summary: string[] }>}
+ * @returns {Promise<{ code: 0|1|2, summary: string[], review?: ReviewResult }>}
  */
 export async function runScan(args, deps = {}) {
-  const grokInstall = realpathSync(deps.grokInstall ?? join(homedir(), '.grok'));
-  const realGrokBin = realpathSync(join(grokInstall, 'bin', 'grok'));   // 只拿來 cp 進盒子；**不在沙箱外執行它**（hash 盒內副本、--version 在沙箱內跑）
+  const rawLog = deps.log ?? ((m) => console.log(m));
+  let grokInstall, realGrokBin;
+  try {
+    grokInstall = realpathSync(deps.grokInstall ?? join(homedir(), '.grok'));
+    const candidate = deps.grokInstall === undefined
+      ? join(grokInstall, 'downloads', `grok-${EXPECTED_GROK_VERSION}-macos-aarch64`)
+      : join(grokInstall, 'bin', 'grok');
+    const st = lstatSync(candidate);
+    if (!st.isFile() || st.isSymbolicLink()) throw new Error('binary source shape');
+    realGrokBin = realpathSync(candidate);
+  } catch {
+    const message = '⛔ 固定執行檔來源無法使用；核對 scripts/grok-scan.js 的固定版本下載檔後重跑，不回退浮動入口';
+    rawLog(message);
+    return { code: 2, summary: [message] };
+  }
   const authDir = deps.authDir ?? join(homedir(), '.grok-sandbox-auth');
   const resultsRoot = deps.resultsRoot ?? join(homedir(), '.grok-scan-results');
   const relayScript = deps.relayScript ?? join(HERE, 'grok-relay.js');
-  const rawLog = deps.log ?? ((m) => console.log(m));
   /**
    * ⚠️ **關門，不是列舉出口**（William 2026-09-01 裁示）。
    *
@@ -786,6 +905,13 @@ export async function runScan(args, deps = {}) {
   const fail = (why) => { ensureArmed(); say(`⛔ ${why}`); return { code: 2, summary }; };   // 任何一條退場路徑都先上膛再說話
 
   const { base, head, promptFile, outFile } = args;
+  const purpose = args.purpose ?? 'scan';
+  if (purpose !== 'scan' && purpose !== 'review') return fail('用途只收 scan 或 review；修正呼叫參數後重跑');
+  const formal = purpose === 'review';
+  if (formal && (!/^[0-9a-f]{40}$/.test(base) || !/^[0-9a-f]{40}$/.test(head) || !args.review
+    || args.review.reviewer !== 'Grok' || args.review.source !== 'Grok CLI' || !Number.isInteger(args.review.round) || args.review.round < 1
+    || !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(args.review.project) || !/^\d+$/.test(args.review.change)
+    || (args.review.previousHead !== undefined && !/^[0-9a-f]{40}$/.test(args.review.previousHead)))) return fail('正式複審的版本或身分不完整；核對 launch.json 後重跑 scripts/grok-review.js');
   if (!/^[0-9a-f]{7,40}$/.test(base) || !/^[0-9a-f]{7,40}$/.test(head)) return fail('base／head 必須是寫死的 SHA（條款：不可用會移動的名稱）');
   if (!existsSync(promptFile)) return fail(`指示檔不存在：${promptFile}`);
   if (!existsSync(realGrokBin)) return fail(`找不到 grok：${realGrokBin}`);
@@ -873,7 +999,10 @@ export async function runScan(args, deps = {}) {
   // 換模型只改設定、不改程式；只驗形狀（擋住以 - 開頭被當成旗標的值），不寫死模型清單。
   /** @type {string} */ let model;
   /** @type {string} */ let effort;
-  {
+  if (formal) {
+    model = args.model ?? ''; effort = args.effort ?? '';
+    if (!/^grok-[0-9][0-9a-z.-]*$/.test(model) || !/^[a-z]+$/.test(effort)) return fail('正式複審須明確指定模型與推理；核對 reviewers 設定後重跑 scripts/grok-review.js');
+  } else {
     /** @type {any} */ let s;
     try { s = JSON.parse(readFileSync(deps.settingsFile ?? join(REPO, 'settings.json'), 'utf8')); } catch (e) { return fail(`讀不出掃描設定（settings.json：${errCode(e)}）`); }
     const sc = s && typeof s === 'object' ? s.scanner : undefined;
@@ -882,7 +1011,7 @@ export async function runScan(args, deps = {}) {
     if (typeof effort !== 'string' || !/^[a-z]+$/.test(effort)) return fail('settings.json 掃描那一節的 maxEffort（最高推理）沒填或形狀不對');
   }
   // 紀錄：掃的是哪一個倉庫、用的是哪一版掃描程式（倉庫寫 owner/name、不寫路徑；程式寫內容雜湊、不靠 git）
-  const origin = spawnSync('git', ['--no-replace-objects', '-C', repo, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnv() });
+  const origin = spawnSync('git', ['--no-replace-objects', '-C', repo, 'config', '--get', 'remote.origin.url'], { encoding: 'utf8', env: gitEnv() });
   const repoLabel = (origin.status === 0 && repoLabelFrom(origin.stdout.trim())) || '（沒有可辨認的 GitHub 遠端）';
   /** @type {string} */ let scriptSha;
   try { scriptSha = createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'); } catch (e) { return fail(`讀不出掃描程式本身（${errCode(e)}）`); }
@@ -894,8 +1023,14 @@ export async function runScan(args, deps = {}) {
   //     行為題永遠驗不到這一步——Codex #530 r1 實測 CI 因此紅）。
   // ⚠️ 免疫「盒子可寫」靠的是**來源是 git 物件庫**，不是這個位置——搬到別處仍然正確，只是失敗變貴。
   /** @type {ReturnType<typeof knownShapeHitsFromTree>} */ let treeKnown;
+  /** @type {ReturnType<typeof knownShapeHitsFromTree> | undefined} */ let reviewBaseKnown;
   try { treeKnown = knownShapeHitsFromTree(repo, head, deps.maxBlobBytes); }
   catch (e) { return fail(`破口判準的已知來源（head 樹）建不出來：${/** @type {Error} */ (e).message}——建不出來就等於退回「只認材料」，那正是 #516 的假事故，不掃`); }
+  if (formal) {
+    try {
+      reviewBaseKnown = knownShapeHitsFromTree(repo, base, deps.maxBlobBytes);
+    } catch { return fail('複審基底的破口判準來源建不出來；核對 base 後重跑 scripts/grok-review.js'); }
+  }
   // 這行是本條護欄的記帳（DLP 那條路本來就會印排除了幾根）：集合悄悄變 0（護欄沒在跑）
   // 或悄悄變大（豁免面擴張）都看得見。
   log(`（破口已知來源：head 樹 ${treeKnown.blobs} 個 blob／${(treeKnown.bytes / 1048576).toFixed(1)}MB → 形狀命中 ${treeKnown.hits.size} 條${treeKnown.hits.size ? `，來自 ${[...treeKnown.bySource].map(([f, n]) => `${f}×${n}`).join('、')}` : ''}${treeKnown.skippedBig.length ? `；⚠️ ${treeKnown.skippedBig.length} 個超過單檔上限沒讀（它們的形狀不在排除集合裡＝引用到會誤報事故）：${treeKnown.skippedBig.slice(0, 3).join('、')}${treeKnown.skippedBig.length > 3 ? ` 等 ${treeKnown.skippedBig.length} 個` : ''}` : ''}）`);
@@ -907,11 +1042,14 @@ export async function runScan(args, deps = {}) {
   /** @type {import('node:child_process').ChildProcess | undefined} */ let relay;
   /** @type {string | undefined} */ let liveDir;
   /** @type {number | null} */ let grokPgid = null;
+  let relayClosed = false, incidentWritten = false, outWritten = false;
+  /** @type {{ error: unknown } | undefined} */ let primaryFailure;
+  /** @type {{ phase: string, error: unknown }[]} */ const cleanupFailures = [];
   let cleaned = false;
-  const cleanup = () => {
+  const cleanup = (removeBox = true) => {
     if (cleaned) return; cleaned = true;
-    try { if (dummyFile) rmSync(dummyFile, { force: true }); } catch { /* 沒建 */ }
-    try { if (box) rmSync(box, { recursive: true, force: true }); } catch { /* 盡力 */ }
+    try { if (dummyFile) rmSync(dummyFile, { force: true }); } catch (error) { cleanupFailures.push({ phase: 'dummy', error }); }
+    try { if (removeBox && box) rmSync(box, { recursive: true, force: true }); } catch (error) { cleanupFailures.push({ phase: 'box', error }); }
   };
   /** 沒掃成（退 2）＝結果包整個不留（Grok 掃描抓到：原本每次失敗都在 ~/.grok-scan-results 留一個空目錄或只有 launch.json）；事故（退 1）留 launch.json 當證據、不留 sessions */
   const dropResultsDir = () => { try { if (resultsDir) rmSync(resultsDir, { recursive: true, force: true }); } catch { /* 盡力 */ } };
@@ -943,7 +1081,7 @@ export async function runScan(args, deps = {}) {
   const failAndClean = (why) => { cleanup(); dropResultsDir(); return fail(why); };
   // grok 的家＝**白名單複製**（r3：不 clone 整棵——那會把歷史 sessions 與憑證整包搬進來；r6：只剩 bin/grok＋重建的 auth.json＋空 sessions/）
   const grokBin = join(grokHome, 'bin', 'grok');   // 沙箱裡跑**盒內**的副本
-  /** @type {string} */ let verText;
+  let verText = '';
   const relayPort = await freePort();
   {
     mkdirSync(join(grokHome, 'bin'), { recursive: true }); mkdirSync(sessionsRoot);
@@ -983,38 +1121,68 @@ export async function runScan(args, deps = {}) {
   //   不放進指令參數：macOS 單一指令的參數上限約 1MB（ARG_MAX），原本用 -p 把整份材料當參數，
   //   差異 1.1MB 的那一支（整批同步）在起 grok 那一步就 spawn E2BIG、一個字都沒掃到。
   //   檔放在盒子根（不在 src 裡，不混進受掃的樹）；盒子在所有出口都會清，它跟著走。
-  //   **在盒子裡跑任何沙箱內的程式之前就寫好**（下面的 grok --version 是第一個）：晚寫的話，沙箱內的程式留下的子程序
+  //   **在盒子裡跑未信任 CLI（包含 grok --version）之前就寫好**：晚寫的話，沙箱內的程式留下的子程序
   //   可以先在盒子裡放一個同名的捷徑指到盒外，沙箱外的父程序寫材料時就跟著捷徑、覆寫使用者寫得到的任何檔（#673 的 Grok 掃描指出、實測重現）。
   //   'wx'（獨占建立）是第二道：檔名已經在＝有人先放了東西，不跟隨、不覆寫、不掃。
   // --no-ext-diff --no-textconv：受審版本的 .gitattributes 可以替檔案挑 diff 驅動，git 就會在盒子**外面**照設定執行那支轉檔程式
   //   （#675 r1 Codex 實測重現）；材料要的是原始差異，兩個都關掉。git archive 那邊的 filter 沒有旗標關得掉，記在待辦。
-  const diff = spawnSync('git', ['--no-replace-objects', '-C', repo, 'diff', '--no-ext-diff', '--no-textconv', `${base}..${head}`], { encoding: 'utf8', env: gitEnv(), maxBuffer: 64 * 1024 * 1024 });
+  const diff = spawnSync('git', ['--no-replace-objects', '-C', repo, 'diff', '--no-ext-diff', '--no-textconv', `${base}${formal ? '...' : '..'}${head}`], { encoding: 'utf8', env: gitEnv(), maxBuffer: 64 * 1024 * 1024 });
   if (diff.status !== 0) return failAndClean(`git diff 失敗：${diff.stderr}`);
-  const materials = readFileSync(promptFile, 'utf8')
-    + `\n\n【受掃版本】base ${base} → head ${head}；你現在所在的目錄 ./src 是 head 的完整原始碼（已 commit 的部分），可以在裡面跑 node --test。`
+  /** @type {ReturnType<typeof writeReviewSnapshot> | undefined} */ let baseSnapshot;
+  /** @type {ReturnType<typeof writeReviewSnapshot> | undefined} */ let headSnapshot;
+  /** @type {string | undefined} */ let manifestText;
+  /** @type {Record<string, string>} */ const protectedFiles = Object.create(null);
+  if (formal) {
+    try {
+      mkdirSync(join(box, 'base')); mkdirSync(join(box, 'mutation'));
+      baseSnapshot = writeReviewSnapshot(repo, base, join(box, 'base'));
+      headSnapshot = writeReviewSnapshot(repo, head, src);
+      const mutationSnapshot = writeReviewSnapshot(repo, head, join(box, 'mutation'));
+      protectedFiles['full.diff'] = diff.stdout;
+      if (args.review?.previousHead) {
+        const round = spawnSync('git', ['--no-replace-objects', '-C', repo, 'diff', '--no-ext-diff', '--no-textconv', `${args.review.previousHead}..${head}`], { encoding: 'utf8', env: gitEnv(), maxBuffer: 64 * 1024 * 1024 });
+        if (round.status !== 0) throw new Error('讀不出上一輪差異；核對 previousHead 後重跑 scripts/grok-review.js');
+        protectedFiles['round.diff'] = round.stdout;
+      }
+      manifestText = JSON.stringify({ purpose, ...args.review, base, head, model, effort,
+        snapshots: { base: baseSnapshot, head: headSnapshot, mutation: mutationSnapshot },
+        paths: { base: '../base', head: '.', mutation: '../mutation' },
+        differences: Object.fromEntries(Object.entries(protectedFiles).map(([name, content]) => [name, sha256(content)])),
+        scope: '程式檔案前後內容與權限比對；不含 node_modules，不證明中途從未寫入。',
+      }, null, 2) + '\n';
+      protectedFiles['review-manifest.json'] = manifestText;
+      for (const [name, content] of Object.entries(protectedFiles)) writeFileSync(join(box, name), content, { flag: 'wx', mode: 0o600 });
+    } catch (e) { return failAndClean(`正式複審材料建立失敗（${errCode(e)}）；核對 base/head 的路徑、檔案型別與提交物件後重跑 scripts/grok-review.js`); }
+  }
+  const materials = readFileSync(promptFile, 'utf8') + (formal
+    ? `\n\n【隔離傳輸事實】base ${base} → head ${head}。目前目錄是 head 的 ./src；基底 ../base，另備突變區 ../mutation，清單 ../review-manifest.json，原始差異 ../full.diff。清單逐檔列 SHA-256 與權限；請以盒內檔案核對，不以不存在的 .git 宣稱完成版本核對。審查與基底材料唯讀，突變只改 ../mutation。盒外家目錄、其他暫存目錄、外網及本機其他 port 受 OS 沙箱限制；需這些資源的驗證可能無法執行，請如實記載。`
+    : `\n\n【受掃版本】base ${base} → head ${head}；你現在所在的目錄 ./src 是 head 的完整原始碼（已 commit 的部分），可以在裡面跑 node --test。`
     + `\n【沙箱提醒】你在 OS 沙箱裡：家目錄、/private/tmp 其他目錄、外網、本機其他 port 都連不到，那是正常的。會起本機 HTTP 伺服器再連自己的整合型考題（hosted-*、heavy-admission 等）在這裡會 EPERM 或卡住——不要跑整套 npm test，挑跟 diff 直接相關的單檔跑。少數考題寫死 /tmp 會因 EPERM 紅——那是沙箱擋寫盒外，不是 diff 的問題。`
-    + `\n\n【以下為 diff】\n` + diff.stdout;
+    + `\n\n【以下為 diff】\n` + diff.stdout);
   const materialsFile = join(box, 'materials.md');
   try { writeFileSync(materialsFile, materials, { mode: 0o600, flag: 'wx' }); }
   catch (e) { return failAndClean(`材料檔寫不進盒子：${/** @type {Error & { code?: string }} */ (e).code ?? '不明'}（盒子裡已經有 materials.md＝有人先放了東西；不跟隨、不覆寫、不掃）`); }
+  if (formal) protectedFiles['materials.md'] = materials;
   const sbArgv = ['-f', PROFILE, '-D', `SCAN_DIR=${box}`, '-D', `RELAY_PORT=${relayPort}`];
   // ── 版本釘：在**沙箱內**對盒內副本跑（r4 #5：r3 版在沙箱外執行真檔＝未驗身分的程式拿到完整檔案系統）──
-  {
+  const checkVersion = () => {
     const ver = spawnSync('/usr/bin/sandbox-exec', [...sbArgv, grokBin, '--version'],
-      { encoding: 'utf8', timeout: 20_000, cwd: box, env: sandboxEnv(box) });
+      { encoding: 'utf8', timeout: 20_000, cwd: box, env: sandboxEnv(/** @type {string} */ (box)) });
     verText = (ver.stdout || '').trim();
     const parsed = /^grok (\S+)/.exec(verText)?.[1];
-    if (ver.status !== 0 || parsed !== EXPECTED_GROK_VERSION) return failAndClean(`grok 版本不符：要 ${EXPECTED_GROK_VERSION}，實際「${verText || ver.error?.message || ver.status}」（${(ver.stderr || '').slice(-200)}）`);
-  }
+    return ver.status !== 0 || parsed !== EXPECTED_GROK_VERSION ? `grok 版本不符：要 ${EXPECTED_GROK_VERSION}，實際「${verText || ver.error?.message || ver.status}」（${(ver.stderr || '').slice(-200)}）` : null;
+  };
   {
     // 不用 shell pipeline 組路徑；git 一律帶 gitEnv()（鐵則 11：GIT_DIR 等會讓 -C 失效、指去別棵 repo）；
     // 也一律帶 --no-replace-objects：gitEnv() 連 GIT_NO_REPLACE_OBJECTS 一起清掉，倉庫裡的 refs/replace 會把 head 換成別的內容、紀錄卻還寫 head（#675 複審後掃的反駁審查實測）
-    const tarPath = join(box, 'src.tar');
-    const ar = spawnSync('git', ['--no-replace-objects', '-C', repo, 'archive', '--format=tar', '-o', tarPath, head], { encoding: 'utf8', env: gitEnv() });
-    if (ar.status !== 0) return failAndClean(`git archive 失敗：${ar.stderr}`);
-    const tx = spawnSync('/usr/bin/tar', ['-x', '-f', tarPath, '-C', src], { encoding: 'utf8' });
-    if (tx.status !== 0) return failAndClean(`tar 解開失敗：${tx.stderr}`);
-    rmSync(tarPath);
+    if (!formal) {
+      const tarPath = join(box, 'src.tar');
+      const ar = spawnSync('git', ['--no-replace-objects', '-C', repo, 'archive', '--format=tar', '-o', tarPath, head], { encoding: 'utf8', env: gitEnv() });
+      if (ar.status !== 0) return failAndClean(`git archive 失敗：${ar.stderr}`);
+      const tx = spawnSync('/usr/bin/tar', ['-x', '-f', tarPath, '-C', src], { encoding: 'utf8' });
+      if (tx.status !== 0) return failAndClean(`tar 解開失敗：${tx.stderr}`);
+      rmSync(tarPath);
+    }
     if (copyNodeModules) {
       // 解開之後盒子裡不准已經有 node_modules（建盒前已擋提交進去的；這裡是第二道，不跟隨、不覆寫）
       try { lstatSync(join(src, 'node_modules')); return failAndClean('盒子裡解開之後已經有 node_modules——不往裡面複製'); }
@@ -1070,18 +1238,23 @@ export async function runScan(args, deps = {}) {
       if (missing) log(`（node_modules 裡有 ${missing} 個捷徑在盒子裡解不開＝那個套件不在：沒裝、或受審版本沒有那個資料夾；照劃界不擋，盒子裡的考題可能會紅）`);
       // 最常見的手誤：宣告了相依、node_modules 卻是空的（點開頭的 .bin、.package-lock.json 之類不算）——#675 r2 Codex
       if (declared && !got.some((n) => !n.startsWith('.'))) return failAndClean('要掃的倉庫宣告了相依套件、node_modules 卻是空的（安裝沒完成？）——先裝好再掃');
+      if (formal) {
+        const c = spawnSync('/bin/cp', ['-R', ...CP_CLONE, join(src, 'node_modules'), join(box, 'mutation', 'node_modules')], { encoding: 'utf8' });
+        if (c.status !== 0) return failAndClean('突變區相依材料複製失敗；核對 node_modules 後重跑 scripts/grok-review.js');
+      }
     } else log('（要掃的倉庫沒有宣告相依套件、也沒有 node_modules：盒子裡不放 node_modules）');
     for (const forbidden of ['data/store.db', 'data/store.json', '.env', '.env.local']) {
       if (existsSync(join(src, forbidden))) return failAndClean(`盒子裡出現不該有的檔：${forbidden}——git archive 不該帶出它，先查 .gitignore`);
     }
   }
-
   // ── ② 金絲雀（fail-closed；用本掃的 port 跑，跟正式發射同一組參數）──
   {
     const { code, lines } = await (deps.runCanary ?? runCanary)(box, { relayPort });
     for (const l of lines) say('  ' + l);   // 摘要與 log 同一份、同一道門
     if (code !== 0) return failAndClean(code === 1 ? '金絲雀：有一隻活著＝沙箱是假的，不掃' : '金絲雀：這台機器跑不了沙箱／對照組不活，不掃');
   }
+  // 盒內可被未信任程序改動路徑的可信父寫須早於 CLI，避免它先植入捷徑、再由父程序跟隨寫出盒外。
+  { const why = checkVersion(); if (why) return failAndClean(why); }
 
   // ── DLP 針：真 auth.json 裡沒給盒子的值（r6 #6：讀不到＝退 2，不是空集合放行；按欄位排除、不按內容形狀）──
   /** @type {string[]} */ let needles;
@@ -1108,7 +1281,7 @@ export async function runScan(args, deps = {}) {
       const pf = join(authDir, `needle.${process.pid}`);
       try {
         writeFileSync(pf, needle + '\n', { mode: 0o600 });
-        const g = spawnSync('git', ['--no-replace-objects', '-C', repo, 'grep', '-q', '-F', '-f', pf, head, '--'], { encoding: 'utf8', env: gitEnv() });
+        const g = spawnSync('git', ['--no-replace-objects', '-C', repo, 'grep', '-q', '-F', '-f', pf, ...(formal ? [base, head] : [head]), '--'], { encoding: 'utf8', env: gitEnv() });
         if (g.status !== 0 && g.status !== 1) throw new Error(`git grep 失敗（status ${g.status}）：${g.stderr}`);
         return g.status === 0;
       } finally { rmSync(pf, { force: true }); }
@@ -1153,6 +1326,7 @@ export async function runScan(args, deps = {}) {
   // ── ③ 轉送器（監看它的生死）──
   const relayProc = spawn(process.execPath, [relayScript, String(relayPort), '--auth-dir', authDir, '--dummy-file', dummyFile], { stdio: ['ignore', 'pipe', 'pipe'] });   // broker：真 token 只在轉送器手上
   relay = relayProc;
+  relayProc.once('close', () => { relayClosed = true; });
   let relayDead = /** @type {string | null} */ (null);
   let relayErr = '';
   relayProc.stderr?.on('data', (d) => { if (relayErr.length < 1024 * 1024) relayErr += String(d); });   // 有界：轉送器自己也有 MAX_REFUSALS
@@ -1166,7 +1340,7 @@ export async function runScan(args, deps = {}) {
 
   // ── ④ 沙箱裡跑 grok ──
   const startedAt = new Date().toISOString();
-  log(`掃描開始：${startedAt}（在通過之後才掃＝條款；時序要自己記進 PR）`);
+  log(formal ? `複審開始：${startedAt}` : `掃描開始：${startedAt}（在通過之後才掃＝條款；時序要自己記進 PR）`);
   // --always-approve：盒內跑指令不需人工確認（William 2026-08-20 裁示准跑指令；盒子裡沒有它不該碰的東西）。
   //   第四次正式掃描才發現：r6 拿掉 config.toml（裡面有 permission_mode = "always-approve"）後，grok 回到預設「跑指令要問」，
   //   單輪模式（當時用 -p，現在用 --prompt-file）沒人能答 → permission_cancelled → 整輪取消、退 0、只印旁白——一個「成功但空的」掃描。用旗標，不重建 config 檔。
@@ -1184,6 +1358,7 @@ export async function runScan(args, deps = {}) {
   // 完整指令、env 白名單、版本、沙箱設定檔的雜湊。之後驗屍或重裁都有憑據，不靠回憶。
   writeFileSync(join(resultsDir, 'launch.json'), JSON.stringify({
     startedAt, base, head, repo: repoLabel, scanScriptSha256: scriptSha, model, reasoningEffort: effort,
+    ...(formal ? { purpose, review: args.review, manifestSha256: sha256(manifestText ?? '') } : {}),
     sandboxExec: '/usr/bin/sandbox-exec', sbArgv, grokArgv, env, grokVersion: verText, relayPort, ulimits,
     profileSha256: createHash('sha256').update(readFileSync(PROFILE)).digest('hex'),
     materialsSha256: createHash('sha256').update(materials).digest('hex'),
@@ -1210,7 +1385,7 @@ export async function runScan(args, deps = {}) {
   const swept = sweepEscapees(box, log);
   const endedAt = new Date().toISOString();
   const reply = grok.stdout || '';
-  log(`掃描結束：${endedAt}；grok 退出碼 ${grok.status}；回覆 ${reply.length} 字；程序群組已收束${swept ? `、掃蕩 ${swept}` : ''}`);
+  log(`${formal ? '複審' : '掃描'}結束：${endedAt}；grok 退出碼 ${grok.status}；回覆 ${reply.length} 字；程序群組已收束${swept ? `、掃蕩 ${swept}` : ''}`);
   // 轉送器在 grok 結束前死了＝一律 2（r2 #3：r1 寫成 `relayDead && grok.status !== 0`，grok 自己回 0 就放過了）
   // r5 #1：失敗＝**全丟棄**。Grok 可控的 stdout／stderr／sessions 一律不進結果包、不進 log（stderr 尾巴也是它可控的）。
   if (grok.truncated) return failAndClean(`grok 輸出超過 ${OUT_CAP} bytes——丟棄`);
@@ -1270,6 +1445,7 @@ export async function runScan(args, deps = {}) {
       // ⚠️ **整份序列化之後再過一次那道門**：這樣「哪一個欄位可能夾帶已知機密」就不必逐格記得
       //   （提示檔路徑、錯誤訊息、之後新增的任何欄位都一樣）。佔位符不含引號與反斜線，JSON 仍然合法。
       writeFileSync(to, scrubText(JSON.stringify({ note: '事故指紋包：不含任何命中值本身。整份寫出前會再過一次清洗（已知機密與破口形狀都換成佔位符）；認不得的擋不住。', ...payload }, null, 2)), { mode: 0o600 });
+      incidentWritten = true;
       say(`事故指紋已寫入 ${to}（不含命中內容）`);
     } catch (e) {
       say(`⚠️ 事故指紋寫不出來（${/** @type {Error} */ (e).message}）——這一次沒有證據可查`);
@@ -1331,6 +1507,7 @@ export async function runScan(args, deps = {}) {
   const unprefixed = materials.replace(/^[+ -]/gm, '');   // diff 每行多一個 `+`；樹側**不套**，那會憑空造出樹裡沒有的排除項
   for (const base0 of [materials, unprefixed]) for (const form of escapeForms(base0)) for (const h of shapeHitsIn(form)) knownHits.add(h);
   for (const h of treeKnown.hits) knownHits.add(h);
+  if (reviewBaseKnown) for (const h of reviewBaseKnown.hits) knownHits.add(h);
   /**
    * 這段文字裡「證明不了是盒內來源」的命中，分兩族回傳。
    * ⚠️ 兩半的比對強度**不一樣**，別讀成一致（Codex #530 r1 抓到我原本一句話蓋兩半）：
@@ -1442,6 +1619,20 @@ export async function runScan(args, deps = {}) {
   }
   if (binaries.length) log(`（結果包略過 ${binaries.length} 個非 UTF-8 檔——驗不了就不保存：${binaries.slice(0, 3).map((f) => redactPath(f.split('/').pop() ?? f)).join('、')}）`);
   if (incidentHits.length) return writeIncidentAndStop();
+  if (formal) {
+    if (!modelLogsParseCompletely(snap.files)) return failAndClean('正式複審模型紀錄無法完整解碼或解析；核對 session 格式後重跑 scripts/grok-review.js');
+    try {
+      const normalized = (/** @type {ReturnType<typeof reviewSnapshotState>} */ snapshot) => JSON.stringify(Object.entries(snapshot.files).sort(([a], [b]) => a.localeCompare(b)));
+      if (!baseSnapshot || !headSnapshot || normalized(baseSnapshot) !== normalized(reviewSnapshotState(join(box, 'base')))
+        || normalized(headSnapshot) !== normalized(reviewSnapshotState(src))) throw new Error('基底或受審快照前後不一致');
+      for (const [name, content] of Object.entries(protectedFiles)) {
+        const fd = openSync(join(box, name), fsConst.O_RDONLY | fsConst.O_NOFOLLOW);
+        try {
+          if (!fstatSync(fd).isFile() || fstatSync(fd).size > 64 * 1024 * 1024 || sha256(readFileSync(fd)) !== sha256(content)) throw new Error('複審清單或傳輸材料前後不一致');
+        } finally { closeSync(fd); }
+      }
+    } catch (e) { return failAndClean(`正式複審無效：快照或傳輸材料前後不一致、或無法核對（${errCode(e)}）；重新備好材料後重跑 scripts/grok-review.js`); }
+  }
   for (const [rp, buf] of snap.files) {
     if (binaries.includes(rp)) continue;
     const to = join(resultsSessions, rp);
@@ -1464,22 +1655,71 @@ export async function runScan(args, deps = {}) {
     dropResults();
     return failAndClean('驗屍：沒有任何工具足跡——這次掃描只證明 Grok 能回文字，不能證明審查能力沒有降級');
   }
-  if (outFile) writeFileSync(outFile, reply);
+  const used = modelsUsedIn(snap.files);
+  if (formal && (used.incomplete || used.rejected || !reviewModelsQualified(used.models))) {
+    return failAndClean(`正式複審的實際模型紀錄不完整或未符合已登記的 4.6 以上資格；模型紀錄摘要：${modelFieldText(used)}。核對模型與 session 格式後重跑 scripts/grok-review.js`);
+  }
+  if (outFile && !formal) { outWritten = true; writeFileSync(outFile, reply); }
   // 模型留痕（William 2026-09-22 裁「甲」）：當時掃描器不指定模型，上游自己換過一次（2026-09-21 grok-4.6→grok-4.7）
   // 而紀錄裡看不出來；2026-10-11 起明確指定（配方聲明的「指定模型」），這一格照舊記實際跑出來的。這一格只是**留痕不是閘**：讀不到／不認得／讀不完整都只是換一個
   // 值域寫死的字串，不擋掃描、不改退出碼。
-  const modelField = modelFieldText(modelsUsedIn(snap.files));   // 值域寫死、不含任何由日誌決定的數字（見該函式）
-  const recipe = `base..head=${base}..${head}｜受掃=${repoLabel}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜指定模型=${model}（推理 ${effort}）｜模型=${modelField}｜掃描程式 sha256=${scriptSha.slice(0, 12)}｜掃描起訖=${startedAt}→${endedAt}`;
+  const modelField = modelFieldText(used);   // 值域寫死、不含任何由日誌決定的數字（見該函式）
+  const recipe = `base..head=${base}..${head}｜受掃=${repoLabel}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜指定模型=${model}（推理 ${effort}）｜模型=${modelField}｜掃描程式 sha256=${scriptSha.slice(0, 12)}｜${formal ? '複審' : '掃描'}起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);
   say(recipe);
+  if (formal) {
+    let selected;
+    try { selected = selectFinalReply(snap.files, src, reply, EXPECTED_GROK_VERSION); }
+    catch (error) {
+      if (finalSelectionFailureCode(error) === 'ROOT_CARDINALITY') log(`final-root-structure=${JSON.stringify(finalSelectionRootDiagnostic(error))}`);
+      return failAndClean(`正式複審的完整最後回覆無法與 root 紀錄及 stdout 唯一對應（final-selection=${finalSelectionFailureCode(error)}）；核對固定 CLI 格式後重跑 scripts/grok-review.js`);
+    }
+    const review = { ...args.review, ...selected, manifestSha256: sha256(manifestText ?? ''), base, head, source: 'Grok CLI', model, effort,
+      observedModels: [...used.models], modelFloor: REVIEW_MODEL_FLOOR, modelQualified: true, recipe, resultsDir };
+    writeFileSync(join(resultsDir, 'review-manifest.json'), manifestText ?? '', { mode: 0o600, flag: 'wx' });
+    writeFileSync(join(resultsDir, 'review-result.json'), JSON.stringify(review, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+    return { code: 0, summary, review };
+  }
   return { code: 0, summary };
+  } catch (error) {
+    primaryFailure = { error };
+    throw new Error('掃描未完成；本場結果無效，請確認本場資源後重跑', { cause: error });
   } finally {
-    // r4 #4：任何出口（含 throw）都清盒子；轉送器與活金絲雀也在這裡收；r5 #3：grok 整個程序群組也在這裡確定死透
+    // 群組未確認清空時保留盒子，但不能讓這個失敗跳過盒外資源的收尾。
     try {
-      await killGroupAndWait(grokPgid);
-      try { relay?.kill(); } catch { /* 已死 */ }
-      try { if (liveDir) rmSync(liveDir, { recursive: true, force: true }); } catch { /* 已清 */ }
-      cleanup();
+      let groupCleared = false;
+      try { await killGroupAndWait(grokPgid); groupCleared = true; }
+      catch (error) { cleanupFailures.push({ phase: 'group', error }); }
+      try {
+        const ownRelay = relay;
+        if (ownRelay && !relayClosed) await new Promise((resolve, reject) => {
+          const done = () => { clearTimeout(timer); resolve(undefined); };
+          const timer = setTimeout(() => { ownRelay.off('close', done); reject(new Error('relay close timeout')); }, 2000);
+          ownRelay.once('close', done);
+          try { ownRelay.kill('SIGKILL'); }
+          catch (error) { clearTimeout(timer); ownRelay.off('close', done); reject(error); }
+        });
+      } catch (error) { cleanupFailures.push({ phase: 'relay', error }); }
+      try { if (liveDir) rmSync(liveDir, { recursive: true, force: true }); }
+      catch (error) { cleanupFailures.push({ phase: 'live', error }); }
+      cleanup(groupCleared);
+      if (primaryFailure || cleanupFailures.length) {
+        // 只處理本場盒外產物；事故指紋已去機密，不因收尾失敗順手抹去。
+        if (resultsDir) {
+          const ownResults = resultsDir;
+          const revoke = incidentWritten ? ['review-result.json', 'review-manifest.json', 'sessions'].map((name) => join(ownResults, name)) : [ownResults];
+          for (const path of revoke) try { rmSync(path, { recursive: true, force: true }); }
+          catch (error) { cleanupFailures.push({ phase: 'results', error }); }
+        }
+        if (outWritten && outFile) try { rmSync(outFile, { force: true }); }
+        catch (error) { cleanupFailures.push({ phase: 'output', error }); }
+      }
+      if (cleanupFailures.length) {
+        // eslint-disable-next-line no-unsafe-finally -- 收尾失敗必須否決待回傳的成功值；cause 保留最早錯誤。
+        throw Object.assign(new Error('掃描收尾未完成；本場結果無效，請確認本場資源後重跑', { cause: primaryFailure?.error ?? cleanupFailures[0].error }), {
+          cleanupStages: cleanupFailures.map((failure) => failure.phase),
+        });
+      }
     } finally {
       // 卸掉本輪 handler；若前面的收尾步驟丟錯，暫存路徑是否仍存在由那個錯誤回報，不在這行保證。
       process.off('SIGTERM', emergency); process.off('SIGINT', emergency);
@@ -1502,6 +1742,11 @@ if (isMainModule(import.meta.url)) {
   //    活金絲雀的餌要落在**真家目錄**才有意義（理由見 ScanDeps.liveRoot）。在這一行注入一個
   //    **不是家目錄、且已經存在**的根目錄，餌就搬家，而全套考題照樣綠（Codex #516 r1 對 BOX_ROOT 實測跑過全卷）
   //    ——釘住預設值的那一題直接呼叫 runScan、不經過這個接縫。
-  const { code } = await runScan({ base, head, promptFile, outFile, repo });
-  process.exit(code);
+  try {
+    const { code } = await runScan({ base, head, promptFile, outFile, repo });
+    process.exit(code);
+  } catch {
+    console.error('掃描未完成；本場結果無效，請確認本場資源後重跑');
+    process.exit(2);
+  }
 }

@@ -61,6 +61,11 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
   assert.equal(tierOf('package.json').tier, tierId('B'));
   // E 的腳本必須是明確名單：scripts/ 裡沒點名的新腳本＝沒列到（當 unknownTier）——寬鬆的 check-* 會把未來被啟動流程掛上的新腳本靜靜當成不需驗收（#573 r3）
   assert.equal(tierOf('scripts/check-node-version.js').tier, tierId('C'), 'start.command 每次啟動都跑它，壞了 App 起不來');
+  assert.equal(tierOf('scripts/grok-review.js').tier, tierId('E'), '正式複審入口不在 App 啟動路徑；同族工具依程序與考題驗證');
+  assert.deepEqual(tierOf('scripts/grok-final-reply.js'), { path: 'scripts/grok-final-reply.js', tier: tierId('E'), known: true }, '完整結論接線依程序與考題驗證；不在 App 啟動路徑');
+  for (const name of ['gemini-auth', 'gemini-client', 'gemini-relay', 'gemini-scan']) {
+    assert.deepEqual(tierOf(`scripts/${name}.js`), { path: `scripts/${name}.js`, tier: tierId('E'), known: true }, '隔離掃描腳本依程序與考題驗證；不在 App 啟動路徑');
+  }
   // 已刪的舊工具與舊閘的名字**刻意留在** E 的明確名單裡（第 6 步刪 acceptance-tier／pending-rulings、第 7 步刪五支舊閘、
   // 2026-09-20 刪本專案那支工作樹體檢 check-worktree-integrity）：分級工具把變更裡
   // status=removed 的路徑也拿去分級，名字拿掉＝刪它們的那一支自己落到未列到（C）。等這些刪除都合進主幹、也不會再重跑它們的分級

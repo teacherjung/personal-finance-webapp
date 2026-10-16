@@ -15,10 +15,15 @@
 //   只寫位置的指路（「見某檔第幾節」那種、不帶內容關鍵字）用內容搜不到：刪掉或改名一節時，舊字要另外照檔名、節名各搜一次（這支不做）。
 //
 // 退出碼：0＝掃完了（有沒有命中都是 0）／2＝掃不了（不在倉庫裡、基準版本找不到、git 出錯）。⚠️ 不是閘。
+// 指令列在輸出後面印 K5 的原文（哪些活文字要跟著改）：逐條判斷時用的就是它。只多印，不改退出碼。
 'use strict';
 const { spawnSync } = require('node:child_process');
 const { gitEnv } = require('./git-env.js');
 const { read: readSettings } = require('./settings-data.js');
+const { ruleFooter } = require('./build-rules.js');
+
+/** 逐條看命中時印的那一條（按需印條文）。 */
+const RULES_SHOWN = ['K5'];
 
 // 一次最多搜幾個字串、每個字串最多列幾處；超過的照實印出還剩多少，不靜靜截掉
 const MAX_PHRASES = 300;
@@ -179,8 +184,8 @@ function run(args = [], { settings = readSettings(), cwd = process.cwd(), runGit
 if (require.main === module) {
   let result;
   try { result = run(process.argv.slice(2)); } catch (e) { result = { code: 2, lines: [`舊文字掃描：沒預期到的錯誤（${(e && e.code) || (e && e.message) || '不明'}）——掃不了。`] }; }
-  process.stdout.write(`${result.lines.join('\n')}\n`);
+  process.stdout.write(`${[...result.lines, ...ruleFooter(RULES_SHOWN)].join('\n')}\n`);
   process.exit(result.code);
 }
 
-module.exports = { run, parseDiff, phrasesOf, pathPhrases, extract, searchAll, looksLikeName, MAX_PHRASES, MAX_HITS };
+module.exports = { run, parseDiff, phrasesOf, pathPhrases, extract, searchAll, looksLikeName, MAX_PHRASES, MAX_HITS, RULES_SHOWN };

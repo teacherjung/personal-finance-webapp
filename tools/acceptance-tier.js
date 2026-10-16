@@ -80,7 +80,7 @@ function changedPaths(changeId, { settings, platform, what }) {
   }
   const paths = [...new Set(files.flatMap((f) => [f.path, f.previousPath].filter(Boolean)))];
   if (!paths.length) return { error: ['這一支變更沒有動到任何檔案：算不出來（不猜）。'] };
-  return { paths, countNote, headSha: change.headSha };
+  return { paths, countNote, headSha: change.headSha, baseBranch: change.baseBranch };
 }
 
 function run(changeId, { settings = readSettings(), platform = { ask } } = {}) {

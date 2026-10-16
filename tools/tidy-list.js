@@ -19,6 +19,8 @@
 //   ③暫存資料夾：--tmp 給的資料夾（預設系統暫存區與 /tmp）第一層、名字像審查或掃描用的樹（TMP_NAME：帶 review、scan、mutat、
 //     mutant、evidence、survivor、probe、fixture 其中一個字，或前後是分隔符號的 PR 編號 pr<數字>、輪次 r<一兩位數>〔可以直接接 PR 編號〕），而且最後修改超過 --days 天
 //     （預設 1 天＝24 小時）的資料夾。它本身是或底下有登記在這個倉庫的工作樹（歸②判；只比登記的路徑，.git 讀不讀得到都一樣）、
+//     這個倉庫的 git 目錄、目前所在這棵樹、core.worktree 指的主工作目錄（git 目錄另存時 git 的工作樹清單第一筆是 git 目錄、不是實際的主工作目錄）、
+//     往下兩層裡有 .git 指回這個倉庫 git 目錄的樹（理財 #672 r5 第 2 條）、
 //     往下兩層裡別的倉庫的樹上鎖、讀不了狀態、有沒提交的改動、或有資料夾讀不了（判斷不了就保守不列），整個資料夾不列
 //     （送審產生器的布局是 review-…/tree、review-…/mutation，容器本身不是樹）。
 //   ④stash：每一筆都列、附建立的日期；stash 整個倉庫共用，誰的都在這裡。
@@ -35,8 +37,10 @@
 //   （裡面更深的檔改了，第一層的時間不一定跟著變），不看內容，名字不像審查樹的舊資料夾（例如考題留下的）不列；裡面的樹只往下找兩層、
 //   捷徑不跟，更深的樹或沒有 .git 的複本有沒有人在用看不到；
 //   別的倉庫的工作樹（登記在別的倉庫）不列——在那個倉庫裡跑才列得到。
+//   git 目錄另存、主工作目錄又埋在暫存資料夾往下兩層以外、core.worktree 沒設、而且不是從它裡面跑的：認不出它是這個倉庫的主工作目錄
+//   （git 自己也只能從那個目錄的 .git 找回去）。
 // 退出碼：0＝列完了（有沒有東西都是 0）／2＝列不了（不在 git 倉庫裡、主幹找不到、主幹沒填又沒給 --main、參數不對、git 出錯、
-//   全域那幾次讀到的不能信——印了警告、形狀認不得、核不出主目錄是哪一個）。
+//   全域那幾次讀到的不能信——印了警告、形狀認不得、核不出主目錄、git 目錄、目前這棵樹、core.worktree 指的主工作目錄是哪一個）。
 'use strict';
 const fs = require('node:fs');
 const os = require('node:os');
@@ -199,15 +203,47 @@ function staleBranches(cwd, main, trees, unsure) {
   return out;
 }
 
-/** ②工作樹：資料夾不在、檢出①的分支、或分離狀態停在主幹歷史裡而且乾淨。 */
-function staleWorktrees(cwd, main, branches, trees, unsure) {
-  // 主目錄是哪一個要先核實（#73 r6 R1）：git 回的路徑要剛好一行、不是空的；真實路徑要解得出來。核不出來＝連「主目錄不列」都做不到，
-  // 照全域那幾次的處理退 2、什麼都不列——不拿沒核過的字串去比（用捷徑當目前資料夾時，那個字串跟登記的真實路徑對不上，主目錄就被列出來）
-  const raw = git(cwd, ['rev-parse', '--git-common-dir']).stdout.replace(/\n$/u, '');
-  if (!raw || raw.includes('\n')) throw new TidyError(`git rev-parse --git-common-dir 的輸出形狀認不得「${raw.slice(0, 60).replace(/\n/gu, '⏎')}」：核不出主目錄，什麼都不列`);
+/** 一行路徑的輸出：剛好一行、不是空的，不然退 2（全域那幾次的處理）。 */
+function onePath(cwd, args, what) {
+  const raw = git(cwd, args).stdout.replace(/\n$/u, '');
+  if (!raw || raw.includes('\n')) throw new TidyError(`git ${args.join(' ')} 的輸出形狀認不得「${raw.slice(0, 60).replace(/\n/gu, '⏎')}」：核不出${what}，什麼都不列`);
+  return raw;
+}
+
+/**
+ * 這個倉庫自己在哪（都要核實；核不出來＝退 2、什麼都不列）：
+ *   mainDir＝git-common-dir 的上一層，一般布局的主目錄（②拿它跳過主目錄）。要先核實（#73 r6 R1）：git 回的路徑要剛好一行、不是空的；
+ *     真實路徑要解得出來——不拿沒核過的字串去比（用捷徑當目前資料夾時，那個字串跟登記的真實路徑對不上，主目錄就被列出來）。
+ *   gitDir＝git-common-dir 本身（存歷史的目錄）；keep＝③一定不能列、底下也不能有的：git 目錄本身、目前所在這棵樹的頂層、
+ *     core.worktree 指的主工作目錄。git 目錄另存（--separate-git-dir）時，git 的工作樹清單第一筆是 git 目錄、不是實際的主工作目錄，
+ *     只靠登記的路徑會把實際的主工作目錄列進③（理財 #672 r5 第 2 條）。core.worktree 照 git 實際用的讀（直接寫的、include 引進來的、主樹的 config.worktree 都算）；
+ *     沒設＝沒有這一項；設了、指的地方確定不在＝沒有這一項。
+ */
+function repoPlaces(cwd) {
+  const raw = onePath(cwd, ['rev-parse', '--git-common-dir'], '主目錄');
   const m = read('realpathSync', path.dirname(path.resolve(cwd, raw)));
   if (!m.ok) throw new TidyError(`主目錄的真實路徑判斷不了（${m.code}）：核不出主目錄，什麼都不列`);
-  const mainDir = m.value;
+  const g = read('realpathSync', path.resolve(cwd, raw));
+  if (!g.ok) throw new TidyError(`git 目錄的真實路徑判斷不了（${g.code}）：核不出這個倉庫存在哪，什麼都不列`);
+  const top = read('realpathSync', path.resolve(cwd, onePath(cwd, ['rev-parse', '--show-toplevel'], '目前這棵樹的頂層')));
+  if (!top.ok) throw new TidyError(`目前這棵樹的真實路徑判斷不了（${top.code}）：什麼都不列`);
+  const keep = [g.value, top.value];
+  // 在 git 目錄裡問 git，讀到的跟 git 自己用的一樣（含 include 引進來的、主樹的 config.worktree；#79 r1 R1：只讀 git 目錄裡那份檔，
+  // 這兩種放法都讀不到）；退 1 而且沒出聲＝沒設（git config 的文件寫明），其他＝判斷不了、退 2
+  const wt = git(g.value, ['config', '--get', 'core.worktree'], { allowFail: true });
+  if ((wt.stderr || '').trim()) throw new TidyError(`git config 讀 core.worktree 印了警告「${firstLine(wt.stderr)}」：這一次讀到的不能信，什麼都不列`);
+  if (wt.status === 0) {
+    const v = wt.stdout.replace(/\n$/u, '');
+    if (!v || v.includes('\n')) throw new TidyError(`core.worktree 的值形狀認不得「${v.slice(0, 60).replace(/\n/gu, '⏎')}」：核不出主工作目錄，什麼都不列`);
+    const w = read('realpathSync', path.resolve(g.value, v));   // 相對路徑照 git 的規定從 git 目錄算
+    if (w.ok) keep.push(w.value);
+    else if (!w.gone) throw new TidyError(`core.worktree 指的主工作目錄判斷不了（${w.code}）：什麼都不列`);
+  } else if (wt.status !== 1) throw new TidyError(`git config 讀 core.worktree 退 ${wt.status === null ? '（被殺掉）' : wt.status}：核不出主工作目錄，什麼都不列`);
+  return { mainDir: m.value, gitDir: g.value, keep };
+}
+
+/** ②工作樹：資料夾不在、檢出①的分支、或分離狀態停在主幹歷史裡而且乾淨。 */
+function staleWorktrees(cwd, main, branches, trees, unsure, mainDir) {
   const listed = new Set(branches.map((b) => b.name));
   const out = [];
   for (const [i, w] of trees.entries()) {
@@ -241,7 +277,7 @@ function staleWorktrees(cwd, main, branches, trees, unsure) {
  * 送審產生器的布局是 review-…/tree、review-…/mutation，容器本身不是樹，所以只比完全相同的路徑不夠。
  */
 const TREE_DEPTH = 2;
-function protectedInside(dir, own) {
+function protectedInside(dir, own, gitDir) {
   // dir 已經是真實路徑（暫存資料夾先解過真實路徑、候選用 lstat 確定是資料夾而不是捷徑），不用再解一次
   const here = path.resolve(dir);
   for (const o of own) if (o === here || o.startsWith(here + path.sep)) return { busy: `本身是、或底下有登記在這個倉庫的工作樹（${o}，歸工作樹那一類判）` };
@@ -256,6 +292,10 @@ function protectedInside(dir, own) {
         if (!txt.ok) return { unsure: `判斷不了 ${d} 是不是上鎖的樹（.git 讀不了：${txt.code}）` };
         const m = /^gitdir:\s*(.+?)\s*$/mu.exec(txt.value);
         if (m) {
+          // .git 指回這個倉庫的 git 目錄（或它底下的 worktrees/…）＝這個倉庫的樹：git 目錄另存時主工作目錄就長這樣，git 的工作樹清單卻不列它的路徑（理財 #672 r5 第 2 條）
+          const mine = read('realpathSync', path.resolve(d, m[1]));
+          if (mine.ok && (mine.value === gitDir || mine.value.startsWith(gitDir + path.sep))) return { busy: `是這個倉庫的樹（${d} 的 .git 指回這個倉庫的 git 目錄）` };
+          if (!mine.ok && !mine.gone) return { unsure: `判斷不了 ${d} 是不是這個倉庫的樹（${mine.code}）` };
           const lock = read('lstatSync', path.join(path.resolve(d, m[1]), 'locked'));
           if (lock.ok) return { busy: `裡面有上鎖的樹（${d}）` };
           if (!lock.ok && !lock.gone) return { unsure: `判斷不了 ${d} 有沒有上鎖（${lock.code}）` };
@@ -275,7 +315,7 @@ function protectedInside(dir, own) {
 }
 
 /** ③暫存資料夾：名字像審查或掃描用的樹、超過 days 天沒改；裡面有不能收的樹的不列（protectedInside）。 */
-function staleTmp(dirs, days, now, own, unsure) {
+function staleTmp(dirs, days, now, own, unsure, gitDir) {
   const out = [];
   const seen = new Set();
   for (const d of dirs) {
@@ -294,7 +334,7 @@ function staleTmp(dirs, days, now, own, unsure) {
       if (!st.value.isDirectory()) continue;
       const age = now - st.value.mtimeMs;
       if (age <= days * DAY_MS) continue;
-      const guard = protectedInside(p, own);
+      const guard = protectedInside(p, own, gitDir);
       if (guard && guard.unsure) { unsure.push({ dir: p, why: guard.unsure }); continue; }
       if (guard) continue;
       out.push({ dir: p, why: `${Math.floor(age / DAY_MS)} 天沒改` });
@@ -335,11 +375,12 @@ function runInner({ settings, cwd, argv, now, tmpDefaults }) {
     const unsure = [];
     const trees = worktreeEntries(cwd);
     const branches = staleBranches(cwd, main, trees, unsure);
-    const worktrees = staleWorktrees(cwd, main, branches, trees, unsure);
-    const own = new Set();
+    const places = repoPlaces(cwd);
+    const worktrees = staleWorktrees(cwd, main, branches, trees, unsure, places.mainDir);
+    const own = new Set(places.keep);
     for (const w of trees) { own.add(path.resolve(w.dir)); if (w.real) own.add(w.real); }
     const tmpDirs = opts.tmp.length ? opts.tmp : tmpDefaults;
-    const tmp = staleTmp(tmpDirs, opts.days, now, own, unsure);
+    const tmp = staleTmp(tmpDirs, opts.days, now, own, unsure, places.gitDir);
     const st = stashes(cwd, unsure);
     const lines = [`整理清單｜主幹 ${main.label}｜只列不刪：已合併或上游已刪的分支 ${branches.length}、沒人用的工作樹 ${worktrees.length}、暫存資料夾的舊審查樹 ${tmp.length}（超過 ${opts.days} 天沒改）、stash ${st.length}${unsure.length ? `；判斷不了、沒列 ${unsure.length}` : ''}｜列出來的是候選，刪之前擁有者再看一眼`];
     if (opts.list) {

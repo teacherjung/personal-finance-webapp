@@ -59,6 +59,20 @@ test('PROJECT-SETTINGS.md 與 settings.json 產生的結果逐字元相同（設
   );
 });
 
+test('個別工具登記的完整名字列入設定說明，空欄與缺欄仍列空', () => {
+  const data = unfilled();
+  data.forbidden.allowedTools = ['mcp__probe_exact__Repo.Get', 'mcp__probe_apps__provider__read-record'];
+  const line = build(data).split('\n').find((s) => s.startsWith('- 個別准用的完整工具名'));
+  assert.ok(line, '設定說明漏掉個別工具名：檢查 tools/build-settings.js 的禁區節，重跑 node --test tests/settings.test.js');
+  assert.ok(line.endsWith('mcp\\_\\_probe\\_exact\\_\\_Repo\\.Get、mcp\\_\\_probe\\_apps\\_\\_provider\\_\\_read\\-record'),
+    '完整工具名的大小寫、分段或符號被改掉：檢查 tools/build-settings.js 的禁區節，重跑 node --test tests/settings.test.js');
+  for (const value of [[], undefined]) {
+    data.forbidden.allowedTools = value;
+    const emptyLine = build(data).split('\n').find((s) => s.startsWith('- 個別准用的完整工具名'));
+    assert.ok(emptyLine && emptyLine.endsWith('（空）'), '空清單仍須看得見：檢查 tools/build-settings.js 的禁區節，重跑 node --test tests/settings.test.js');
+  }
+});
+
 test('啟用狀態只能填約定的那三種', () => {
   for (const machine of read().machines) {
     assert.ok(
