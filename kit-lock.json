@@ -1,6 +1,6 @@
 {
   "repo": "teacherjung/ai-collab-kit",
-  "version": "2e910675ad5b4244bb5848185138efa379f0157d",
+  "version": "88a003a3c143f592194ed186672e9f386fa3193a",
   "syncedAt": "2026-10-16",
   "entries": [
     {
@@ -225,7 +225,7 @@
     },
     {
       "mode": "100644",
-      "blob": "757e6ffbf6a613587c3177590138c437b1317362",
+      "blob": "a8085df95e74840bf120588d8310eada159ce162",
       "path": "tests/forbidden-defaults.test.js"
     },
     {

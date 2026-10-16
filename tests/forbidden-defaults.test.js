@@ -28,8 +28,8 @@
 // ⚠️ 守不到的：只比「有沒有少」，專案多加的項一律不比——放行方向（safeServers／allowedTools／allowlist／readPrefixes）多加一項＝更鬆，
 //   servers 多登記一個連接器也可能更鬆（白名單是所有碰錢連接器共用的一份，同名的工具會放行）；多加是改禁區清單本身，
 //   照 README 第 3 步的手續（改 forbidden 那一塊＝重印指紋、補複本、重按信任），這一題看不到（不碰錢連接器那一級靠自覺＝
-//   裁示者 2026-09-26；allowlist、readPrefixes 多加不在那條裁示裡）；擋的方向那六欄裡也有兩種「更嚴」的改法會被擋：
-//   把碰錢連接器從 servers 整個拿掉（沒改登記到別欄＝那個連接器全擋）、把 patterns 的一條搬去 patternsReadSafe（轉帳提款那一族 2026-10-08 就是先改範本再搬的）
+//   裁示者 2026-09-26；allowlist、readPrefixes 多加不在那條裁示裡）；擋的方向那六欄只比範本項目是否缺少，不判定整體鬆緊：
+//   把碰錢連接器從 servers 整個拿掉、把 patterns 的一條搬去 patternsReadSafe（轉帳提款那一族 2026-10-08 就是先改範本再搬的）
 //   ——兩種都是看得見的紅、要先改套件範本；連接器登記名是**這個 claude.ai 帳號**的連接器編號
 //   （換帳號＝把新編號補進去，碰錢那一欄的舊編號留著、不碰錢那一欄的可以拿掉；拒絕清單那兩支下單工具的名字也綁著舊編號，
 //   要照新編號補一份——沒補，新編號上的下單工具仍由白名單制擋，但 deny 那一道就沒了；正本＝README「搬進一個專案」第 1 步），
@@ -52,7 +52,7 @@ const UNSET = '未設定';
 const LISTS = ['servers', 'safeServers', 'allowedTools', 'allowlist', 'deny', 'verbs', 'nouns', 'readPrefixes', 'patterns', 'patternsReadSafe'];
 /**
  * 專案要「至少包含範本」的只有擋的方向那六欄：拿掉一項多半是變鬆（拒絕清單少一支、詞表少一個字、樣式表少一條；碰錢連接器從
- * servers 拿掉再登記到不碰錢那一欄最危險——只拿掉不改登記＝那個連接器全擋，是更嚴，也照樣會紅）。放行方向的欄位不比：判準見「兩張樣式表」預設字彙表節。
+ * servers 拿掉的影響須連同其他登記欄位核對，見「兩張樣式表」）。放行方向的欄位不比：判準見「兩張樣式表」預設字彙表節。
  * 多加一項不管哪一欄都不比——這一題不擋「更鬆」，見檔頭「守不到的」。
  */
 const RESTRICTIVE = ['servers', 'deny', 'verbs', 'nouns', 'patterns', 'patternsReadSafe'];
@@ -126,7 +126,7 @@ test('空白範本的預設自己站得住：測試鈕在拒絕清單、兩欄�
   assert.equal(defaults.name, UNSET, '範本的名字要保持「未設定」（settings.test.js ⑨ 也釘著；新專案填名字才算接上攔截器）');
   assert.ok(defaults.deny.includes(CANARY), `範本的拒絕清單要有測試鈕 ${CANARY}（驗收看的就是它）`);
   assert.ok(defaults.servers.length >= 1, '碰錢的連接器至少一個');
-  assert.ok(defaults.safeServers.length >= 1, '不碰錢的連接器至少一個（名單空＝全擋，範本不可以是那個形狀）');
+  assert.ok(defaults.safeServers.length >= 1, '不碰錢的連接器至少一個');
   const f = { ...defaults, name: '假禁區' };
   const money = defaults.servers[0];
   const safe = defaults.safeServers[0];
