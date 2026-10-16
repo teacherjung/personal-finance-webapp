@@ -25,7 +25,7 @@ export function streamEvents(binding = BINDING, schema = findingsSchema(binding)
 }
 export const streamBytes = events => Buffer.from(events.map(e => JSON.stringify(e)).join('\n') + '\n');
 
-if (isMainModule(import.meta.url)) {
+if (isMainModule(import.meta.url) && process.argv[2] !== undefined) {
   const [mode, marker] = process.argv.slice(2);
   if (mode === 'hang') setInterval(() => {}, 1000);
   else if (mode === 'early') process.exit(0);

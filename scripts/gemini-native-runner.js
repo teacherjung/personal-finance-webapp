@@ -50,6 +50,8 @@ export function prepareNativePacket(materials, { scanId, model }) {
   if (!materials || typeof materials.text !== 'string' || materials.materialSha256 !== sha256(materials.text)) failure('MATERIAL_HASH');
   const material = parseUniqueJson(materials.text);
   if (!Array.isArray(material.files) || material.files.length === 0) failure('MATERIAL_FILES');
+  if (typeof material.diff !== 'string' || !material.diff.trim()
+    || /^(?:GIT binary patch|Binary files .+ differ)$/m.test(material.diff)) failure('TEXT_DIFF_REQUIRED');
   const binding = { scanId, materialSha256: materials.materialSha256 };
   const schema = findingsSchema(binding);
   const instructions = [

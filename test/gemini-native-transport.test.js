@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +13,11 @@ import { prepareNativePacket } from '../scripts/gemini-native-runner.js';
 import { killGroupAndWait } from '../scripts/grok-scan.js';
 import { FILES, MODEL } from './helpers/gemini-native-fixture.js';
 const fixture = fileURLToPath(new URL('./helpers/gemini-native-fixture.js', import.meta.url));
+
+test('夾具被整批考題直接載入時不等待輸入也不輸出合成答案', () => {
+  const result = spawnSync(process.execPath, [fixture], { env: { PATH: '/usr/bin:/bin' }, encoding: 'utf8', timeout: 2000 });
+  assert.equal(result.status, 0); assert.equal(result.stdout, ''); assert.equal(result.stderr, '');
+});
 
 async function withChild(mode, fn) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'gemini-transport-'))), marker = join(dir, 'child.pid');

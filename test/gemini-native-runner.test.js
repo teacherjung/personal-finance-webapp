@@ -54,3 +54,10 @@ test('材料 hash 與正式 findings schema 帶入完整輸入，沒有預填答
   assert.equal(packet.formalScan, false);
   assert.throws(() => prepareNativePacket({ text, materialSha256: '0'.repeat(64) }, { scanId: 'synthetic', model: MODEL }));
 });
+
+test('屬性或外部設定使文字差異變成二進位摘要時拒絕準備，不把摘要說成完整 diff', () => {
+  for (const diff of ['Binary files a/lib/synthetic.js and b/lib/synthetic.js differ\n', 'diff --git a/x b/x\nGIT binary patch\n', '']) {
+    const text = JSON.stringify({ files: FILES, diff, prompt: 'synthetic' });
+    assert.throws(() => prepareNativePacket({ text, materialSha256: sha256(text) }, { scanId: 'synthetic', model: MODEL }), /TEXT_DIFF_REQUIRED/);
+  }
+});
