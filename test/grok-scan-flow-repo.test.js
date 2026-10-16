@@ -254,6 +254,34 @@ test('受掃倉庫的身分：只留 owner/name，網址裡的權杖與本機路
   assert.ok(r2.logs.some((l) => l.startsWith('（受掃倉庫：（沒有可辨認的 GitHub 遠端）')));
 });
 
+test('合成 insteadOf 確實改寫時，配方與 launch 留原始遠端標籤；非 GitHub 原值不借改寫升格', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const cases = [
+    ['https://synthetic-token:SYNTHETIC-LABEL-SECRET@github.com/acme/original.git', 'https://github.com/rewritten/elsewhere.git', 'acme/original'],
+    ['https://example.test/opaque.git', 'https://github.com/rewritten/masquerade.git', '（沒有可辨認的 GitHub 遠端）'],
+  ];
+  for (const [original, rewritten, expected] of cases) {
+    const repo = tinyRepo({ remote: original });
+    execFileSync('git', ['-C', repo.dir, 'config', `url.${rewritten}.insteadOf`, original], { env: CLEAN_ENV });
+    const control = execFileSync('git', ['-C', repo.dir, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: CLEAN_ENV }).trim();
+    assert.equal(control, rewritten, '修正本題合成 insteadOf 設定後重跑本檔');
+    for (const purpose of /** @type {const} */ (['review', 'scan'])) {
+      const iso = isolated();
+      /** @type {string[]} */ const logs = [];
+      const result = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile(), repo: repo.dir, purpose,
+        ...(purpose === 'review' ? { model: 'grok-4.7', effort: 'xhigh', review: { project: 'owner/repo', change: '17', reviewer: 'Grok', source: 'Grok CLI', round: 1, previousHead: repo.base } } : {}),
+      }, { ...iso, ...withGrok(fakeGrok({ formalTranscript: true, model: 'grok-4.7' })), relayScript: fakeRelay(), log: (line) => logs.push(line) });
+      assert.equal(result.code, 0, result.summary.join('\n'));
+      const recipe = result.summary.find((line) => line.startsWith('base..head=')) ?? '';
+      assert.ok(recipe.includes(`｜受掃=${expected}｜`), '修正原始 remote.origin.url 的標籤讀取後重跑本檔');
+      const directories = readdirSync(iso.resultsRoot);
+      assert.equal(directories.length, 1, '修正本輪結果包接線後重跑本檔');
+      const launch = JSON.parse(readFileSync(join(iso.resultsRoot, directories[0], 'launch.json'), 'utf8'));
+      assert.equal(launch.repo, expected, '修正啟動紀錄的原始遠端標籤後重跑本檔');
+      assert.ok(!JSON.stringify({ logs, summary: result.summary, launch }).includes(original), '修正遠端標籤的封閉解析後重跑本檔');
+    }
+  }
+});
+
 test('指令列：--repo=… 與 --repo 給兩次＝退 2（不默默掃回本倉庫、不默默挑一個）', () => {
   const script = join(ROOT, 'scripts', 'grok-scan.js');
   const home = keep(mkdtempSync(join(tmpdir(), 'cli-home-')));

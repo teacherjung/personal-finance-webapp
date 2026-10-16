@@ -1011,7 +1011,7 @@ export async function runScan(args, deps = {}) {
     if (typeof effort !== 'string' || !/^[a-z]+$/.test(effort)) return fail('settings.json 掃描那一節的 maxEffort（最高推理）沒填或形狀不對');
   }
   // 紀錄：掃的是哪一個倉庫、用的是哪一版掃描程式（倉庫寫 owner/name、不寫路徑；程式寫內容雜湊、不靠 git）
-  const origin = spawnSync('git', ['--no-replace-objects', '-C', repo, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnv() });
+  const origin = spawnSync('git', ['--no-replace-objects', '-C', repo, 'config', '--get', 'remote.origin.url'], { encoding: 'utf8', env: gitEnv() });
   const repoLabel = (origin.status === 0 && repoLabelFrom(origin.stdout.trim())) || '（沒有可辨認的 GitHub 遠端）';
   /** @type {string} */ let scriptSha;
   try { scriptSha = createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'); } catch (e) { return fail(`讀不出掃描程式本身（${errCode(e)}）`); }
@@ -1121,7 +1121,7 @@ export async function runScan(args, deps = {}) {
   //   不放進指令參數：macOS 單一指令的參數上限約 1MB（ARG_MAX），原本用 -p 把整份材料當參數，
   //   差異 1.1MB 的那一支（整批同步）在起 grok 那一步就 spawn E2BIG、一個字都沒掃到。
   //   檔放在盒子根（不在 src 裡，不混進受掃的樹）；盒子在所有出口都會清，它跟著走。
-  //   **在盒子裡跑任何沙箱內的程式之前就寫好**（下面的 grok --version 是第一個）：晚寫的話，沙箱內的程式留下的子程序
+  //   **在盒子裡跑未信任 CLI（包含 grok --version）之前就寫好**：晚寫的話，沙箱內的程式留下的子程序
   //   可以先在盒子裡放一個同名的捷徑指到盒外，沙箱外的父程序寫材料時就跟著捷徑、覆寫使用者寫得到的任何檔（#673 的 Grok 掃描指出、實測重現）。
   //   'wx'（獨占建立）是第二道：檔名已經在＝有人先放了東西，不跟隨、不覆寫、不掃。
   // --no-ext-diff --no-textconv：受審版本的 .gitattributes 可以替檔案挑 diff 驅動，git 就會在盒子**外面**照設定執行那支轉檔程式
@@ -1172,7 +1172,6 @@ export async function runScan(args, deps = {}) {
     const parsed = /^grok (\S+)/.exec(verText)?.[1];
     return ver.status !== 0 || parsed !== EXPECTED_GROK_VERSION ? `grok 版本不符：要 ${EXPECTED_GROK_VERSION}，實際「${verText || ver.error?.message || ver.status}」（${(ver.stderr || '').slice(-200)}）` : null;
   };
-  if (!formal) { const why = checkVersion(); if (why) return failAndClean(why); }
   {
     // 不用 shell pipeline 組路徑；git 一律帶 gitEnv()（鐵則 11：GIT_DIR 等會讓 -C 失效、指去別棵 repo）；
     // 也一律帶 --no-replace-objects：gitEnv() 連 GIT_NO_REPLACE_OBJECTS 一起清掉，倉庫裡的 refs/replace 會把 head 換成別的內容、紀錄卻還寫 head（#675 複審後掃的反駁審查實測）
@@ -1248,14 +1247,14 @@ export async function runScan(args, deps = {}) {
       if (existsSync(join(src, forbidden))) return failAndClean(`盒子裡出現不該有的檔：${forbidden}——git archive 不該帶出它，先查 .gitignore`);
     }
   }
-  if (formal) { const why = checkVersion(); if (why) return failAndClean(why); }
-
   // ── ② 金絲雀（fail-closed；用本掃的 port 跑，跟正式發射同一組參數）──
   {
     const { code, lines } = await (deps.runCanary ?? runCanary)(box, { relayPort });
     for (const l of lines) say('  ' + l);   // 摘要與 log 同一份、同一道門
     if (code !== 0) return failAndClean(code === 1 ? '金絲雀：有一隻活著＝沙箱是假的，不掃' : '金絲雀：這台機器跑不了沙箱／對照組不活，不掃');
   }
+  // 盒內可被未信任程序改動路徑的可信父寫須早於 CLI，避免它先植入捷徑、再由父程序跟隨寫出盒外。
+  { const why = checkVersion(); if (why) return failAndClean(why); }
 
   // ── DLP 針：真 auth.json 裡沒給盒子的值（r6 #6：讀不到＝退 2，不是空集合放行；按欄位排除、不按內容形狀）──
   /** @type {string[]} */ let needles;

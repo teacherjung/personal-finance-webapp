@@ -2,7 +2,7 @@
 // 假 Grok 只驗正式複審材料與安全流程；不證明真模型的審查品質。
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdtempSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdtempSync, lstatSync, readlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -46,6 +46,7 @@ async function reviewRun(options = {}) {
   { ...iso, ...withGrok(inst), relayScript: fakeRelay(), ...options.deps, log: (line) => {
     logs.push(line);
     if (line.startsWith('盒子：')) box = line.slice('盒子：'.length);
+    options.onLog?.(line, box);
     if (line.startsWith('複審開始：') && existsSync(join(box, 'review-manifest.json'))) {
       observed = {
         manifest: JSON.parse(readFileSync(join(box, 'review-manifest.json'), 'utf8')),
@@ -80,10 +81,12 @@ test('正式材料的 git 子行程收到的環境不含 GIT 家族，dirty GIT_
     process.env.PATH = root + ':' + before.PATH;
     process.env.GIT_DIR = join(root, 'wrong-repository');
     process.env.GIT_FUTURE_REVIEW_CANARY = 'must-not-reach-child';
-    const result = await runScan({ base: repo.base, head: repo.head, repo: repo.dir, promptFile: promptFile(), purpose: 'review', model: 'grok-4.7', effort: 'xhigh', review: identity }, { ...isolated(), ...withGrok(fake), relayScript: fakeRelay(), log: () => {} });
+    const result = await runScan({ base: repo.base, head: repo.head, repo: repo.dir, promptFile: promptFile(), purpose: 'review', model: 'grok-4.7', effort: 'xhigh', review: { ...identity, previousHead: repo.base } }, { ...isolated(), ...withGrok(fake), relayScript: fakeRelay(), log: () => {} });
     const rows = readFileSync(observed, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     assert.ok(rows.some((row) => row.args.includes('ls-tree') && row.args.includes('-rz')), '修正複審材料 git 呼叫後重跑本檔');
     assert.ok(rows.some((row) => row.args.includes('cat-file') && row.args.includes('blob')), '修正 blob 讀取接線後重跑本檔');
+    assert.ok(rows.some((row) => row.args.includes('diff') && row.args.includes(`${repo.base}..${repo.head}`)), '修正 previousHead 的本輪差異接線後重跑本檔');
+    assert.ok(rows.some((row) => row.args.includes('config') && row.args.includes('--get') && row.args.includes('remote.origin.url')), '修正原始遠端標籤讀取接線後重跑本檔');
     for (const row of rows) assert.deepEqual(row.keys, [], '修正該 git 呼叫的 gitEnv 後重跑本檔');
     if (SANDBOX_OK) { assert.equal(result.code, 0, result.summary.join('\n')); assert.equal(result.review?.head, repo.head); }
   } finally {
@@ -124,13 +127,55 @@ test('正式複審把本輪明確指定的模型與推理傳進 CLI，不拿掃�
   assert.ok(result.review.stdout.includes('--reasoning-effort\nhigh\n'));
 });
 
-test('正式複審在第一個盒內程序之前備妥材料與突變相依副本', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+test('正式複審在首次未信任 CLI 之前備妥材料與突變相依副本', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
   const files = ['src/a.txt', 'base/a.txt', 'mutation/a.txt', 'src/node_modules/eslint/package.json', 'mutation/node_modules/eslint/package.json', 'materials.md', 'review-manifest.json'];
   const versionProbe = files.map((file) => `[ -f ${file} ]`).join(' && ') + ' || exit 93';
   const { result } = await reviewRun({ versionProbe });
   assert.equal(result.code, 0, result.summary.join('\n'));
-  assert.ok(result.review, '修正第一個盒內程序前的建置順序後重跑本檔');
+  assert.ok(result.review, '修正首次未信任 CLI 前的建置順序後重跑本檔');
 });
+
+for (const purpose of ['review', 'scan']) {
+  test(`${purpose === 'review' ? '正式複審' : '掃描'}在首次未信任 CLI 前完成可信父寫，版本程式植鏈後不覆寫盒外標記`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+    const root = keep(mkdtempSync(join(tmpdir(), 'grok-parent-write-')));
+    const outside = join(root, 'owned-marker.txt');
+    const marker = `SYNTHETIC-PARENT-WRITE-${purpose}\n`;
+    writeFileSync(outside, marker);
+    const outFile = join(root, 'scan-result.txt');
+    const files = ['canary-inside.txt', 'materials.md', 'src/a.txt', 'src/node_modules/eslint/package.json',
+      ...(purpose === 'review' ? ['base/a.txt', 'mutation/a.txt', 'mutation/node_modules/eslint/package.json', 'review-manifest.json', 'full.diff', 'round.diff'] : [])];
+    const quote = (/** @type {string} */ value) => `'${value.replace(/'/g, "'\\''")}'`;
+    const versionProbe = `${files.map((file) => `[ -f ${quote(file)} ]`).join(' && ')} && printf READY > tmp/parent-write-ready || printf NOT_READY > tmp/parent-write-ready; printf 'VERSION\\n' >> tmp/version-events; rm -f canary-inside.txt; ln -s ${quote(outside)} canary-inside.txt || exit 94`;
+    let canaryCalls = 0;
+    let readiness = '', versionEvents = '', linkTarget = '';
+    // 此假 canary 只重現固定父寫點，不量真金絲雀的全機探針或沙箱能力。
+    const { result } = await reviewRun({
+      args: { purpose, ...(purpose === 'scan' ? { outFile } : {}) }, versionProbe,
+      deps: { runCanary: async (/** @type {string} */ box) => {
+        canaryCalls++;
+        writeFileSync(join(box, 'canary-inside.txt'), 'INSIDE-OK\n');
+        return { code: 0, lines: ['（本題可信父寫完成）'] };
+      } },
+      onLog: (/** @type {string} */ line, /** @type {string} */ box) => {
+        if (!line.startsWith('複審開始：') && !line.startsWith('掃描開始：')) return;
+        const ready = join(box, 'tmp', 'parent-write-ready');
+        const events = join(box, 'tmp', 'version-events');
+        readiness = existsSync(ready) ? readFileSync(ready, 'utf8') : 'MISSING';
+        versionEvents = existsSync(events) ? readFileSync(events, 'utf8') : '';
+        const inside = join(box, 'canary-inside.txt');
+        linkTarget = existsSync(inside) && lstatSync(inside).isSymbolicLink() ? readlinkSync(inside) : '';
+      },
+    });
+    assert.equal(result.code, 0, result.summary.join('\n'));
+    assert.equal(canaryCalls, 1, '修正可信 canary 接線後重跑本檔');
+    assert.equal(versionEvents, 'VERSION\n', '修正版本查詢接線後重跑本檔');
+    assert.equal(linkTarget, outside, '修正本題假版本的植鏈操作後重跑本檔');
+    assert.equal(readFileSync(outside, 'utf8'), marker, '修正首次未信任 CLI 與可信父寫順序後重跑本檔');
+    assert.equal(readiness, 'READY', '修正原始碼、相依、材料與可信 canary 的前置順序後重跑本檔');
+    if (purpose === 'review') assert.ok(result.review, '修正正式結果產生路徑後重跑本檔');
+    else assert.equal(readFileSync(outFile, 'utf8'), 'FAKE-REPLY', '修正掃描輸出接線後重跑本檔');
+  });
+}
 
 for (const [label, shell] of [
   ['受審檔', 'printf changed > a.txt'],

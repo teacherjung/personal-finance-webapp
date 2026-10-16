@@ -15,12 +15,7 @@
 
 ### 套件檔常設指示
 
-**原話與來源**：以下日期與引文照[套件 AGENTS.md 的固定版本](https://github.com/teacherjung/ai-collab-kit/blob/436ca9bd4277450812ceec00a509bf8cc9331f37/AGENTS.md#L65)；[無例外裁示留痕](https://github.com/teacherjung/ai-collab-kit/pull/106#issuecomment-6177109301)標明由 Claude 轉述。
-
-- 2026-10-05：「我想要定一個規則，就是所有的專案裏面的檔案，只要是從套件裏面同步過去的，都不能做更改，只能在套件這邊改完之後同步回去。專案能改的是他其他的檔案，也就是不是套件複製過去的檔案。」
-- 2026-10-14：「那就幫我把這道保護補上：共用檔案都先在套件修改，再同步到理財；同步前如果發現理財有獨有的修改，就先擋下來，不要覆蓋。記得避開目前正在做的 PR，這個分工也要寫進共同規則。」「我們是不是應該有個共用檔案清單，請理財這邊開工前先查看，如果會動到就跟擁有者說，改動應該去套件那邊實作，在同步回理財。」
-- 2026-10-15：「A（建議）：一律不能改，沒有例外。範圍照清單算，從範本抄出來再填的檔算專案自己的。急的時候先用專案自己的設定止血，例如在專案的禁區清單多擋一個工具名（這要你點頭），再走「套件一支、同步一支」。」
-- 2026-10-15，對「先寫原話、再改規矩與機器、最後同步理財」的施工順序選「A（建議）」；[裁示留痕](https://github.com/teacherjung/ai-collab-kit/pull/106#issuecomment-6177110512)。
+**原話正本與來源**：[AGENTS.md「William 的常設指示」](../AGENTS.md#william-的常設指示)的「套件檔無例外」保留日期與逐字原話；原來源為[套件 AGENTS.md 的固定版本](https://github.com/teacherjung/ai-collab-kit/blob/436ca9bd4277450812ceec00a509bf8cc9331f37/AGENTS.md#L65)。[無例外裁示留痕](https://github.com/teacherjung/ai-collab-kit/pull/106#issuecomment-6177109301)標明由 Claude 轉述；施工順序來源隨原話保留。
 
 **本次操作化（不是原話）**：範圍、流向與分工依 RULES D5；本專案開工與送審操作見「共用檔清單」節。
 
@@ -69,6 +64,7 @@
 
 **審查回饋處置（本專案的值；規矩正本＝RULES F6、F8、I1〜I3，留痕形狀的正本＝`templates/ruling-record.md`，讀它的機器＝`tools/pending-rulings.js`——開工前跑、只列不擋）**：
 
+- **本 Session 的技術委任（本次裁示的操作化）**：本 Session 的 25 項工程及必要前置，技術裁示由實際 GPT‑6.1 Sol／xhigh 承接；RULES A5 的本人點頭、產品／畫面驗收、個人隱私公開與原錢邊界保留事項仍由 William 本人決定。依[本次待辦觸發裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6208198145)，這個範圍不推廣為其他專案或本人權限的永久移轉；下列歷史引文照留。
 - **Codex 實作時，它自己在它的桌面 session 直接問 William**（他用 Codex 桌面派工，有直接管道；2026-09-10 他講的）——但留痕仍要照下面貼到該 PR：開工時印「問了還沒回」的工具掃的是 PR 留言、看不到桌面上的對話。
 - 問法＝RULES I1；沒有時限＝RULES I2（本專案的落點：William 2026-09-10 裁，原話逐字「a＝拿掉時限，問了就等我」，落點＝https://github.com/teacherjung/personal-finance-webapp/pull/595#issuecomment-5617637892）。
 - **留痕＝照 `templates/ruling-record.md`**（貼在哪、不編輯、一題一則、原話行、網址位置、撤回條件、「他的話比我的撤回大」、待裁未結不得合併——全在範本與 RULES I1〜I3、A5，這裡不抄）。本專案的值只有三個：①**轉述者＝實際轉述的那一方**（Claude 實作的支由 Claude 轉述；Codex 實作的支由 Codex 自己問、自己貼、如實署名）；②「❓ 網址寫在開頭那一段」的本專案落點＝William 2026-09-07 裁「a」，原話逐字「a」，落點＝https://github.com/teacherjung/personal-finance-webapp/pull/579#issuecomment-5570875993 （範本的「開頭那一段」就是它的操作化）；③七段的「要你裁示的」照常問他、並附 ❓ 的網址。⚠️ 切換紀錄（2026-09-17，搬家第 6 步）：舊制的 `⏳ 逾時暫定` 留言（2026-09-10 前）套件工具不認、也不再有新的；#577 那兩題的舊 ⚖️ 裁示（https://github.com/teacherjung/personal-finance-webapp/pull/578#issuecomment-5560007140 、https://github.com/teacherjung/personal-finance-webapp/pull/577#issuecomment-5560008679 ）形狀不合範本、套件工具會把那兩題列成還沒回，已照搬家第 12 題 d 重貼成一題一則的範本形狀（https://github.com/teacherjung/personal-finance-webapp/pull/577#issuecomment-5714673951 、https://github.com/teacherjung/personal-finance-webapp/pull/577#issuecomment-5714674364 ），套件讀法不放寬。
@@ -125,6 +121,8 @@
 
 ### 複審模型
 
+- **次強模型的用途**：`settings.json` 的 `reviewers.second` 供發審者依 RULES F11 選用；送審產生器只代入 `strongest`，不是 CLI 自動 fallback。
+
 - **2026-10-15 UTC 本人更新**：「目前Opus用量也用完了，複審能不能先暫時改成Grok」。[本人留痕](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6185994165)。操作化：沿用理財專案範圍，正式複審暫改 Grok；模型與角色接法須符合本節的隔離界線及專案設定。這段暫時安排取代下列 Opus 優先與耗盡改 Fable 的沿革，不更改套件的常設模型；本人另答「同意，本次套件前置修正也用 Grok（建議）」的單次範圍，見[本人留痕](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6187163947)。
 - **沿革（2026-10-13 UTC）**：「複審幫我改用Opus模型」（[本人留痕](https://github.com/teacherjung/personal-finance-webapp/pull/679#issuecomment-6137507759)）；本人另選「只改理財專案（沿用目前範圍）」及「照既有程序改用 Fable，並回報」。
 
@@ -136,6 +134,8 @@
 - 認證與額度檢查在盒外執行；掃描只把已提交的靜態材料交給盒內 client，模型回覆不當成已執行考題或正式放行。來源修補不代替既有通道的能力驗證；失敗原因只按固定分類留本機證據，不因診斷改帳號、scope 或計費。原有資料、憑證、隔離與掃前／掃後檢查仍依 RULES B、G 及本次裁示。
 
 ### Grok（本專案）
+
+- **配方雜湊的射程**：`scanScriptSha256` 是建盒前從本機磁碟讀取的 `scripts/grok-scan.js` 檔案雜湊，不表示已載入的程式映像或完整相依的執行身分；配方也不能用它作完整身分證明。固定 provider 的前後清單只支持各次核對所列檔案的範圍，載入時釘值及全部相依記帳另排，見[本次待辦觸發裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6208198145)。
 
 - **用量回報**：Grok 帳號的額度、429 回應與用量細節只留本機；公開 PR 的未執行紀錄只寫概略原因，不附帳號或原始回應。
 - **掃描者的模型與推理（2026-10-10 整批同步起）**：RULES G1「掃描者每次都用最強的模型、最高的推理（填在專案設定）」；值填在 `settings.json` 的 `scanner.strongest`、`scanner.maxEffort`。2026-10-11 起 `scripts/grok-scan.js` 讀這兩格、用 `--model`／`--reasoning-effort` 明確指定（William 2026-10-04 常設指示「Grok掃描也請用最強模型、最高推理能力」，原話在 AGENTS.md 常設指示節）。

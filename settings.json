@@ -1032,7 +1032,7 @@
    "command": "cd {reviewTree} && claude -p \"$(cat {promptFile})\" --model {model} --effort {effort} --permission-mode dontAsk --setting-sources user,project --add-dir {mutationCopy} --verbose --output-format json --allowedTools 'Read,Grep,Glob,Bash(node --test *),Bash(npm --prefix {mutationCopy} test *),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git rev-parse HEAD),Bash(git -C {mutationCopy} rev-parse HEAD),Bash(git -C {mutationCopy} status --porcelain),Bash(git -C {mutationCopy} diff),Bash(gh pr view *),Bash(gh pr diff *),Bash(gh pr checks *),Bash(gh run view *),Bash(gh run list *),Bash(gh pr comment {change} *),Edit(/{mutationCopy}/**),Workflow' --disallowedTools 'Write,NotebookEdit,WebFetch,WebSearch,Edit(/{reviewTree}/**),Bash(gh pr merge *),Bash(gh pr edit *),Bash(gh pr close *),Bash(gh pr review *),Bash(gh pr ready *),Bash(git push *),Bash(git commit *),Bash(git checkout *),Bash(git switch *),Bash(git stash *),Bash(git worktree *),Bash(git fetch *),Bash(npm install *),Bash(npm ci *),Bash(npx *),Bash(node -e *)' < /dev/null > {outFile}",
    "machine": "放行清單以外的指令一律被拒（不跳出詢問）；Edit 工具改不了審查樹、只准改突變副本；不讀主目錄的本機設定檔",
    "promptOnly": "放行的指令仍可能寫檔（例如 git diff 的 --output），副本裡改了程式再跑考題＝能跑任意程式，所以審查樹唯讀靠提示；讀檔的禁令管不到考題程式自己讀檔；助手被拒時最後的輸出看不到，要逐筆搜「has been denied」",
-   "verified": ""
+   "verified": "2026-10-15 UTC（22:30:53）：claude --version 回 2.1.300 (Claude Code)，exit 0；只核 CLI 版本、未啟模型，不代表本次已驗 Opus 模型或通道；模型選用依 #687 及各輪實際紀錄。"
   },
   {
    "participant": "Codex",

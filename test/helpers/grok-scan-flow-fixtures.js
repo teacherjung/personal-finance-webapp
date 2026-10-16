@@ -15,9 +15,9 @@
 // 而不是像第一版那樣：Grok 沒跑、轉送器中途死、零 session——全部退 0。
 //
 // ⚠️ 誠實劃界：
-// ・非 macOS 上，沙箱套不上 ⇒ **`--version` 檢查**（它在沙箱裡跑、位置在金絲雀之前）就會先停下來；
-//   有 SANDBOX_OK guard 的題直接 skip，沒有 guard 的路徑則停在那一關。所以「沙箱之前」的路徑
-//   （寫死 SHA、指示檔、破口已知來源）在 CI 也考得到；之後的路徑只在 macOS 考得到。
+// ・非 macOS 上無法套用實際沙箱或啟動其中的未信任 CLI；本族不把這些路徑當成已驗證。
+//   有 SANDBOX_OK guard 的題直接 skip；沒有 guard 的題可在能力檢查或沙箱命令失敗處停止。
+//   「沙箱之前」的路徑（寫死 SHA、指示檔、破口已知來源）在 CI 也考得到；之後的路徑只在 macOS 考得到。
 // ・假 grok 不會真的連 xAI；它只回一段字。考的是主流程怎麼對待它的退出碼與輸出，不是掃描品質。
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
