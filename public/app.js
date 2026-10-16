@@ -188,6 +188,10 @@ let modalTitleSeq = 0;
 const MODAL_FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 /** @type {WeakMap<Element, Element>} */
 const modalReturnFocus = new WeakMap();
+/** @type {WeakMap<Element, symbol>} */
+const modalFocusOwner = new WeakMap();
+/** @type {WeakMap<Element, () => void>} */
+const modalReturnWatch = new WeakMap();
 /**
  * 補齊共用彈窗的 dialog 語意與鍵盤焦點管理；關閉方式仍由各彈窗自己的 close/onBack 決定。
  * @param {Element} root 內含 .modal 的共用根節點
@@ -198,9 +202,12 @@ const modalReturnFocus = new WeakMap();
 export function bindModalAccessibility(root, fallbackClose, returnFocusTo = document.activeElement, closeLabel = '關閉') {
   const dialog = /** @type {HTMLElement|null} */ (root.querySelector('.modal'));
   if (!dialog) return;
+  modalReturnWatch.get(root)?.();
   const previousReturnTarget = modalReturnFocus.get(root);
   const returnTarget = previousReturnTarget?.isConnected ? previousReturnTarget : returnFocusTo;
   if (returnTarget) modalReturnFocus.set(root, returnTarget);
+  const focusOwner = Symbol();
+  modalFocusOwner.set(root, focusOwner);
   dialog.setAttribute('role', 'dialog');
   dialog.setAttribute('aria-modal', 'true');
   dialog.tabIndex = -1;
@@ -250,16 +257,110 @@ export function bindModalAccessibility(root, fallbackClose, returnFocusTo = docu
   // 掛在 document 才接得回意外落到遮罩後方的焦點；只在這顆 dialog 仍連著時處理。
   document.addEventListener('keydown', onKeydown);
 
-  // 若另一個彈窗直接接管 root，就讓新彈窗自己接焦點；只有真的關空才回到原按鈕。
+  // 接管中的焦點交給新窗；只有真的關空才嘗試歸還或退回目前頁面。
   const observer = new MutationObserver(() => {
     if (dialog.isConnected) return;
     observer.disconnect(); document.removeEventListener('keydown', onKeydown);
     if (root.querySelector('.modal')) return;
     const target = /** @type {HTMLElement|null} */ (modalReturnFocus.get(root) || returnTarget);
-    modalReturnFocus.delete(root);
     queueMicrotask(() => {
-      if (root.querySelector('.modal')) return;
-      if (target?.isConnected && typeof target.focus === 'function') target.focus({ preventScroll: true });
+      // 新窗可能已開過又關空；只看 root 是否為空無法辨認過期的回焦工作。
+      if (modalFocusOwner.get(root) !== focusOwner || root.querySelector('.modal')) return;
+      modalReturnFocus.delete(root);
+      const usable = (/** @type {Element|null} */ el) => !!el?.isConnected
+        && el !== document.body && el !== document.documentElement
+        && !el.matches(':disabled') && !el.closest('[inert]') && isVisible(el);
+      const hasChosenFocus = () => {
+        const active = document.activeElement;
+        return active !== document.body && active !== document.documentElement && usable(active);
+      };
+      if (hasChosenFocus()) return;
+      const returnNav = currentNavSeq();
+      const returnHash = location.hash;
+      const ownsFocusWork = () => root.isConnected && modalFocusOwner.get(root) === focusOwner
+        && currentNavSeq() === returnNav && location.hash === returnHash && !root.querySelector('.modal');
+      let releaseReturnTab = () => {};
+
+      const focus = (/** @type {HTMLElement|null} */ el, temporaryTabIndex = false) => {
+        if (!ownsFocusWork() || !usable(el) || typeof el?.focus !== 'function') return false;
+        const addedTabIndex = temporaryTabIndex && !el.hasAttribute('tabindex');
+        if (addedTabIndex) el.setAttribute('tabindex', '-1');
+        /** @type {MutationObserver|null} */
+        let tabObserver = null;
+        const cleanup = () => {
+          tabObserver?.disconnect();
+          el.removeEventListener('blur', cleanup);
+          if (addedTabIndex && el.getAttribute('tabindex') === '-1') el.removeAttribute('tabindex');
+        };
+        el.focus({ preventScroll: true });
+        // focus 事件能同步開新窗、換頁或交出焦點；回來後不可沿用呼叫前的判斷。
+        if (!ownsFocusWork() || document.activeElement !== el) { cleanup(); return false; }
+        if (addedTabIndex) {
+          el.addEventListener('blur', cleanup, { once: true });
+          // 移除聚焦節點不保證發出 blur；只還原本次屬性，不在這裡移動焦點。
+          tabObserver = new MutationObserver(() => { if (!el.isConnected) cleanup(); });
+          tabObserver.observe(document.body, { childList: true, subtree: true });
+        }
+        releaseReturnTab = cleanup;
+        return true;
+      };
+      const focusPage = () => {
+        if (!ownsFocusWork() || hasChosenFocus()) return null;
+        const heading = /** @type {HTMLElement|null} */ ([...document.querySelectorAll('#view h1')].find(usable) || null);
+        if (focus(heading, true)) return heading;
+        if (!ownsFocusWork() || hasChosenFocus()) return null;
+        const nav = /** @type {HTMLElement|null} */ (document.querySelector('#nav [aria-current="page"]'));
+        return focus(nav) ? nav : null;
+      };
+      const restored = focus(target) ? target : focusPage();
+      if (!restored || !ownsFocusWork() || document.activeElement !== restored) { releaseReturnTab(); return; }
+
+      // 儲存可以先關窗、稍後才重畫；只補償這次自動回焦目標的一次移除，不連鎖追焦。
+      const releaseWatchedTab = releaseReturnTab;
+      const stopWatching = () => {
+        afterRedraw.disconnect();
+        if (!restored.isConnected || document.activeElement !== restored) releaseWatchedTab();
+        for (const type of ['pointerdown', 'keydown', 'touchstart', 'wheel', 'focusin']) {
+          document.removeEventListener(type, onActivity, true);
+        }
+        window.removeEventListener('hashchange', stopWatching);
+        window.removeEventListener('blur', stopWatching);
+        window.removeEventListener('pagehide', stopWatching);
+        document.removeEventListener('visibilitychange', onVisibility);
+        restored.removeEventListener('blur', onReturnBlur);
+        if (modalReturnWatch.get(root) === stopWatching) modalReturnWatch.delete(root);
+      };
+      const onActivity = (/** @type {Event} */ event) => {
+        if (event.type !== 'focusin' || event.target !== restored) stopWatching();
+      };
+      const onVisibility = () => { if (document.hidden) stopWatching(); };
+      const onReturnBlur = () => {
+        // 移除可能先發 blur；等同步修改完成才分類，同回合的主動 blur＋移除亦按移除處理。
+        queueMicrotask(() => {
+          if (modalReturnWatch.get(root) !== stopWatching || !ownsFocusWork()) { stopWatching(); return; }
+          if (restored.isConnected && document.activeElement !== restored) stopWatching();
+        });
+      };
+      const afterRedraw = new MutationObserver(() => {
+        if (modalReturnWatch.get(root) !== stopWatching || !ownsFocusWork()) {
+          stopWatching(); return;
+        }
+        if (restored.isConnected) return;
+        stopWatching();
+        const current = document.activeElement;
+        if (current !== document.body && current !== document.documentElement && usable(current)) return;
+        focusPage();
+      });
+      modalReturnWatch.set(root, stopWatching);
+      afterRedraw.observe(document.body, { childList: true, subtree: true });
+      for (const type of ['pointerdown', 'keydown', 'touchstart', 'wheel', 'focusin']) {
+        document.addEventListener(type, onActivity, true);
+      }
+      window.addEventListener('hashchange', stopWatching);
+      window.addEventListener('blur', stopWatching);
+      window.addEventListener('pagehide', stopWatching);
+      document.addEventListener('visibilitychange', onVisibility);
+      restored.addEventListener('blur', onReturnBlur);
     });
   });
   observer.observe(root, { childList: true });
