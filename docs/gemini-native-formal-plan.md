@@ -34,22 +34,16 @@
 
 ## 待辦
 
-依本次 Sol 技術裁示，以下先作過渡記錄，共同待辦正本仍是 `PROJECT.md`。該檔由 #694 預留，本工作線 Codex 負責在它釋出後第一個無衝突維護時點轉入，且不得晚於各項觸發施工前；轉入後這裡改留指路。尚未更新共同清單，不改待辦設定或永久規則。
+共同待辦正本是 [PROJECT.md](../PROJECT.md)。各項內容、落點、觸發條件與負責者均在共同清單維護；本節保留編號供既有對帳連結使用。
 
 ### GN-01
 
-- 一句話：核定並驗證初始化工具宣告、permission mode 與 checkpoint 的容許契約；宣告清單不等於工具已執行。
-- 放在哪裡：`scripts/gemini-native-protocol.js` 的初始化與步驟驗證。
-- 什麼情況下值得做：正式接上原生 CLI 之前，依當場官方介面與核准政策補行為題及有效突變。
+見共同清單的「GN-01｜Gemini 原生事件容許契約」。
 
 ### GN-02
 
-- 一句話：補 `prepareNativeScan` 的直接自動考題；已提交材料的盒外實跑收據不代替可重跑的自動題。
-- 放在哪裡：`scripts/gemini-native-runner.js` 與 `test/gemini-native-runner.test.js`。
-- 什麼情況下值得做：準備入口接入正式發射器，或擴充已提交材料的驗收流程時。
+見共同清單的「GN-02｜Gemini 準備入口直接自動考題」。
 
 ### GN-03
 
-- 一句話：讓正式入口依錯誤種類回報，避免把其他失敗印成認證政策未准。
-- 放在哪裡：`scripts/gemini-native-runner.js` 的命令列 catch。
-- 什麼情況下值得做：`runGeminiNativeScan` 開始可能拋出認證拒絕以外的錯誤時。
+見共同清單的「GN-03｜Gemini 正式入口錯誤分類」。
