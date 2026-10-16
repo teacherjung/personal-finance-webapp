@@ -72,14 +72,8 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
     assert.deepEqual(tierOf(path), { path, tier: tierId('C'), known: true }, '原生接線準備沿未登記路徑的較重驗收級別，不因入口關閉降級');
   }
   assert.deepEqual(tierOf('scripts/gemini-native-future.js'), { path: 'scripts/gemini-native-future.js', tier: tierId('C'), known: false });
-  // 已刪的舊工具與舊閘的名字**刻意留在** E 的明確名單裡（第 6 步刪 acceptance-tier／pending-rulings、第 7 步刪五支舊閘、
-  // 2026-09-20 刪本專案那支工作樹體檢 check-worktree-integrity）：分級工具把變更裡
-  // status=removed 的路徑也拿去分級，名字拿掉＝刪它們的那一支自己落到未列到（C）。等這些刪除都合進主幹、也不會再重跑它們的分級
-  // （最後一支＝刪工作樹體檢那一支：它合併、算完分級之後），才可以清掉；清掉時連下面兩行一起改。清掉前若有人重建同名檔會被靜靜判 E——所以這句要留在這裡。
-  // 兩個名字各釘一行：家族樣式是一串「或」，只釘一個的話，單獨拿掉另一個照樣綠。
-  assert.equal(tierOf('scripts/check-review-verdicts.js').tier, tierId('E'), '已刪的舊閘路徑要仍歸 E（刪它的那一支才不會落到 C）');
-  assert.equal(tierOf('scripts/check-worktree-integrity.js').tier, tierId('E'), '已刪的工作樹體檢路徑要仍歸 E（刪它的那一支才不會落到 C）');
-  // 同一個道理，F 也一樣：第 8 步刪了 Codex 專案層副本，家族留著、刪它的那一支才會印 F 而不是 C（Codex #615 r1 R1）
+  // 不讓已刪腳本的歷史名字成為新檔免驗收入口；舊刪除的分類須配合當時設定查核。
+  // 工具安全設定保留 F，避免同名設定重建時落回一般程式的 C。
   assert.equal(tierOf('.codex/hooks.json').tier, tierId('F'), '已刪的 .codex/hooks.json 要仍歸 F（刪它的那一支才不會落到 C）');
   assert.equal(tierOf('templates/hook-claude-pinned.json').tier, tierId('F'), 'Claude 側釘指紋那份範本（2026-09-19 從套件同步進來）要歸 F：它的指令就是換上之後那一行');
   assert.deepEqual(tierOf('scripts/check-runtime-health.js'), { path: 'scripts/check-runtime-health.js', tier: settings.acceptance.unknownTier, known: false });
@@ -280,4 +274,23 @@ test('⭐ 文件｜協作附則寫出分級的跑法、只指路不抄分級表�
   const section = lines.slice(from, to).join('\n');
   assert.match(section, /tools\/acceptance-tier\.js/, 'PR 範本「怎麼驗收」沒指到分級工具');
   assert.doesNotMatch(section, /只動 E 級|取最重|由上往下|E 級：|不需驗收/, 'PR 範本又在抄級名、分級表或算法（#573 r4／r5）——只准指路');
+});
+
+for (const name of ['check-ci-really-ran', 'check-cross-pr-merge', 'check-pr-collab-fields',
+  'check-pr-merge-gate', 'check-review-verdicts', 'check-worktree-integrity', 'acceptance-tier', 'pending-rulings']) {
+  test(`舊驗收名單｜${name} 不借歷史名字免驗收`, () => {
+    const path = `scripts/${name}.js`;
+    assert.deepEqual(tierOf(path), { path, tier: tierId('C'), known: false },
+      '檢查 settings.json 的舊腳本 E 名單；用 node tools/build-settings.js 重產，再跑 node --test test/acceptance-table.test.js');
+  });
+}
+
+test('舊驗收名單｜保留其餘明確腳本的 E 分級', () => {
+  for (const name of ['audit-grok-scan', 'grok-scan', 'grok-review', 'grok-final-reply', 'grok-bump',
+    'grok-relay', 'grok-auth-refresh', 'grok-sandbox-canary', 'gemini-auth', 'gemini-client', 'gemini-relay',
+    'gemini-scan', 'c6-adversarial']) {
+    const path = `scripts/${name}.js`;
+    assert.deepEqual(tierOf(path), { path, tier: tierId('E'), known: true },
+      '檢查 settings.json 的明確腳本 E 名單；用 node tools/build-settings.js 重產，再跑 node --test test/acceptance-table.test.js');
+  }
 });
