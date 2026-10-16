@@ -41,6 +41,7 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
     ['A', 'db/supabase-schema.sql'],
     ['B', 'package-lock.json'],
     ['C', 'lib/store.js'], ['C', 'server.js'], ['C', 'start.command'], ['C', '.node-version'], ['C', 'render.yaml'], ['C', 'scripts/check-node-version.js'],
+    ['C', 'scripts/gemini-native-runner.js'],
     ['D', 'public/app.js'], ['D', 'public-site/index.html'],
     ['P', 'prototype/forest-ui-lab/index.html'],
     ['E', 'test/x.test.js'], ['E', 'test-doubles/x.js'], ['E', 'docs/contracts/README.md'], ['E', 'AGENTS.md'], ['E', '.github/workflows/ci.yml'],
@@ -66,6 +67,11 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
   for (const name of ['gemini-auth', 'gemini-client', 'gemini-relay', 'gemini-scan']) {
     assert.deepEqual(tierOf(`scripts/${name}.js`), { path: `scripts/${name}.js`, tier: tierId('E'), known: true }, '隔離掃描腳本依程序與考題驗證；不在 App 啟動路徑');
   }
+  for (const name of ['runner', 'protocol', 'transport']) {
+    const path = `scripts/gemini-native-${name}.js`;
+    assert.deepEqual(tierOf(path), { path, tier: tierId('C'), known: true }, '原生接線準備沿未登記路徑的較重驗收級別，不因入口關閉降級');
+  }
+  assert.deepEqual(tierOf('scripts/gemini-native-future.js'), { path: 'scripts/gemini-native-future.js', tier: tierId('C'), known: false });
   // 已刪的舊工具與舊閘的名字**刻意留在** E 的明確名單裡（第 6 步刪 acceptance-tier／pending-rulings、第 7 步刪五支舊閘、
   // 2026-09-20 刪本專案那支工作樹體檢 check-worktree-integrity）：分級工具把變更裡
   // status=removed 的路徑也拿去分級，名字拿掉＝刪它們的那一支自己落到未列到（C）。等這些刪除都合進主幹、也不會再重跑它們的分級
