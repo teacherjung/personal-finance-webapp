@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeNativeInput, parseUniqueJson, findingsSchema, validateNativeStream, MAX_MATERIAL_BYTES, OUTPUT_CAP, RESPONSE_CAP } from '../scripts/gemini-native-protocol.js';
-import { MODEL, BINDING, FILES, streamEvents, streamBytes } from './helpers/gemini-native-fixture.js';
+import { MODEL, BINDING, FILES, TAIL_CHALLENGE, streamEvents, streamBytes } from './helpers/gemini-native-fixture.js';
 const validate = (events = streamEvents(), overrides = {}) => validateNativeStream({ stdout: streamBytes(events), stderr: Buffer.alloc(0), code: 0, timedOut: false, capped: false, ...overrides },
-  { model: MODEL, schema: findingsSchema(BINDING), binding: BINDING, files: FILES });
+  { model: MODEL, schema: findingsSchema(BINDING), binding: BINDING, files: FILES, tailChallenge: TAIL_CHALLENGE });
 
 test('完整 Unicode 與跳脫內容編成單筆 NDJSON，超限或不完整 UTF-16 拒收', () => {
   const content = '中文🌲\\"\n'.repeat(5000), packet = encodeNativeInput(content);
@@ -20,18 +20,22 @@ test('JSON 鍵先解碼再去重，深度與非有限數字有上限', () => {
 });
 test('答案只採結構化欄位；一般 response 不解析也不回填', () => {
   const result = validate();
-  assert.equal(result.answer.findings[0].line, 1);
+  assert.equal(result.candidateAnswer.findings[0].line, 1);
   assert.equal(result.authority, 'STRUCTURED_OUTPUT_ONLY'); assert.equal(result.formalScan, false);
+  assert.equal(result.structureValidated, true); assert.equal(result.tailChallengeMatched, true);
+  assert.equal(result.receiverConsumptionVerified, false); assert.equal(Object.hasOwn(result, 'answer'), false);
   const empty = streamEvents(); empty.at(-1).result.structured_output.findings = [];
-  assert.deepEqual(validate(empty).answer.findings, []);
+  assert.deepEqual(validate(empty).candidateAnswer.findings, []);
   const misleading = streamEvents(); misleading.at(-1).result.response = JSON.stringify({ findings: [] });
-  assert.equal(validate(misleading).answer.findings.length, 1);
+  assert.equal(validate(misleading).candidateAnswer.findings.length, 1);
 });
 const cases = [
   ['缺結構化答案', e => { delete e.at(-1).result.structured_output; }],
   ['多答案欄位', e => { e.at(-1).result.structured_output.extra = true; }],
   ['錯材料綁定', e => { e.at(-1).result.structured_output.materialSha256 = 'b'.repeat(64); }],
   ['錯掃描身分', e => { e.at(-1).result.structured_output.scanId = 'other'; }],
+  ['缺尾端挑戰', e => { delete e.at(-1).result.structured_output.tailChallenge; }],
+  ['錯尾端挑戰且無發現', e => { e.at(-1).result.structured_output.tailChallenge = '0'.repeat(64); e.at(-1).result.structured_output.findings = []; }],
   ['材料外路徑', e => { e.at(-1).result.structured_output.findings[0].path = '../outside.js'; }],
   ['路徑原型名稱', e => { e.at(-1).result.structured_output.findings[0].path = '__proto__'; }],
   ['超過行數', e => { e.at(-1).result.structured_output.findings[0].line = 2; }],
@@ -71,5 +75,5 @@ test('原始 NDJSON 的重複鍵與缺 EOF 分隔符不可被前處理掩蓋', (
 });
 test('同一 agent step 的 ACTIVE 增量後接 DONE 可採用', () => {
   const e = streamEvents(); e.splice(2, 0, { event: 'step_update', step_update: { ...e[2].step_update, state: 'ACTIVE' } });
-  assert.equal(validate(e).answer.findings.length, 1);
+  assert.equal(validate(e).candidateAnswer.findings.length, 1);
 });

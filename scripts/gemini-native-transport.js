@@ -59,7 +59,8 @@ export async function collectNativeProcess(child, bytes, { signal, wallMs = NATI
     if (!groupCleared || !result) throw Error('GEMINI_NATIVE_CLEANUP_UNCERTAIN', { cause: cleanupError });
     if (reason) throw Error(`GEMINI_NATIVE_${reason}`);
     return { ...result, stdout: Buffer.concat(chunks.stdout), stderr: Buffer.concat(chunks.stderr),
-      timedOut: false, capped: false, groupCleared: true, escapedProcessesVerified: false, formalScan: false };
+      timedOut: false, capped: false, inputWriteCompleted: true, receiverConsumptionVerified: false,
+      groupCleared: true, escapedProcessesVerified: false, formalScan: false };
   } finally {
     clearTimeout(timer); clearTimeout(closeTimer); signal.removeEventListener('abort', onAbort);
     child.stdout.off('data', onOut); child.stderr.off('data', onErr); child.off('error', onError); child.off('close', onClose);

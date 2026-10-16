@@ -86,10 +86,11 @@ export function findingsSchema({ scanId, materialSha256 }) {
   if (!/^[a-f0-9]{64}$/.test(materialSha256)) fail('BINDING');
   return {
     type: 'object', additionalProperties: false,
-    required: ['scanId', 'materialSha256', 'findings'],
+    required: ['scanId', 'materialSha256', 'tailChallenge', 'findings'],
     properties: {
       scanId: { type: 'string', enum: [scanId] },
       materialSha256: { type: 'string', enum: [materialSha256] },
+      tailChallenge: { type: 'string', pattern: '^[a-f0-9]{64}$' },
       findings: { type: 'array', maxItems: 50, items: {
         type: 'object', additionalProperties: false,
         required: ['severity', 'path', 'side', 'line', 'mechanism', 'reproduction'],
@@ -106,9 +107,11 @@ export function findingsSchema({ scanId, materialSha256 }) {
   };
 }
 
-export function validateFindings(answer, binding, files) {
-  fields(answer, ['scanId', 'materialSha256', 'findings']);
+export function validateFindings(answer, binding, files, tailChallenge) {
+  fields(answer, ['scanId', 'materialSha256', 'tailChallenge', 'findings']);
   if (answer.scanId !== binding.scanId || answer.materialSha256 !== binding.materialSha256) fail('BINDING');
+  if (typeof tailChallenge !== 'string' || !/^[a-f0-9]{64}$/.test(tailChallenge)
+    || answer.tailChallenge !== tailChallenge) fail('TAIL_CHALLENGE');
   if (!Array.isArray(answer.findings) || answer.findings.length > 50) fail('FINDINGS');
   const index = new Map(files.map(file => [file.path, file]));
   for (const finding of answer.findings) {
@@ -128,7 +131,7 @@ function usage(value) {
   if (Object.values(value).some(v => !Number.isSafeInteger(v) || v < 0)) fail('USAGE');
 }
 
-export function validateNativeStream({ stdout, stderr, code, timedOut, capped }, { model, schema, binding, files }) {
+export function validateNativeStream({ stdout, stderr, code, timedOut, capped }, { model, schema, binding, files, tailChallenge }) {
   if (!Buffer.isBuffer(stdout) || !Buffer.isBuffer(stderr) || stdout.length + stderr.length > OUTPUT_CAP) fail('OUTPUT_SIZE');
   if (code !== 0 || timedOut !== false || capped !== false) fail('INCOMPLETE');
   let text, err;
@@ -183,10 +186,11 @@ export function validateNativeStream({ stdout, stderr, code, timedOut, capped },
   if ('usage' in result) usage(result.usage);
   if (typeof result.response !== 'string' || !wellFormed(result.response) || Buffer.byteLength(result.response) > RESPONSE_CAP) fail('RESPONSE');
   if (!isDeepStrictEqual(result.json_schema, schema)) fail('SCHEMA');
-  const answer = validateFindings(result.structured_output, binding, files);
-  return { answer, outputSha256: sha256(stdout), structuredSha256: sha256(JSON.stringify(answer)),
+  const candidateAnswer = validateFindings(result.structured_output, binding, files, tailChallenge);
+  return { candidateAnswer, outputSha256: sha256(stdout), structuredSha256: sha256(JSON.stringify(candidateAnswer)),
     modelDeclaration: init.model, responseBytes: Buffer.byteLength(result.response),
-    authority: 'STRUCTURED_OUTPUT_ONLY', formalScan: false };
+    authority: 'STRUCTURED_OUTPUT_ONLY', structureValidated: true, tailChallengeMatched: true,
+    receiverConsumptionVerified: false, formalScan: false };
 }
 
 if (isMainModule(import.meta.url)) {

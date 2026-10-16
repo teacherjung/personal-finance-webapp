@@ -48,9 +48,17 @@ test('來源不接受符號連結、硬連結、可共同寫入檔及不符雜�
 test('材料 hash 與正式 findings schema 帶入完整輸入，沒有預填答案', () => {
   const text = JSON.stringify({ files: FILES, diff: 'synthetic diff', prompt: 'synthetic prompt' });
   const packet = prepareNativePacket({ text, materialSha256: sha256(text) }, { scanId: 'synthetic', model: MODEL });
-  const wire = JSON.parse(packet.bytes), payload = JSON.parse(wire.message.content.split('\n').at(-1));
+  const wire = JSON.parse(packet.bytes), payload = JSON.parse(wire.message.content.split('\n').at(-2));
   assert.deepEqual(payload.material.files, FILES); assert.deepEqual(payload.schema, packet.schema);
   assert.equal(payload.binding.materialSha256, sha256(text)); assert.equal('findings' in payload, false);
+  assert.match(packet.tailChallenge, /^[a-f0-9]{64}$/);
+  const content = wire.message.content;
+  assert.equal(content.split('\n').at(-1), `INPUT_TAIL_CHALLENGE ${packet.tailChallenge}`);
+  assert.equal(content.indexOf(packet.tailChallenge), content.lastIndexOf(packet.tailChallenge));
+  assert.ok(content.indexOf(packet.tailChallenge) > content.indexOf(JSON.stringify(payload)));
+  assert.equal(JSON.stringify(payload).includes(packet.tailChallenge), false);
+  const repeated = prepareNativePacket({ text, materialSha256: sha256(text) }, { scanId: 'synthetic', model: MODEL });
+  assert.notEqual(repeated.tailChallenge, packet.tailChallenge);
   assert.equal(packet.formalScan, false);
   assert.throws(() => prepareNativePacket({ text, materialSha256: '0'.repeat(64) }, { scanId: 'synthetic', model: MODEL }));
 });
