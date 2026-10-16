@@ -128,6 +128,8 @@
 
 ### Gemini 接線驗證與啟用
 
+- **原生候選準備**：不含真認證的程式與合成驗證依 [施工計畫](gemini-native-formal-plan.md)。`scripts/gemini-native-runner.js` 的正式入口在啟動之前拒絕，這個準備階段不綁定 scanner；先前私人合成試跑的真 HOME／Keychain 暫例不延用。本人核定認證政策、核實模型資格及完成原生整體隔離驗收後，另補正式發射器與設定接線。合成考題及來源磁碟快照不能代替 OS 隔離、已載入程式身分或 G1 實跑證據。
+
 - 啟用順序依 [GPT‑6.1 Sol 技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6190135649)：先用固定候選版完成能力與隔離驗證，再綁定掃描者設定並重新驗證，才啟用。驗證過程不算任何 PR 的正式複審或 G1 掃描；掃描登記與實際完成證據分別核對，不能只看接線檔案存在。
 - 正式入口依 [盒外發射器補充裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6191678827)，由發射者執行 `node <固定盒外發射器>`；掃描參數由已固定的本機部署檔指定。發射器與本機部署定位檔、提供者版本、官方公開來源均須釘雜湊，執行前後核對；實體路徑只留本機。裸 `scripts/gemini-scan.js` 沒有可信來源定位，不作正式發射入口；不能以環境變數、一般 CLI 旗標或路徑搜尋補值。
 - 官方公開 OAuth client 配置的來源規格在 `scripts/gemini-auth.js` 的 `PUBLIC_CLIENT_SOURCE_PIN`；發射器只把已核安裝實體根以 `clientSourceRoot` 傳入 runner，再傳到 auth。來源核對失敗即停止，不另尋來源、不啟動官方 CLI 或登入流程。固定來源與未推送歷史的處置依 [來源裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6191504939)；公開紀錄可留來源種類、版本與雜湊，不能附 client 實值或機器路徑。
