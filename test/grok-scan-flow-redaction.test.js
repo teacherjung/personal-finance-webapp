@@ -464,9 +464,7 @@ test('★ r2 #1｜關門不是列舉出口：只印認得的那幾個，**拆段
   assert.deepEqual(
     modelsUsedIn(bufs({ 'a/x.jsonl': '{"model_id":"grok-4.8"}\n{"model_id":"grok-4.7-build"}\n' })),
     { models: ['grok-4.7-build'], rejected: 1, incomplete: 0 },
-    '上游出新模型時**那個名字不會被印出來**——由人看過結果包再加進清單，不是自動放行。'
-    + '⚠️ 不要寫成「會寫查不出來」：這個夾具同時有已知的那個，公開投影是 '
-    + '「grok-4.7-build；另有不在清單上的 model_id」，不含「查不出來」（r5 #1）',
+    '修正 grok-scan.js 的精確模型名單與解析後重跑本檔',
   );
 });
 
@@ -539,7 +537,7 @@ test('模型留痕｜端到端：真的跑一遍，認得的印出來、不認�
       { log: (m) => logs.push(m), ...isolated(), repo: repo.dir, ...withGrok(fakeGrok({ model: EVIL })), relayScript: fakeRelay('ok') });
     assert.equal(r.code, 0, r.summary.join('\n'), '不認得的模型**不可以**變成閘');
     const everything = r.summary.join('\n') + '\n' + logs.join('\n');
-    assert.match(everything, /｜模型=查不出來；另有不在清單上的 model_id｜/);
+    assert.match(everything, /｜模型=查不出來｜/);
     assert.ok(!everything.includes(EVIL), '不在清單上的值漏進了會被抄進公開 PR 描述的文字裡');
   }
 });
@@ -578,14 +576,22 @@ test('★ r3 #1｜公開欄是有限值域的投影：日誌控制不了它裡�
   // 值域列舉：所有 (KNOWN_MODELS 的子集 × rejected 有無 × incomplete 有無)
   /** @type {Set<string>} */ const domain = new Set();
   for (const sub of subsetsOf(KNOWN_MODELS)) for (const r of [0, 1]) for (const i of [0, 1]) domain.add(modelFieldText({ models: sub, rejected: r, incomplete: i }));
-  assert.equal(domain.size, 2 ** KNOWN_MODELS.length * 4, `值域應該是 2^${KNOWN_MODELS.length}×2×2 種`);
+  const expectedDomain = new Set(['查不出來']);
+  for (const sub of subsetsOf(KNOWN_MODELS).filter(models => models.length)) {
+    expectedDomain.add(sub.join('＋'));
+    expectedDomain.add(sub.join('＋') + '；另有未辨識或未完整採用的模型紀錄');
+  }
+  assert.deepEqual(domain, expectedDomain, '修正 grok-scan.js 的模型摘要投影後重跑本檔');
+  assert.equal(domain.size, 1 + 2 * (2 ** KNOWN_MODELS.length - 1), '修正 grok-scan.js 的模型欄值域後重跑本檔');
 
   // 任意大小的計數都只能落在那張表裡（這一題紅＝有數字又漏進公開欄了）
   for (const r of [0, 1, 2, 7, 61713, 1_000_000]) {
     for (const i of [0, 1, 15, 9999]) {
-      for (const sub of [[], ['grok-4.7'], [...KNOWN_MODELS]]) {
+      for (const sub of subsetsOf(KNOWN_MODELS)) {
         const out = modelFieldText({ models: sub, rejected: r, incomplete: i });
-        assert.ok(domain.has(out), `公開欄跑出值域外的字串：${out}`);
+        const expected = sub.length ? sub.join('＋') + (r || i ? '；另有未辨識或未完整採用的模型紀錄' : '') : '查不出來';
+        assert.equal(out, expected, '修正 grok-scan.js 的原因合併與完整模型集合後重跑本檔');
+        assert.ok(domain.has(out), '修正 grok-scan.js 的公開值域後重跑本檔');
         assert.ok(!/[0-9]/.test(out.replace(/grok-[\d.]+(-build)?/g, '')), `公開欄出現了模型名以外的數字：${out}`);
       }
     }
@@ -596,7 +602,7 @@ test('★ r3 #2｜「查不出來」不可以反推成「日誌裡沒有 model_i
   // 超限那些行**整行丟掉**，而它們每一行開頭都可能有 model_id ⇒ 空集合只代表
   // 「完整採用的紀錄裡沒有可列出的模型」，不是「原始日誌沒有那個鍵」。
   const t = modelFieldText({ models: [], rejected: 0, incomplete: 3 });
-  assert.equal(t, '查不出來；有紀錄讀不完整、整行不採用');
+  assert.equal(t, '查不出來');
   assert.ok(!t.includes('沒有'), '不可以宣稱日誌裡沒有 model_id');
   assert.ok(!modelFieldText({ models: [], rejected: 0, incomplete: 0 }).includes('沒有'), '即使零旗標也不可以宣稱');
 });
@@ -613,18 +619,18 @@ test('★ r3｜端到端：計數不同、公開欄逐字相同（真的跑沙�
     return /｜模型=([^｜]*)｜/.exec(r.summary.join('\n'))?.[1];
   };
   const [one, many] = [await field(1), await field(7)];
-  assert.equal(one, '查不出來；另有不在清單上的 model_id');
+  assert.equal(one, '查不出來');
   assert.equal(many, one, '被拒的筆數漏進了公開欄＝審查者那條編碼通道還開著');
 });
 
-test('★ r3｜端到端：超限那一行整行丟掉，公開欄照實說「讀不完整」而不說「沒有」', async (t) => {
+test('★ r3｜端到端：超限行不留下半行模型，空集合不附原因', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const over = JSON.stringify({ model_id: 'grok-4.7', deep: new Array(MODEL_WALK_MAX_NODES + 10).fill(0) });
   const repo = tinyRepo();
   const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() },
     { ...quiet, ...isolated(), repo: repo.dir, relayScript: fakeRelay('ok'), ...withGrok(fakeGrok({ sessionLines: [over] })) });
   assert.equal(r.code, 0, r.summary.join('\n'));
-  assert.match(r.summary.join('\n'), /｜模型=查不出來；有紀錄讀不完整、整行不採用｜/);
+  assert.match(r.summary.join('\n'), /｜模型=查不出來｜/);
 });
 
 test('★ r4｜公開欄**診斷不出原因**：三種不同的來源給出逐字相同的字串（所以不可以宣稱旗標分得出來）', () => {
@@ -646,6 +652,28 @@ test('★ r4｜已知與未知**並存**時不是「查不出來」——別再�
   const mixed = modelFieldText(modelsUsedIn(bufs({
     'a/updates.jsonl': '{"model_id":"grok-4.7"}\n{"model_id":"grok-4.8"}\n',
   })));
-  assert.equal(mixed, 'grok-4.7；另有不在清單上的 model_id');
+  assert.equal(mixed, 'grok-4.7；另有未辨識或未完整採用的模型紀錄');
   assert.ok(!mixed.includes('查不出來'), '混合情境不會出現「查不出來」');
+});
+
+test('模型摘要投影｜合成日誌的全部模型子集與原因組合走摘要及配方日誌', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo();
+  const unknown = 'SYNTHETIC-UNKNOWN-MODEL-61713';
+  const over = JSON.stringify({ model_id: 'grok-4.6', nodes: new Array(MODEL_WALK_MAX_NODES).fill(0) });
+  for (const selected of subsetsOf(KNOWN_MODELS)) for (const rejected of [0, 1]) for (const incomplete of [0, 1]) {
+    const sessionLines = [...selected].reverse().flatMap(model_id => [JSON.stringify({ model_id }), JSON.stringify({ model_id })]);
+    if (rejected) sessionLines.push(JSON.stringify({ model_id: unknown }));
+    if (incomplete) sessionLines.push(over);
+    /** @type {string[]} */ const logs = [];
+    const r = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() },
+      { ...isolated(), log: line => logs.push(line), repo: repo.dir, ...withGrok(fakeGrok({ sessionLines })), relayScript: fakeRelay('ok') });
+    assert.equal(r.code, 0, r.summary.join('\n'));
+    const expected = selected.length ? selected.join('＋') + (rejected || incomplete ? '；另有未辨識或未完整採用的模型紀錄' : '') : '查不出來';
+    for (const output of [r.summary, logs]) {
+      const fields = output.flatMap(line => [...line.matchAll(/｜模型=([^｜]*)｜/g)].map(match => match[1]));
+      assert.deepEqual(new Set(fields), new Set([expected]), '修正 grok-scan.js 的摘要及配方輸出接線後重跑本檔');
+      assert.ok(!output.join('\n').includes(unknown), '修正 grok-scan.js 的陌生名稱公開投影後重跑本檔');
+    }
+  }
 });
