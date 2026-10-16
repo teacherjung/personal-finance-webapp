@@ -1,3 +1,4 @@
+// @ts-check
 // 準備資料不授予認證權限。正式入口先拒絕，等待本人政策與原生隔離驗收。
 import { constants, openSync, closeSync, fstatSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -8,12 +9,15 @@ import { encodeNativeInput, findingsSchema, parseUniqueJson, sha256 } from './ge
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE_CAP = 16 * 1024 * 1024;
+/** @param {string} code @returns {never} */
 const failure = code => { throw Error(`GEMINI_NATIVE_${code}`); };
 const stamp = stat => [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs, stat.mode, stat.nlink].map(String).join(':');
 
 // 這是呼叫者所列來源的磁碟快照；不證明已載入的 JS 映像或完整遞移相依。
 export function snapshotPinnedSources(pins) {
   if (!Array.isArray(pins) || !pins.length || pins.length > 128) failure('PINS');
+  const owner = process.getuid?.();
+  if (owner === undefined) failure('PLATFORM');
   const names = new Set(), paths = new Set();
   return pins.map(pin => {
     if (!pin || Object.keys(pin).sort().join(',') !== 'name,path,sha256'
@@ -25,7 +29,7 @@ export function snapshotPinnedSources(pins) {
       if (resolve(pin.path) !== pin.path || realpathSync(pin.path) !== pin.path) failure('SOURCE_PATH');
       const before = lstatSync(pin.path, { bigint: true });
       if (!before.isFile() || before.size > BigInt(SOURCE_CAP) || before.nlink !== 1n
-        || before.uid !== BigInt(process.getuid()) || (before.mode & 0o022n)) failure('SOURCE');
+        || before.uid !== BigInt(owner) || (before.mode & 0o022n)) failure('SOURCE');
       fd = openSync(pin.path, constants.O_RDONLY | constants.O_NOFOLLOW);
       const opened = fstatSync(fd, { bigint: true });
       if (stamp(before) !== stamp(opened)) failure('SOURCE');
@@ -67,7 +71,7 @@ export function prepareNativePacket(materials, { scanId, model }) {
     sourceMaterialBytes: Buffer.byteLength(materials.text), formalScan: false };
 }
 
-// 提供者固定為本模組所在樹；這個準備函式不讀取認證、不啟動模型、不發布掃描結果。
+// 從模組位置定位提供者，避免把受掃樹當作可信入口；分離準備階段以便在認證政策未定前驗證材料。
 export function prepareNativeScan(args, pins) {
   for (const key of ['base', 'head', 'providerHead']) if (!/^[a-f0-9]{40}$/.test(args[key])) failure('REVISION');
   const before = snapshotPinnedSources(pins);

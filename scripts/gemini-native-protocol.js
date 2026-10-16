@@ -1,4 +1,6 @@
+// @ts-check
 // 結構化答案與一般對話文字分開驗；後者不能在結構化欄位缺失時補位。
+import { isMainModule } from '../lib/is-main.js';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -8,22 +10,25 @@ export const OUTPUT_CAP = 256 * 1024;
 export const RESPONSE_CAP = 64 * 1024;
 export const NATIVE_LIMITS = Object.freeze({ clientSeconds: 120, wallMs: 150_000 });
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+/** @param {string} code @returns {never} */
 const fail = code => { throw Error(`GEMINI_NATIVE_${code}`); };
+/** @param {string} value */
+const wellFormed = value => /** @type {import('./gemini-client.js').WellFormedString} */ (value).isWellFormed();
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 function fields(value, required, optional = []) {
   if (!object(value) || required.some(k => !Object.hasOwn(value, k))
     || Object.keys(value).some(k => !required.includes(k) && !optional.includes(k))) fail('FIELDS');
 }
 function string(value, max = 4000) {
-  if (typeof value !== 'string' || !value.trim() || !value.isWellFormed()
-    || Buffer.byteLength(value) > max || [...value].some(c => c.codePointAt(0) < 32 && !'\t\n\r'.includes(c))) fail('STRING');
+  if (typeof value !== 'string' || !value.trim() || !wellFormed(value)
+    || Buffer.byteLength(value) > max || [...value].some(c => c.charCodeAt(0) < 32 && !'\t\n\r'.includes(c))) fail('STRING');
 }
 const finite = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 
 // JSON.parse 會保留重複鍵的最後一值；先按 JSON 文法辨認鍵，再交原生 parser 解析。
 // 深度與節點上限避免模型文字把驗證器本身變成不受限的遞迴工作。
 export function parseUniqueJson(text) {
-  if (typeof text !== 'string' || !text.isWellFormed()) fail('JSON');
+  if (typeof text !== 'string' || !wellFormed(text)) fail('JSON');
   let pos = 0, nodes = 0;
   const ws = () => { while (/[ \r\n\t]/.test(text[pos] || '\x01')) pos++; };
   function tokenString() {
@@ -33,7 +38,7 @@ export function parseUniqueJson(text) {
       if (text[pos] === '"') {
         let value;
         try { value = JSON.parse(text.slice(start, ++pos)); } catch { fail('JSON'); }
-        if (!value.isWellFormed()) fail('JSON');
+        if (!wellFormed(value)) fail('JSON');
         return value;
       }
     }
@@ -154,7 +159,7 @@ export function validateNativeStream({ stdout, stderr, code, timedOut, capped },
       ['duration_seconds', 'usage', ...(step?.step_type === 'agent_response' ? ['text_delta'] : [])]);
     if (step.conversation_id !== cid || !Number.isSafeInteger(step.step_index) || step.step_index < 0
       || !['ACTIVE', 'DONE'].includes(step.state) || !['user_input', 'agent_response', 'checkpoint', 'finish'].includes(step.step_type)) fail('STEP');
-    if ('text_delta' in step && (typeof step.text_delta !== 'string' || !step.text_delta.isWellFormed())) fail('STEP');
+    if ('text_delta' in step && (typeof step.text_delta !== 'string' || !wellFormed(step.text_delta))) fail('STEP');
     if ('duration_seconds' in step && !finite(step.duration_seconds)) fail('STEP');
     if ('usage' in step) usage(step.usage);
     if (step.step_index !== current) {
@@ -176,10 +181,14 @@ export function validateNativeStream({ stdout, stderr, code, timedOut, capped },
     || ('error' in result && result.error !== '')) fail('RESULT');
   if ('duration_seconds' in result && !finite(result.duration_seconds)) fail('RESULT');
   if ('usage' in result) usage(result.usage);
-  if (typeof result.response !== 'string' || !result.response.isWellFormed() || Buffer.byteLength(result.response) > RESPONSE_CAP) fail('RESPONSE');
+  if (typeof result.response !== 'string' || !wellFormed(result.response) || Buffer.byteLength(result.response) > RESPONSE_CAP) fail('RESPONSE');
   if (!isDeepStrictEqual(result.json_schema, schema)) fail('SCHEMA');
   const answer = validateFindings(result.structured_output, binding, files);
   return { answer, outputSha256: sha256(stdout), structuredSha256: sha256(JSON.stringify(answer)),
     modelDeclaration: init.model, responseBytes: Buffer.byteLength(result.response),
     authority: 'STRUCTURED_OUTPUT_ONLY', formalScan: false };
+}
+
+if (isMainModule(import.meta.url)) {
+  process.stderr.write('GEMINI_NATIVE_LIBRARY_ONLY\n'); process.exitCode = 2;
 }
