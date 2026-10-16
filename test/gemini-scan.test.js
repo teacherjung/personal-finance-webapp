@@ -223,7 +223,8 @@ test('runner 空目錄也違反單檔協定，名字含真針仍是事故', asyn
 test('runner timeout／output size 終止與 close0 競態不能回報成功', async (t) => {
   for (const cause of ['timeout', 'output']) {
     const f = fixture(t), original = f.deps.spawn; let proxy, realPid, completed = false, killObserved = false;
-    f.deps.wallMs = 350;
+    // 留出整批並行啟動夾具的時間，避免把啟動太慢被殺誤當成自然退出後的 close0 競態。
+    f.deps.wallMs = 5000;
     f.deps.spawn = (...args) => {
       const child = original(...args); realPid = child.pid;
       proxy = new EventEmitter(); proxy.pid = child.pid; proxy.stdout = child.stdout; proxy.stderr = child.stderr;

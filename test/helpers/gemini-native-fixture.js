@@ -36,7 +36,11 @@ if (isMainModule(import.meta.url) && process.argv[2] !== undefined) {
     const chunks = [];
     for await (const chunk of process.stdin) chunks.push(chunk);
     const bytes = Buffer.concat(chunks);
-    if (mode === 'overflow') { process.stdout.write(Buffer.alloc(200_000, 120)); process.stderr.write(Buffer.alloc(100_000, 120)); }
+    if (mode === 'overflow') {
+      // 保持存活，讓考題量到上限觸發的終止，而非自然退出與收尾的競態。
+      setInterval(() => {}, 1000);
+      process.stdout.write(Buffer.alloc(200_000, 120)); process.stderr.write(Buffer.alloc(100_000, 120));
+    }
     else if (mode === 'error') { process.stderr.write('synthetic error'); process.exitCode = 3; }
     else if (mode === 'stream') {
       const content = JSON.parse(bytes).message.content;
