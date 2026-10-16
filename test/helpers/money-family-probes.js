@@ -243,8 +243,8 @@ export const EXPECTED_OUT_OF_MATCHER = 5;
  * 隨 python 那組退役），比對前**不做任何正規化**（Codex #540 r1 H2：
  * 原本先把 `-` `.` 收成 `_` 再轉小寫，於是 `GET_ACCOUNT_BALANCES`／`get-account-balances`
  * 這些**不在名單上**的名字都通過了＝把名單擴張成等價類，未來新增的同形工具會繞過）。
- * ⚠️ 誠實劃界：連接器身分是那串 UUID。**重連換了 UUID＝新編號沒登記＝整個連接器被登記制擋**（連唯讀查詢也擋；
- * 名字像錢的那幾支，理由的尾句照接規則 3 那一句（當誤觸或冒名、回報裁示者）——FORBIDDEN_AFTER_RECONNECT 那兩支就是這個情境）。
+ * ⚠️ 重連換 UUID 後是否被攔下，還須核對完整工具名的登記；不能從連接器未登記推成整個連接器必擋。
+ * FORBIDDEN_AFTER_RECONNECT 驗的是該組未登記假名，名字像錢時理由尾句接規則 3（當誤觸或冒名、回報裁示者）。
  * 那時的手續（新編號登記進哪一欄、下單類新全名補到哪幾層、登記前先問 William）＝docs/money-guard-operations.md。
  * ⚠️ 白名單掃的是**每一段** `__`（與家族網的候選切法對齊，Grok #540 掃第 1 條：
  * 原本只認第一段，於是 `mcp__prefix__<uuid>__market_order` 這種多段前綴整層不開火）。
