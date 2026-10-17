@@ -3,12 +3,40 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { writeFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync, realpathSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { browserClient } from '../scripts/gemini-browser-client.js';
 import { leaseMessage, sha256 } from '../scripts/gemini-browser-protocol.js';
 import { writeOnce, readMail, mailExists, SOURCE_FILES } from '../scripts/gemini-browser-files.js';
 import { checkBrowserArtifacts, renderBrowserLauncher, renderBrowserCuaLoader } from '../scripts/gemini-browser-runner.js';
 import { material, answer, observation, jobFixture } from './helpers/gemini-browser-fixture.js';
+
+test('信箱根採固定系統根的正規化結果，不跟環境暫存目錄走', () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'browser-root-env-test-')));
+  try {
+    const source = new URL('../scripts/gemini-browser-files.js', import.meta.url).href;
+    const script = `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs';
+      import {join} from 'node:path';
+      import {tmpdir} from 'node:os';
+      import {syncBuiltinESMExports} from 'node:module';
+      import {configureBrowserOwner,JOB_ROOT} from ${JSON.stringify(source)};
+      const uid=process.getuid(), expected=join(fs.realpathSync('/tmp'),'gemini-browser-jobs-'+uid);
+      assert.notEqual(fs.realpathSync(tmpdir()),fs.realpathSync('/tmp'));
+      configureBrowserOwner(uid); assert.equal(JOB_ROOT,expected);
+      const original=fs.realpathSync;
+      fs.realpathSync=(path,...args)=>path==='/tmp'?'/synthetic-canonical-tmp':original(path,...args);
+      syncBuiltinESMExports();
+      try { configureBrowserOwner(uid); assert.equal(JOB_ROOT,'/synthetic-canonical-tmp/gemini-browser-jobs-'+uid); }
+      finally { fs.realpathSync=original; syncBuiltinESMExports(); }
+      process.stdout.write('ROOT-OK');
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script],
+      { encoding: 'utf8', timeout: 5000, env: { PATH: '/usr/bin:/bin', TMPDIR: dir } });
+    assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, 'ROOT-OK');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('盒內持有請求到回覆的整輪；額外回覆、無回覆及壞來源不能終結成功', async () => {
   for (const variant of ['good', 'replay', 'missing', 'bad-source']) {
@@ -59,7 +87,7 @@ test('中止與晚到回覆不被採用；盒外專屬假值與新機密形狀�
 
 test('根發射器在匯入前核固定設定、node、提示及執行來源；缺集合或自改釘值不能追認', () => {
   for (const target of ['runner', 'cua']) for (const variant of ['good', 'source', 'node', 'prompt', 'config', 'duplicate', 'missing-source', ...(target === 'runner' ? ['flags', 'loader'] : [])]) {
-    const dir = realpathSync(mkdtempSync('/private/tmp/browser-bootstrap-test-'));
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'browser-bootstrap-test-')));
     try {
       const providerRoot = join(dir, 'provider'), promptFile = join(dir, 'prompt.txt'), marker = join(dir, 'IMPORTED');
       const script = `import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(marker)},'yes'); export async function runBrowserScan(d) { if(d.pins.length!==5)throw Error('pins'); return {status:'SYNTHETIC',runId:'fake',receipt:'fake'}; }`;

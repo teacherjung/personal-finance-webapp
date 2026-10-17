@@ -14,7 +14,9 @@ export let JOB_ROOT = '';
 // 固定 loader 或普通 Node runner 提供部署擁有者；瀏覽器宿主不必取得 process 能力。
 export function configureBrowserOwner(uid) {
   if (!Number.isSafeInteger(uid) || uid < 0 || (expectedOwner !== -1 && expectedOwner !== uid)) browserError('OWNER');
-  expectedOwner = uid; JOB_ROOT = `/private/tmp/gemini-browser-jobs-${uid}`;
+  // 固定系統根並正規化其別名，避免環境暫存設定把信箱導向別處。
+  const root = join(realpathSync('/tmp'), `gemini-browser-jobs-${uid}`);
+  expectedOwner = uid; JOB_ROOT = root;
 }
 export const SOURCE_FILES = [
   'scripts/gemini-browser-files.js', 'scripts/gemini-browser-protocol.js', 'scripts/gemini-browser-client.js',
