@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { MODEL_WALK_MAX_NODES, reviewModelsQualified, runScan } from '../scripts/grok-scan.js';
+import { sandboxEnv } from '../scripts/grok-sandbox-canary.js';
 import { cleanupTempRoots, fakeCanary, fakeGrok, fakeRelay, isolated, keep, promptFile, SANDBOX_OK, SKIP_AFTER_CANARY, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
 
 after(cleanupTempRoots);
@@ -18,6 +19,10 @@ test('複審資格採精確的非空全員集合，不按陌生名稱推級別',
     assert.equal(reviewModelsQualified(models), false);
   }
   assert.equal(reviewModelsQualified(['grok-4.6-build', 'grok-4.7']), true);
+});
+
+test('通用沙箱環境不包含複審模型專用的合成 USER', () => {
+  assert.equal(Object.hasOwn(sandboxEnv('/synthetic-box'), 'USER'), false);
 });
 
 /** @param {Record<string, any>} [options] */
@@ -119,12 +124,22 @@ test('正式複審保留基底、受審與突變材料，原文與 manifest 可�
   assert.equal(saved.replySha256, result.review.replySha256);
 });
 
-test('正式複審把本輪明確指定的模型與推理傳進 CLI，不拿掃描設定代替', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
-  const { result } = await reviewRun({ args: { model: 'grok-4.6', effort: 'high' }, fake: { model: 'grok-4.6' }, shell: 'printf "%s\\n" "$@"' });
-  assert.equal(result.code, 0, result.summary.join('\n'));
-  assert.ok(result.review, '修正 runner 正式複審回傳後重跑本檔');
-  assert.ok(result.review.stdout.includes('--model\ngrok-4.6\n'));
-  assert.ok(result.review.stdout.includes('--reasoning-effort\nhigh\n'));
+test('正式複審把本輪明確指定的模型、推理與固定合成 USER 傳進 CLI，不拿掃描設定或外層 USER 代替', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const previous = process.env.USER;
+  process.env.USER = 'SYNTHETIC-OUTER-USER';
+  try {
+    const { result, iso } = await reviewRun({ args: { model: 'grok-4.6', effort: 'high' }, fake: { model: 'grok-4.6' }, shell: 'printf "%s\\n" "$@"; printf "REVIEW-USER=<%s>\\n" "${USER-NOT-PRESENT}"' });
+    assert.equal(result.code, 0, result.summary.join('\n'));
+    assert.ok(result.review, '修正 runner 正式複審回傳後重跑本檔');
+    assert.ok(result.review.stdout.includes('--model\ngrok-4.6\n'));
+    assert.ok(result.review.stdout.includes('--reasoning-effort\nhigh\n'));
+    assert.ok(result.review.stdout.includes('REVIEW-USER=<group:everyone>\n'));
+    assert.ok(!result.review.stdout.includes('SYNTHETIC-OUTER-USER'));
+    const launch = JSON.parse(readFileSync(join(iso.resultsRoot, readdirSync(iso.resultsRoot)[0], 'launch.json'), 'utf8'));
+    assert.equal(launch.env.USER, 'group:everyone');
+  } finally {
+    if (previous === undefined) delete process.env.USER; else process.env.USER = previous;
+  }
 });
 
 test('正式複審在首次未信任 CLI 之前備妥材料與突變相依副本', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {

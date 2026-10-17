@@ -346,7 +346,7 @@ test('沒有相依的倉庫整條走到退 0：假 grok 收到 --model／--reaso
   writeFileSync(join(repo.dir, 'settings.json'), JSON.stringify({ scanner: { strongest: 'grok-8.3', maxEffort: 'low' } }));
   const inst = fakeGrok();
   const bin = join(inst, 'bin', 'grok');
-  writeFileSync(bin, readFileSync(bin, 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'for a in "$@"; do printf \'<%s>\' "$a"; done'));
+  writeFileSync(bin, readFileSync(bin, 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'for a in "$@"; do printf \'<%s>\' "$a"; done; printf "SCAN-USER=<%s>" "${USER-NOT-PRESENT}"'));
   const iso = isolated();
   const out = join(keep(mkdtempSync(join(tmpdir(), 'out-'))), 'reply.txt');
   /** @type {string[]} */ const logs = [];
@@ -365,6 +365,8 @@ test('沒有相依的倉庫整條走到退 0：假 grok 收到 --model／--reaso
   assert.equal(launch.repo, 'acme/kit');
   assert.equal(launch.model, FAKE_SCANNER.strongest);
   assert.equal(launch.reasoningEffort, FAKE_SCANNER.maxEffort);
+  assert.ok(reply.includes('SCAN-USER=<NOT-PRESENT>'));
+  assert.equal(Object.hasOwn(launch.env, 'USER'), false);
   assert.equal(launch.scanScriptSha256, sha);
   assert.equal(launch.sbArgv.length, 6);
   assert.ok(!JSON.stringify(launch.sbArgv).includes(repo.dir) && !JSON.stringify(launch.env).includes(repo.dir), '要掃的倉庫路徑進了沙箱參數或環境');

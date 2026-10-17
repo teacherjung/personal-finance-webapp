@@ -1331,7 +1331,8 @@ export async function runScan(args, deps = {}) {
   const GROK_FLAGS = ['--disable-web-search', '--no-subagents', '--always-approve'];
   // 模型與推理強度明確指定（常設指示），用長旗標：grok-bump 的必要字串才驗得到它們還在新版執行檔裡
   const grokArgv = [grokBin, ...GROK_FLAGS, '--model', model, '--reasoning-effort', effort, '--prompt-file', materialsFile];
-  const env = { ...sandboxEnv(box), GROK_CLI_CHAT_PROXY_BASE_URL: `http://127.0.0.1:${relayPort}/v1` };
+  // 固定合成群組讓依 USER 設置 ACL 的基底考題能收尾，且不把操作者識別值傳入。
+  const env = { ...sandboxEnv(box), ...(formal ? { USER: 'group:everyone' } : {}), GROK_CLI_CHAT_PROXY_BASE_URL: `http://127.0.0.1:${relayPort}/v1` };
   // r6 #3：ulimit 包著整個沙箱（sh 設完 exec sandbox-exec；限制隨 fork 繼承）：
   //   -f 單檔 64MB（1024-byte 單位）／-u 程序數＝同 uid 現有數＋256（macOS 的 -u 是 per-uid 計數，設太低連 fork 都不行）／-t CPU 1800 秒。
   //   -v（虛擬記憶體）在 macOS 設不了（EINVAL），沒放。
