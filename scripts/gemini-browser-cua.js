@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { URL as NodeURL } from 'node:url';
 import { isMainModule } from '../lib/is-main.js';
 import { SOURCE_ROOT, SOURCE_FILES, jobDirectory, readMail, readBoundedFile, writeOnce, mailExists, sourceDigest, browserError } from './gemini-browser-files.js';
-import { URL, ORIGIN, SELECTED, DETAILS, REPLY_CAP, sha256, validateDescriptor, leaseMessage } from './gemini-browser-protocol.js';
+import { URL, ORIGIN, SELECTED, DETAILS, PROMPT_CAP, REPLY_CAP, sha256, fields, validateDescriptor, leaseMessage } from './gemini-browser-protocol.js';
 
 const sessions = new Map();
 const pause = () => new Promise(resolve => setTimeout(resolve, 100));
@@ -22,10 +22,10 @@ function alive(s) {
   if (Date.now() >= s.d.expiresAt || performance.now() - s.started > s.remaining
     || mailExists(s.dir, 'aborted.json') || mailExists(s.dir, 'cancel.json')) browserError('ABORTED');
   if (sourceDigest(SOURCE_ROOT, SOURCE_FILES).sha256 !== s.d.sourceSha256
-    || sha256(readBoundedFile(join(s.dir, 'prompt.txt'))) !== s.d.requestSha256
+    || sha256(readBoundedFile(join(s.dir, 'prompt.txt'), PROMPT_CAP)) !== s.d.requestSha256
     || !equal(readMail(s.dir, 'descriptor.json'), s.d)) browserError('SOURCE_CHANGED');
 }
-async function step(s, action) { alive(s); return await action(); }
+async function step(s, action, phase) { if (phase) s.phase = phase; alive(s); return await action(); }
 async function waitMail(s, name, expected) {
   const end = performance.now() + 5000;
   while (!mailExists(s.dir, name)) {
@@ -34,7 +34,8 @@ async function waitMail(s, name, expected) {
   alive(s);
   if (!equal(readMail(s.dir, name), expected)) browserError('ACK');
 }
-async function until(s, predicate) {
+async function until(s, predicate, phase) {
+  if (phase) s.phase = phase;
   const end = performance.now() + 10000;
   while (!(await step(s, predicate))) { if (performance.now() >= end) browserError('UI_STATE'); await pause(); }
 }
@@ -52,59 +53,93 @@ async function cleanup(s, failed) {
   writeOnce(s.dir, 'quiescent.json', { instance: s.instance, tabClosed: !!s.tab, failed });
   s.state = 'CLOSED';
 }
-async function failed(s) {
-  if (!mailExists(s.dir, 'adapter-failed.json')) writeOnce(s.dir, 'adapter-failed.json', { instance: s.instance, phase: s.phase ?? s.state });
-  await cleanup(s, true);
+function unreadSummary(s) {
+  return { sampled: false, expectedCodeUnits: s.prompt.length, actualCodeUnits: null, match: false };
+}
+async function readback(s, key) {
+  if (typeof s.prompt !== 'string') browserError('READBACK_RESULT');
+  // 在 DOM 內逐字比較，避免工具回傳長字串時的截短改變完整性判斷。
+  const result = await input(s.tab).evaluate((element, expected) => {
+    if (typeof expected !== 'string') throw Error('GEMINI_BROWSER_READBACK_RESULT');
+    const actual = element.textContent, sampled = typeof actual === 'string';
+    return { sampled, expectedCodeUnits: expected.length, actualCodeUnits: sampled ? actual.length : null,
+      match: sampled && actual === expected };
+  }, s.prompt);
+  fields(result, ['sampled', 'expectedCodeUnits', 'actualCodeUnits', 'match']);
+  if (typeof result.sampled !== 'boolean' || typeof result.match !== 'boolean'
+    || !Number.isSafeInteger(result.expectedCodeUnits) || result.expectedCodeUnits < 0 || result.expectedCodeUnits !== s.prompt.length
+    || (!result.sampled && (result.actualCodeUnits !== null || result.match))
+    || (result.sampled && (!Number.isSafeInteger(result.actualCodeUnits) || result.actualCodeUnits < 0))
+    || (result.match && result.actualCodeUnits !== result.expectedCodeUnits)) browserError('READBACK_RESULT');
+  s.readbacks[key] = result;
+  return result.match;
+}
+async function failed(s, error) {
+  const codes = ['UI_STATE', 'NO_LIVE_RUNNER', 'ACK', 'PRECONDITION', 'ORIGIN', 'NONEMPTY', 'ABORTED', 'SOURCE_CHANGED', 'READBACK_RESULT'];
+  const code = codes.find(value => error instanceof Error && error.message === 'GEMINI_BROWSER_' + value) ?? 'other';
+  try {
+    if (!mailExists(s.dir, 'adapter-failed.json')) writeOnce(s.dir, 'adapter-failed.json', {
+      instance: s.instance, phase: s.phase ?? s.state, code, readbackMethod: 'dom-textContent-equality/v1',
+      readbackUnit: 'utf16-code-units', readbacks: s.readbacks,
+    });
+  } finally { await cleanup(s, true); }
 }
 
 export async function beginBrowserScan(browser, runId) {
   const dir = jobDirectory(runId), d = validateDescriptor(readMail(dir, 'descriptor.json'));
   if (d.runId !== runId || sessions.has(runId)) browserError('REPLAY');
-  const prompt = new TextDecoder('utf-8', { fatal: true }).decode(readBoundedFile(join(dir, 'prompt.txt')));
+  const prompt = new TextDecoder('utf-8', { fatal: true }).decode(readBoundedFile(join(dir, 'prompt.txt'), PROMPT_CAP));
   if (Buffer.byteLength(prompt) !== d.requestBytes || sha256(prompt) !== d.requestSha256) browserError('REQUEST');
-  const s = { dir, d, prompt, instance: nonce(16), started: performance.now(), remaining: Math.min(15 * 60000, d.expiresAt - Date.now()), state: 'CLAIMING', tab: /** @type {any} */ (null) };
+  const s = { dir, d, prompt, instance: nonce(16), started: performance.now(), remaining: Math.min(15 * 60000, d.expiresAt - Date.now()), state: 'CLAIMING', phase: 'initial-source', readbacks: {}, tab: /** @type {any} */ (null) };
+  s.readbacks = { input: unreadSummary(s), submit: unreadSummary(s) };
   alive(s);
   const claim = leaseMessage(d, s.instance, nonce(32), 'claim');
   writeOnce(dir, 'claim.json', claim);
   sessions.set(runId, s);
   try {
+    s.phase = 'claim-ack';
     await waitMail(s, 'claim-ack.json', { ...claim, stage: 'claimed' });
     s.state = 'PREPARING';
-    s.tab = await step(s, () => browser.tabs.new());
-    await step(s, () => s.tab.goto(URL));
+    s.tab = await step(s, () => browser.tabs.new(), 'new-tab');
+    await step(s, () => s.tab.goto(URL), 'navigate');
+    s.phase = 'initial-origin';
     await origin(s);
-    await until(s, () => button(s.tab, 'Temporary chat').isVisible());
-    await step(s, () => main(s.tab).getByRole('button', { name: /^Open mode picker, currently / }).waitFor({ state: 'visible', timeoutMs: 10000 }));
+    await until(s, () => button(s.tab, 'Temporary chat').isVisible(), 'initial-controls');
+    await step(s, () => main(s.tab).getByRole('button', { name: /^Open mode picker, currently / }).waitFor({ state: 'visible', timeoutMs: 10000 }), 'initial-model-control');
+    s.phase = 'initial-empty';
     if (await step(s, () => responses(s.tab).count()) !== 0 || (await step(s, () => input(s.tab).textContent())).trim()) browserError('NONEMPTY');
-    await step(s, () => button(s.tab, 'Temporary chat').click());
-    await until(s, () => temporaryBefore(s));
-    await step(s, () => main(s.tab).getByRole('button', { name: /^Open mode picker, currently / }).click());
-    await until(s, () => s.tab.playwright.getByRole('menuitem', { name: /4 Argon Complex tasks/ }).isVisible());
-    await step(s, () => s.tab.playwright.getByRole('menuitem', { name: /4 Argon Complex tasks/ }).click());
-    await until(s, async () => (await selected(s.tab))?.includes('Argon'));
-    await step(s, () => main(s.tab).getByRole('button', { name: /^Open mode picker, currently / }).click());
-    await until(s, () => s.tab.playwright.getByRole('menuitem', { name: 'Thinking level', exact: true }).isVisible());
-    await step(s, () => s.tab.playwright.getByRole('menuitem', { name: 'Thinking level', exact: true }).click());
-    await until(s, () => s.tab.playwright.getByRole('menuitem', { name: 'High Extra thorough', exact: true }).isVisible());
-    await step(s, () => s.tab.playwright.getByRole('menuitem', { name: 'High Extra thorough', exact: true }).click());
-    await until(s, async () => await selected(s.tab) === SELECTED);
-    await step(s, () => input(s.tab).fill(prompt));
-    await until(s, async () => await input(s.tab).textContent() === prompt);
+    await step(s, () => button(s.tab, 'Temporary chat').click(), 'temporary-activate');
+    await until(s, () => temporaryBefore(s), 'temporary-confirm');
+    await step(s, () => main(s.tab).getByRole('button', { name: /^Open mode picker, currently / }).click(), 'model-menu-open');
+    await until(s, () => s.tab.playwright.getByRole('menuitem', { name: /4 Argon Complex tasks/ }).isVisible(), 'model-option-wait');
+    await step(s, () => s.tab.playwright.getByRole('menuitem', { name: /4 Argon Complex tasks/ }).click(), 'model-select');
+    await until(s, async () => (await selected(s.tab))?.includes('Argon'), 'model-confirm');
+    await step(s, () => main(s.tab).getByRole('button', { name: /^Open mode picker, currently / }).click(), 'effort-menu-open');
+    await until(s, () => s.tab.playwright.getByRole('menuitem', { name: 'Thinking level', exact: true }).isVisible(), 'effort-menu-wait');
+    await step(s, () => s.tab.playwright.getByRole('menuitem', { name: 'Thinking level', exact: true }).click(), 'effort-menu-select');
+    await until(s, () => s.tab.playwright.getByRole('menuitem', { name: 'High Extra thorough', exact: true }).isVisible(), 'effort-option-wait');
+    await step(s, () => s.tab.playwright.getByRole('menuitem', { name: 'High Extra thorough', exact: true }).click(), 'effort-select');
+    await until(s, async () => await selected(s.tab) === SELECTED, 'effort-confirm');
+    await step(s, () => input(s.tab).fill(prompt), 'input-fill');
+    await until(s, async () => await readback(s, 'input') === true, 'input-readback');
+    s.phase = 'ready-precondition';
     if (!await step(s, () => temporaryBefore(s)) || await step(s, () => responses(s.tab).count()) !== 0) browserError('PRECONDITION');
     const ready = { ...leaseMessage(d, s.instance, nonce(32), 'ready'), tabId: s.tab.id, temporary: true, initialResponses: 0, selected: SELECTED };
     writeOnce(dir, 'ready.json', ready);
     const permit = { ...ready, stage: 'submit-once' };
+    s.phase = 'permit-wait';
     await waitMail(s, 'permit.json', permit);
     writeOnce(dir, 'consumed.json', permit);
+    s.phase = 'submit-precondition';
     await origin(s);
-    if (await step(s, () => selected(s.tab)) !== SELECTED || await step(s, () => input(s.tab).textContent()) !== prompt
+    if (await step(s, () => selected(s.tab)) !== SELECTED || await step(s, () => readback(s, 'submit')) !== true
       || !await step(s, () => temporaryBefore(s)) || await step(s, () => responses(s.tab).count()) !== 0) browserError('PRECONDITION');
     s.state = 'ATTEMPTED';
-    await step(s, () => button(s.tab, 'Send message').click());
+    await step(s, () => button(s.tab, 'Send message').click(), 'submit-attempt');
     s.state = 'SUBMITTED';
     writeOnce(dir, 'submitted.json', { instance: s.instance, tabId: s.tab.id, submissions: 1 });
     return { runId, state: s.state, tabId: s.tab.id };
-  } catch (e) { await failed(s); throw e; }
+  } catch (e) { await failed(s, e); throw e; }
 }
 
 export async function captureBrowserScan(runId) {
@@ -163,7 +198,7 @@ export async function captureBrowserScan(runId) {
     writeOnce(s.dir, 'capture.json', { instance: s.instance, observation });
     await cleanup(s, false);
     return { runId, state: 'CAPTURED', responseBytes: raw.length, responseSha256: sha256(raw) };
-  } catch (e) { await failed(s); throw e; }
+  } catch (e) { await failed(s, e); throw e; }
 }
 
 export async function cancelBrowserScan(runId) {

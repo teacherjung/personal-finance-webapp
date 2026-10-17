@@ -133,7 +133,7 @@
 - **A 政策網頁接線**：沿用本人既有帳號及官方 Gemini 網頁登入，依[網頁正式掃描計畫](gemini-browser-formal-plan.md)操作；scanner 模型及推理登記 `4 Argon`／`High`。盒內 client 持有整輪狀態機；固定盒外 runner 與 CUA adapter 以新挑戰及一次性送出許可交接，只處理本場提交材料與回覆。`browser-ui/v1` 是官方畫面的可見來源觀測，不冒充原生事件或平台簽章。資格場、獨立複審、正式用途合成驗收及 G1 分開記帳；缺同版完整資格、來源釘值或任一場隔離收據均不得採用。這是有操作者的固定流程，不宣稱無人值守。
 
 - 啟用順序依 [GPT‑6.1 Sol 技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6190135649)：先用固定候選版完成能力與隔離驗證，再綁定掃描者設定並重新驗證，才啟用。驗證過程不算任何 PR 的正式複審或 G1 掃描；掃描登記與實際完成證據分別核對，不能只看接線檔案存在。
-- **網頁正式入口**：先核獨立保存的預期指紋，再以絕對路徑啟動固定盒外 launcher；由同版 CUA loader 呼叫 `beginBrowserScan`、`captureBrowserScan`，取消走 `cancelBrowserScan`。部署固定受掃 repo、base/head、提示、Node、提供者完整來源及資格收據，不能用環境或一般 CLI 旗標補值。完整請求上限 32 KiB；超量拒收、不截斷、不拆成多次充作一次掃描。每場只送一次、只採完整唯一回覆及同回覆官方 `Used 4 Argon 高` 明細，任何條件不合即依 G3 記未執行。實體部署路徑及原始證據只留本機。
+- **網頁正式入口**：先核獨立保存的預期指紋，再以絕對路徑啟動固定盒外 launcher；由同版 CUA loader 呼叫 `beginBrowserScan`、`captureBrowserScan`，取消走 `cancelBrowserScan`。部署固定受掃 repo、base/head、提示、Node、提供者完整來源及資格收據，不能用環境或一般 CLI 旗標補值。完整請求上限 2 MiB（2,097,152 UTF-8 bytes；本機傳輸界線，非平台容量宣稱；擴容驗收見[容量計畫](gemini-browser-capacity-plan.md)）；超量拒收、不截斷、不拆成多次充作一次掃描。每場只送一次、只採完整唯一回覆及同回覆官方 `Used 4 Argon 高` 明細，任何條件不合即依 G3 記未執行。實體部署路徑及原始證據只留本機。
 - **原生來源沿革（未啟用）**：`scripts/gemini-auth.js` 的 `PUBLIC_CLIENT_SOURCE_PIN` 與[原生來源裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6191504939)只約束原生候選；不授權啟動登入、讀取真憑證或替代網頁入口。網頁傳輸不讀 OAuth client 配置、cookies、tokens 或 Keychain 登入秘密。
 - **資料界線與借用遷移**：只處理已提交的靜態材料，模型回覆不當成已執行考題或正式放行；不因診斷改帳號、scope 或計費。套件原有 Grok 借用入口在理財 scanner 切換後不相容，須另由套件工作線更新專案自有設定及指路，模型、推理、wrap、禁區仍引用理財正本。遷移完成前依 G3 寫「未執行：借用掃描入口尚未完成 Gemini 遷移」；不得以額外設定、舊工作樹或 review 用途暗留另一套 G1 掃描。
 

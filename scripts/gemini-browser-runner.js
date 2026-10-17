@@ -262,7 +262,7 @@ export async function runBrowserScan(deployment) {
       pid: process.pid, expiresAt: Date.now() + Math.floor(Math.max(0, WALL_MS - (performance.now() - started))) };
     writeOnce(job, 'descriptor.json', descriptor);
     lease = new BrowserLease(job, descriptor, () => { check(); wire.waiting();
-      if (wire.frames.length !== 1 || sha256(readBoundedFile(join(job, 'prompt.txt'))) !== packet.promptSha256) browserError('REQUEST_CHANGED');
+      if (wire.frames.length !== 1 || sha256(readBoundedFile(join(job, 'prompt.txt'), PROMPT_CAP)) !== packet.promptSha256) browserError('REQUEST_CHANGED');
     });
     process.stdout.write(JSON.stringify({ state: 'HANDOFF_READY', runId, purpose: deployment.purpose }) + '\n');
     let capture;

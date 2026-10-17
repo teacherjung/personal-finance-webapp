@@ -19,11 +19,11 @@ export function observation(packet, raw = answer(packet)) {
     selectedBefore: SELECTED, selectedAfter: SELECTED, details: DETAILS, detailsSource: 'response-details', complete: true, regenerations: 0,
     promptSha256: packet.promptSha256, responseSha256: sha256(raw), responseBytes: Buffer.byteLength(raw) };
 }
-export function jobFixture() {
+export function jobFixture(input = material()) {
   mkdirSync(JOB_ROOT, { mode: 0o700, recursive: true });
   const runId = randomBytes(16).toString('hex'), dir = join(JOB_ROOT, runId);
   mkdirSync(dir, { mode: 0o700 });
-  const packet = prepareBrowserPacket(material());
+  const packet = prepareBrowserPacket(input);
   const descriptor = { schema: 'browser-job/v1', runId, lease: randomBytes(32).toString('hex'), sourceSha256: sourceDigest(SOURCE_ROOT, SOURCE_FILES).sha256,
     requestSha256: packet.promptSha256, requestBytes: packet.promptBytes, scanId: packet.binding.scanId, pid: process.pid, expiresAt: Date.now() + 60000 };
   writeOnce(dir, 'prompt.txt', packet.prompt); writeOnce(dir, 'descriptor.json', descriptor);
@@ -52,7 +52,8 @@ export function browserFixture(job, options = {}) {
       if (key === `text:${DETAILS}`) return 1;
       throw Error(`unexpected count ${key}`);
     },
-    async textContent() { assertKey(key.includes('textbox:Enter a prompt for Gemini')); return state.text; },
+    async textContent() { assertKey(key.includes('textbox:Enter a prompt for Gemini')); return state.text.slice(0, options.textContentCap); },
+    async evaluate(fn, expected) { assertKey(key.includes('textbox:Enter a prompt for Gemini')); return fn({ textContent: state.text }, expected); },
     async fill(text) { calls.push(['fill', text]); state.text = options.truncate ? text.slice(0, -1) : text; },
     async innerText() {
       if (key.endsWith('model-response-content')) return state.raw ?? raw;
@@ -101,6 +102,6 @@ export function browserFixture(job, options = {}) {
     async screenshot() { calls.push(['screenshot']); return Buffer.from('synthetic screenshot'); },
     async close() { calls.push(['close', this.id]); state.closed = true; },
   };
-  return { calls, state, browser: { tabs: { async new() { calls.push(['new']); return tab; } } } };
+  return { calls, state, tab, browser: { tabs: { async new() { calls.push(['new']); return tab; } } } };
 }
 function assertKey(ok) { if (!ok) throw Error('unexpected fixture action'); }
