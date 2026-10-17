@@ -42,6 +42,10 @@
 
 受控操作依序由釘住的盒外 wrapper 呼叫 `runBrowserScan`，取得工作識別值後，在既有 CUA REPL 載入同一提供者的固定模組，呼叫 `beginBrowserScan(browser, runId)`；等待後呼叫 `captureBrowserScan(runId)`。回傳 PENDING 時可以再次觀測，同一工作不能再次 begin／Submit。取消呼叫 `cancelBrowserScan(runId)`；它只作用於本場持有的 tab。沒有 Node 私接 CUA、CDP 或帳號 token 的後門。這是有操作者的固定程序，不是無人值守服務。
 
+部署採單向信任：操作者獨立保存的預期 launcher／Node 指紋 → 固定 launcher → 固定資料設定 → 提供者、Node 與提示。每次啟動先由外部核對根指紋，再以絕對路徑執行；launcher 在匯入提供者之前只用 Node 內建模組核設定及完整執行來源集合。設定不反嵌自己的 hash 或 launcher hash；runner 的來源 pins 由已核 launcher 在記憶體組成。自算 launcher 指紋只用於前後漂移檢查，不是載入映像證明。首次資格不引用自己尚未產生的收據；正式部署另釘資格收據與同一受測核心，核心或 provider head 改變就重取資格。
+
+CUA loader 與獨立 launcher 共用內建模組的檔案核對核心，分開主機角色。先固定設定，再產出 loader，最後讓 launcher 固定 loader 指紋並列入前後 pins。CUA REPL 也須先在外部用內建模組核 loader 的預期值，才可載入；loader 再核設定與來源後才載入 adapter。CUA host 不套用 worker 的 argv／執行檔判準，兩個環境分別留痕。ESM 可能快取已載入模組，換版須用全新固定提供者路徑及新 loader；只改頂層 query 或只清變數不能保證依賴一起換版。
+
 請求使用單行固定文字＋JSON，避免網頁編輯器把多行轉成段落而難以逐字核對。初始整份上限為 32 KiB；資格場必須完整填入、送出並通過同上限的全鏈，才准登記正式場。超過上限的 PR 整份拒收，不能把這個能力說成不限大小。模型必須回完整封閉 JSON，包 Markdown 或加前後文也會失敗，不人工修復。
 
 掃描停止立即使結果不可採用。檔案握手不能原子撤回已在途的瀏覽器動作，最多容許已核准的一次送出嘗試；不重試、不追認晚到結果。未確認 CUA 呼叫結束及自有分頁關閉，不能解開下一掃的鎖。清理分別記程序群組、最佳努力離群掃蕩、盒子與 CUA 靜止，不宣稱關頁取消 Google 遠端計算。

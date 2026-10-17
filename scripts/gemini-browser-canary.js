@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { mkdtempSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { runCanary, runInSandbox, isBlocked } from './grok-sandbox-canary.js';
+import { isMainModule } from '../lib/is-main.js';
 
 export const BROWSER_PROFILE = join(dirname(fileURLToPath(import.meta.url)), 'gemini-browser-sandbox.sb');
 export async function browserCanary(box, job, marker) {
@@ -38,3 +39,5 @@ export async function browserCanary(box, job, marker) {
   const bad = results.some(r => !r.blocked);
   return { code: bad ? 1 : 0, lines: [...base.lines, ...results.map(r => `${r.blocked ? '擋住' : '未擋住'}｜${r.label}`)] };
 }
+
+if (isMainModule(import.meta.url)) { process.stderr.write('GEMINI_BROWSER_LIBRARY_ONLY\n'); process.exitCode = 78; }

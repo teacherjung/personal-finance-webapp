@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync } from 'nod
 import { join, dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
+import { pathToFileURL } from 'node:url';
 import { SOURCE_ROOT, SOURCE_FILES, JOB_ROOT, privateDirectory, readMail, readBoundedFile, writeOnce, mailExists, sourceDigest, browserError } from './gemini-browser-files.js';
 import { prepareBrowserPacket, validateBrowserReply, validateLease, fields, PROMPT_CAP, REPLY_CAP, MODEL, EFFORT, sha256, SELECTED } from './gemini-browser-protocol.js';
 import { parseUniqueJson } from './gemini-native-protocol.js';
@@ -20,6 +21,81 @@ const random = n => randomBytes(n).toString('hex');
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 export const WORKER_FILES = ['scripts/gemini-browser-client.js', 'scripts/gemini-browser-protocol.js', 'scripts/gemini-native-protocol.js', 'lib/is-main.js'];
 const WALL_MS = 15 * 60000;
+
+// 產生器本身不是信任根：操作者另存並核對產物與 node 的預期指紋，才可執行該絕對路徑。
+function bootstrapSource(configPath, configSha256, providerRoot, host, cuaLoader) {
+  if (typeof configPath !== 'string' || !configPath.startsWith('/') || !/^[a-f0-9]{64}$/.test(configSha256)
+    || typeof providerRoot !== 'string' || realpathSync(providerRoot) !== providerRoot) browserError('LAUNCHER_CONFIG');
+  return `await (${pinnedBootstrap.toString()})(${JSON.stringify(configPath)}, ${JSON.stringify(configSha256)}, ${JSON.stringify(SOURCE_FILES)}, ${JSON.stringify(providerRoot)}, ${JSON.stringify(host)}, ${JSON.stringify(cuaLoader)})`;
+}
+export function renderBrowserLauncher(configPath, configSha256, providerRoot, cuaLoader) {
+  fields(cuaLoader, ['path', 'sha256']);
+  if (typeof cuaLoader.path !== 'string' || !cuaLoader.path.startsWith('/') || !/^[a-f0-9]{64}$/.test(cuaLoader.sha256)) browserError('LAUNCHER_CUA');
+  const entry = pathToFileURL(join(providerRoot, 'scripts/gemini-browser-runner.js')).href;
+  return `const deployment = ${bootstrapSource(configPath, configSha256, providerRoot, 'runner', cuaLoader)};\n`
+    + `const runner = await import(${JSON.stringify(entry)});\n`
+    + 'const result = await runner.runBrowserScan(deployment);\n'
+    + "process.stdout.write(JSON.stringify({ state: result.status, runId: result.runId, receipt: result.receipt }) + '\\n');\n";
+}
+export function renderBrowserCuaLoader(configPath, configSha256, providerRoot) {
+  const entry = pathToFileURL(join(providerRoot, 'scripts/gemini-browser-cua.js')).href;
+  return `${bootstrapSource(configPath, configSha256, providerRoot, 'cua', null)};\n`
+    + `const adapter = await import(${JSON.stringify(entry)});\n`
+    + 'export const beginBrowserScan = adapter.beginBrowserScan, captureBrowserScan = adapter.captureBrowserScan, cancelBrowserScan = adapter.cancelBrowserScan;\n';
+}
+
+// 此函式序列化成獨立 root launcher；核對執行來源前只載入 Node 內建模組。
+async function pinnedBootstrap(configPath, configSha256, requiredSources, providerRoot, host, cuaLoader) {
+  const fs = await import('node:fs'), path = await import('node:path'), crypto = await import('node:crypto'), url = await import('node:url');
+  const fail = () => { throw Error('GEMINI_BROWSER_BOOTSTRAP_REJECTED'); };
+  const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+  const stamp = s => [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs, s.mode, s.nlink].join(':');
+  const read = (p, expected = undefined) => {
+    if (typeof p !== 'string' || path.resolve(p) !== p || fs.realpathSync(p) !== p) fail();
+    const before = fs.lstatSync(p, { bigint: true });
+    if (!before.isFile() || before.nlink !== 1n || before.uid !== BigInt(process.getuid?.() ?? -1)
+      || (before.mode & 0o022n) || before.size > 16n * 1024n * 1024n) fail();
+    const fd = fs.openSync(p, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      if (stamp(fs.fstatSync(fd, { bigint: true })) !== stamp(before)) fail();
+      const bytes = fs.readFileSync(fd);
+      if (bytes.length !== Number(before.size) || stamp(fs.fstatSync(fd, { bigint: true })) !== stamp(before)
+        || stamp(fs.lstatSync(p, { bigint: true })) !== stamp(before) || (expected !== undefined && hash(bytes) !== expected)) fail();
+      return bytes;
+    } finally { fs.closeSync(fd); }
+  };
+  const keys = (v, list) => { if (!v || typeof v !== 'object' || Array.isArray(v) || Object.keys(v).sort().join(',') !== list.sort().join(',')) fail(); };
+  if (host === 'runner' && process.argv.slice(2).length) fail();
+  const configBytes = read(configPath, configSha256);
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(configBytes), d = JSON.parse(text);
+  // 固定 canonical JSON 同時拒絕重複鍵與數字精度漂移；部署是已釘資料，不執行其中的字串。
+  if (JSON.stringify(d) + '\n' !== text) fail();
+  keys(d, ['purpose', 'providerRoot', 'providerHead', 'providerFiles', 'repo', 'base', 'head', 'promptFile', 'promptSha256', 'node', 'nodeSha256', 'qualification']);
+  if (!['qualification', 'scan'].includes(d.purpose) || !Array.isArray(d.providerFiles) || !d.providerFiles.length
+    || d.providerRoot !== providerRoot || fs.realpathSync(d.providerRoot) !== d.providerRoot
+    || (host === 'runner' && fs.realpathSync(process.execPath) !== d.node)) fail();
+  for (const revision of [d.providerHead, d.base, d.head]) if (!/^[a-f0-9]{40}$/.test(revision)) fail();
+  read(d.node, d.nodeSha256); read(d.promptFile, d.promptSha256);
+  const seen = new Set();
+  for (const entry of d.providerFiles) {
+    keys(entry, ['path', 'mode', 'sha256', 'bytes']);
+    if (typeof entry.path !== 'string' || entry.path.startsWith('/') || entry.path.split('/').some(x => !x || x === '.' || x === '..')
+      || seen.has(entry.path) || !['100644', '100755'].includes(entry.mode) || !/^[a-f0-9]{64}$/.test(entry.sha256)) fail();
+    seen.add(entry.path);
+    const p = path.join(d.providerRoot, entry.path), bytes = read(p, entry.sha256);
+    if (bytes.length !== entry.bytes || ((fs.statSync(p).mode & 0o111) ? '100755' : '100644') !== entry.mode) fail();
+  }
+  if (!requiredSources.every(p => seen.has(p))) fail();
+  if (d.qualification !== null) { keys(d.qualification, ['path', 'sha256']); read(d.qualification.path, d.qualification.sha256); }
+  if (host === 'cua') return;
+  keys(cuaLoader, ['path', 'sha256']); read(cuaLoader.path, cuaLoader.sha256);
+  const self = url.fileURLToPath(import.meta.url);
+  const pins = [{ name: 'wrapper', path: self, sha256: hash(read(self)) },
+    { name: 'deployment', path: configPath, sha256: configSha256 }, { name: 'prompt', path: d.promptFile, sha256: d.promptSha256 },
+    { name: 'node', path: d.node, sha256: d.nodeSha256 }, { name: 'cua-loader', ...cuaLoader }];
+  return { purpose: d.purpose, providerHead: d.providerHead, repo: d.repo,
+    base: d.base, head: d.head, promptFile: d.promptFile, pins, qualification: d.qualification };
+}
 
 // 這一層沒有 UI 能力；新鮮 challenge 證活動控制流程，不宣稱抵抗可改整個可信檔案域的同 UID 操作者。
 export class BrowserLease {
@@ -117,7 +193,7 @@ export async function runBrowserScan(deployment) {
   if (!['qualification', 'scan'].includes(deployment.purpose)) browserError('PURPOSE');
   for (const key of ['providerHead', 'base', 'head']) if (!/^[a-f0-9]{40}$/.test(deployment[key])) browserError('REVISION');
   const pinsBefore = snapshotPinnedSources(deployment.pins);
-  for (const name of ['wrapper', 'deployment', 'prompt', 'node']) if (!deployment.pins.some(p => p.name === name)) browserError('DEPLOYMENT_PINS');
+  for (const name of ['wrapper', 'deployment', 'prompt', 'node', 'cua-loader']) if (!deployment.pins.some(p => p.name === name)) browserError('DEPLOYMENT_PINS');
   if (!deployment.pins.some(p => p.name === 'node' && p.path === realpathSync(process.execPath))) browserError('NODE_PIN');
   if (!deployment.pins.some(p => p.name === 'prompt' && p.path === deployment.promptFile)) browserError('PROMPT_PIN');
   const provider = verifyProvider(SOURCE_ROOT, deployment.providerHead);
@@ -137,6 +213,7 @@ export async function runBrowserScan(deployment) {
     const receipt = parseUniqueJson(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
     if (receipt.purpose !== 'qualification' || receipt.status !== 'PUBLISHED' || receipt.sourceSha256 !== sources.sha256
       || receipt.promptBytes < PROMPT_CAP || receipt.providerHead !== deployment.providerHead) browserError('QUALIFICATION');
+    if (receipt.sourcePins?.find(p => p.name === 'node')?.sha256 !== deployment.pins.find(p => p.name === 'node').sha256) browserError('QUALIFICATION_NODE');
   } else if (deployment.qualification !== null) browserError('QUALIFICATION');
   try { mkdirSync(JOB_ROOT, { mode: 0o700 }); } catch (e) { if (/** @type {NodeJS.ErrnoException} */ (e).code !== 'EEXIST') throw e; }
   privateDirectory(JOB_ROOT);
@@ -211,7 +288,7 @@ export async function runBrowserScan(deployment) {
     rmSync(box, { recursive: true, force: true }); cleaned = true;
     const receipt = { schema: 'browser-scan/v1', status: 'PUBLISHED', purpose: deployment.purpose,
       formalScan: deployment.purpose === 'scan', runId, base: deployment.base, head: deployment.head,
-      providerHead: deployment.providerHead, providerDigest: provider.digest, sourceSha256: sources.sha256,
+      providerHead: deployment.providerHead, providerDigest: provider.digest, sourceSha256: sources.sha256, sourcePins: pinsBefore,
       promptBytes: packet.promptBytes, promptSha256: packet.promptSha256, materialSha256: material.sha256,
       ...result, observation: capture.observation, cleanup: { groupEmpty: true, escapeSweep: 'best-effort', sweepLog, boxRemoved: true, cuaQuiescent: true, ownTabClosed: true } };
     writeOnce(job, 'receipt.json', receipt);

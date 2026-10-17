@@ -1,6 +1,7 @@
 // @ts-check
 // 網頁的可見原文不冒稱原生事件；來源觀測由固定傳輸器提供，模型 JSON 不能自授資格。
 import { randomBytes } from 'node:crypto';
+import { isMainModule } from '../lib/is-main.js';
 import { findingsSchema, parseUniqueJson, validateFindings, sha256, MAX_MATERIAL_BYTES, RESPONSE_CAP } from './gemini-native-protocol.js';
 
 export { sha256 };
@@ -75,3 +76,5 @@ export function validateBrowserReply(raw, observation, packet) {
   const answer = validateFindings(parseUniqueJson(response), packet.binding, packet.files, packet.tailChallenge);
   return { answer, responseSha256: sha256(raw), responseBytes: raw.length, sourceKind: 'browser-ui/v1', receiverConsumptionVerified: false };
 }
+
+if (isMainModule(import.meta.url)) { process.stderr.write('GEMINI_BROWSER_LIBRARY_ONLY\n'); process.exitCode = 78; }

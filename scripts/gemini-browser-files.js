@@ -5,6 +5,7 @@ import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { parseUniqueJson, sha256 } from './gemini-native-protocol.js';
+import { isMainModule } from '../lib/is-main.js';
 
 export const browserError = code => { throw Error(`GEMINI_BROWSER_${code}`); };
 export const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -16,7 +17,7 @@ export const SOURCE_FILES = [
   'scripts/gemini-scan.js', 'scripts/grok-sandbox-canary.js', 'scripts/grok-sandbox.sb', 'scripts/grok-scan.js',
   'scripts/gemini-auth.js', 'scripts/gemini-client.js', 'scripts/gemini-relay.js', 'scripts/grok-auth-refresh.js',
   'scripts/grok-relay.js', 'scripts/grok-final-reply.js', 'scripts/audit-grok-scan.js',
-  'lib/is-main.js', 'lib/git-env.js',
+  'lib/is-main.js', 'lib/git-env.js', 'package.json',
 ];
 const identity = s => [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs, s.mode, s.nlink].join(':');
 
@@ -79,9 +80,11 @@ export function mailExists(dir, name) {
 export function sourceDigest(root, paths) {
   if (typeof root !== 'string' || realpathSync(root) !== root || !Array.isArray(paths) || !paths.length) browserError('SOURCE');
   const rows = paths.map(path => {
-    if (typeof path !== 'string' || !/^(?:scripts|lib)\/[a-z0-9-]+\.(?:js|sb)$/.test(path)) browserError('SOURCE_PATH');
+    if (typeof path !== 'string' || (path !== 'package.json' && !/^(?:scripts|lib)\/[a-z0-9-]+\.(?:js|sb)$/.test(path))) browserError('SOURCE_PATH');
     const bytes = readBoundedFile(join(root, path), 2 * 1024 * 1024);
     return { path, sha256: sha256(bytes), bytes: bytes.length };
   });
   return { rows, sha256: sha256(JSON.stringify(rows)) };
 }
+
+if (isMainModule(import.meta.url)) { process.stderr.write('GEMINI_BROWSER_LIBRARY_ONLY\n'); process.exitCode = 78; }

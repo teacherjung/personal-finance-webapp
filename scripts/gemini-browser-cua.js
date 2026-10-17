@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { join } from 'node:path';
 import { URL as NodeURL } from 'node:url';
+import { isMainModule } from '../lib/is-main.js';
 import { SOURCE_ROOT, SOURCE_FILES, jobDirectory, readMail, readBoundedFile, writeOnce, mailExists, sourceDigest, browserError } from './gemini-browser-files.js';
 import { URL, ORIGIN, SELECTED, DETAILS, REPLY_CAP, sha256, validateDescriptor, leaseMessage } from './gemini-browser-protocol.js';
 
@@ -158,3 +159,5 @@ export async function cancelBrowserScan(runId) {
   await cleanup(s, true);
   return { runId, state: 'CLOSED' };
 }
+
+if (isMainModule(import.meta.url)) { process.stderr.write('GEMINI_BROWSER_CUA_REPL_REQUIRED\n'); process.exitCode = 78; }
