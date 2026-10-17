@@ -2,8 +2,8 @@
 //
 // 家規核可劃界（三段，比照 test/cashflow-bank-upload.test.js 與 test/reconcile-summary.test.js）：
 // ①**為什麼准掃形狀**：`public/modules/cashflow.js` 頂層 `import … from '../app.js'`，而 `app.js`
-//   模組層就碰 `document`／`localStorage`——node 載不進整頁，接線層只能去註解後掃原始碼。
-//   判準與文案已盡量抽進 `ai-consent.js`（純函式），所以掃描只用來釘「接線真的接上去了」。
+//   模組層就碰 `document`／`localStorage`，本卷選擇零 DOM、去註解後核接線形狀。
+//   判準與文案由 `ai-consent.js` 純函式題驗；正式模組的互動另由 cashflow-reload.test.js 真 DOM 卷驗。
 // ②**守得住什麼**：判準與文案的行為（A–E 群，真的執行）＋接線的形狀（F 群：三條 preview 路徑、
 //   apply 走 applyBody、徽章插值、兩條 fallback、防重入）。
 // ③**守不住什麼**：接線層在拿到回傳值之後另外蓋掉結果（例如把 previewBody 的結果丟掉自己組物件、
@@ -448,8 +448,16 @@ test('F｜cashflow.js 接線：三條 preview 路徑各自正確、apply 走 app
   // apply 走 applyBody（插值形，不是只出現函式名）
   assert.match(src, /const payload = applyBody\(r, \{ data: b64, password: pw, skipSimilar \}\);/,
     'apply 的 body 要由 applyBody 產（AI 走票、模板走檔案；skipSimilar＝勾選值一路帶進去）');
-  assert.match(src, /getElementById\('skipSimilarChk'\)\)\?\.checked === true/,
-    '★勾選值只認嚴格 true——沒有勾選框（similar=0）＝undefined＝不帶 key');
+  const previewStart = src.indexOf('function showBankPreview(');
+  const previewEnd = src.indexOf('async function openBankBatchManager(', previewStart);
+  assert.ok(previewStart >= 0 && previewEnd > previewStart, '原預覽函式邊界必須存在');
+  const preview = src.slice(previewStart, previewEnd);
+  assert.match(preview, /const dialog = root\.querySelector\('\.modal'\);[\s\S]*?const skipChk =\s*\(dialog\.querySelector\('#skipSimilarChk'\)\);/,
+    '勾選節點須在延後綁定前捕獲自原預覽 dialog');
+  assert.match(preview, /setTimeout\(\(\) => \{\s*if \(!owns\(\)\) return;/,
+    '原預覽失效時不得延後綁定同名新控制項');
+  assert.match(preview, /if \(btn\) btn\.onclick = async \(\) => \{\s*if \(!owns\(\) \|\| btn\.disabled\) return;[\s\S]*?const skipSimilar = skipChk\?\.checked === true;\s*const payload = applyBody\(r, \{ data: b64, password: pw, skipSimilar \}\);[\s\S]*?res = await api\('\/bank-statement\/apply', \{ method: 'POST', body: payload \}\);/,
+    '原 apply callback 須核原窗身分，以捕獲節點的嚴格 true 產生並送出同一 payload；缺席不帶 key');
   assert.match(src, /body: payload/, '算出來的 payload 要真的送出去（算了不用＝白算）');
   assert.match(src, /if \(!payload\) \{[^}]*AI_PREVIEW_LOST_TEXT/, '票不見＝引導重新預覽，不可退回「送 data 讓它自己再解一次」');
   assert.doesNotMatch(src, /body: \{ data: b64, password: pw \}/, 'apply 的裸物件要被換掉，否則 AI 路線的票永遠帶不出去');
