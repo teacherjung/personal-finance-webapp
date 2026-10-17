@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, closeSync, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +22,55 @@ after(() => { for (const d of roots) { try { chmodSync(d, 0o755); } catch { /* �
 const keep = (/** @type {string} */ d) => { roots.push(d); return d; };
 
 const sha = (/** @type {Buffer|string} */ b) => createHash('sha256').update(b).digest('hex');
+
+const DELETE_DENY_ACE = 'group:everyone deny delete_child';
+const aclEntries = (/** @type {string} */ directory) => execFileSync('/bin/ls', ['-lde', directory], { encoding: 'utf8' })
+  .split('\n').filter(line => /^\s*\d+:/.test(line)).map(line => line.trim());
+const assertDeleteDenyAcl = (/** @type {string[]} */ entries) => assert.deepEqual(entries.map(entry => entry.replace(/^0: ABCDEFAB-CDEF-ABCD-EFAB-CDEF0000000C(?= deny )/i, '0: group:everyone')), [`0: ${DELETE_DENY_ACE}`]);
+
+// 只鎖本題新造的假檔；設置途中拋錯也要解鎖，否則審查盒的最後清理會被 immutable 擋住。
+async function withDeleteDenied(/** @type {string} */ target, /** @type {() => any} */ action, addAcl = (/** @type {string} */ directory) => execFileSync('/bin/chmod', ['+a', DELETE_DENY_ACE, directory])) {
+  const directory = dirname(target);
+  const stamps = [target, directory].map(path => {
+    const stat = lstatSync(path);
+    assert.ok(!stat.isSymbolicLink()); assert.equal(stat.uid, process.getuid?.());
+    return { path, real: realpathSync(path), ino: stat.ino, dev: stat.dev, uid: stat.uid };
+  });
+  const assertOwned = () => { for (const stamp of stamps) {
+    const stat = lstatSync(stamp.path);
+    assert.ok(!stat.isSymbolicLink()); assert.equal(realpathSync(stamp.path), stamp.real);
+    assert.equal(stat.ino, stamp.ino); assert.equal(stat.dev, stamp.dev); assert.equal(stat.uid, stamp.uid);
+  } };
+  assert.deepEqual(aclEntries(directory), []);
+  assert.equal(execFileSync('/usr/bin/stat', ['-f', '%f', target], { encoding: 'utf8' }).trim(), '0');
+  let result, failure;
+  const cleanupErrors = [];
+  try {
+    execFileSync('/usr/bin/chflags', ['uchg', target]);
+    addAcl(directory);
+    assertDeleteDenyAcl(aclEntries(directory));
+    result = await action();
+  } catch (error) { failure = error; }
+  finally {
+    try {
+      assertOwned();
+      const entries = aclEntries(directory);
+      if (entries.length) {
+        assertDeleteDenyAcl(entries);
+        execFileSync('/bin/chmod', ['-a', DELETE_DENY_ACE, directory]);
+      }
+      assert.deepEqual(aclEntries(directory), []);
+    } catch (error) { cleanupErrors.push(error); }
+    try {
+      assertOwned();
+      execFileSync('/usr/bin/chflags', ['nouchg', target]);
+      assert.equal(execFileSync('/usr/bin/stat', ['-f', '%f', target], { encoding: 'utf8' }).trim(), '0');
+    } catch (error) { cleanupErrors.push(error); }
+  }
+  if (cleanupErrors.length) throw new AggregateError([...(failure ? [failure] : []), ...cleanupErrors], '假檔權限恢復失敗');
+  if (failure) throw failure;
+  return result;
+}
 
 /**
  * ⚠️ 這份清單**刻意手抄一次**，不從受測程式 import（#636 r1 #3）：
@@ -617,24 +666,36 @@ test('別的匯出｜`export * as 名字 from` 也算（那是 NamespaceExport�
 });
 
 test('失敗報告｜暫存檔清不掉時，不可以還說「也沒有別的檔被改到」', { skip: process.platform !== 'darwin' && '只有 macOS 做得出這個情形' }, async () => {
+  for (const subject of ['group:everyone', 'ABCDEFAB-CDEF-ABCD-EFAB-CDEF0000000C', 'abcdefab-cdef-abcd-efab-cdef0000000c']) assertDeleteDenyAcl([`0: ${subject} deny delete_child`]);
+  for (const entries of [[], ['0: group:everyone allow delete_child'], ['0: group:everyone deny delete_child,file_inherit'], ['1: group:everyone deny delete_child'], ['0: ABCDEFAB-CDEF-ABCD-EFAB-CDEF0000000D deny delete_child'], ['0: group:everyone deny delete_child', '1: group:everyone deny write']]) assert.throws(() => assertDeleteDenyAcl(entries));
   const oldB = body();
   const repo = fakeRepo({ version: '1.2.3', sha256: sha(oldB) });
   const target = join(repo, ...SCAN);
-  // 目錄只能新增不能刪 → 暫存檔建得出來、rename 失敗、清理也失敗
-  execFileSync('chflags', ['uchg', target]);
-  execFileSync('chmod', ['+a', `${process.env.USER} deny delete_child`, join(repo, 'scripts')]);
-  let r;
-  try { r = await bump({ grokHome: fakeGrokHome({ version: '1.3.0', body: body({ filler: 'NEWER' }) }), repo, write: true }); }
-  finally {
-    try { execFileSync('chmod', ['-a#', '0', join(repo, 'scripts')]); } catch { /* 沒加成功 */ }
-    execFileSync('chflags', ['nouchg', target]);
-  }
+  // 目錄只能新增不能刪 → 暫存檔建得出來、rename 失敗、清理也失敗。
+  const r = await withDeleteDenied(target, () => bump({ grokHome: fakeGrokHome({ version: '1.3.0', body: body({ filler: 'NEWER' }) }), repo, write: true }));
   assert.equal(r.code, 2, r.lines.join('\n'));
   const out = r.lines.join('\n');
   // ⚠️ 不寫成 if／else：那樣兩邊都會綠＝這題白寫。先斷言真的走到「清不掉」那一支。
   assert.match(out, /暫存檔清不掉/, '這題要的情形沒做出來（ACL 沒擋住刪除？）——不是通過，是量錯了');
   assert.ok(!out.includes('也沒有別的檔被改到'), '暫存檔還留著，就不可以說「也沒有別的檔被改到」');
   assert.match(out, /但上面那個暫存檔還在/);
+
+  // 真實設上 immutable 後才製造故障，避免只測到從未鎖住的夾具。
+  for (const phase of ['acl-setup', 'body']) {
+    const brokenRepo = fakeRepo({ version: '1.2.3', sha256: sha(oldB) });
+    const locked = join(brokenRepo, ...SCAN), expected = new Error(phase);
+    const assertLocked = () => assert.equal(execFileSync('/usr/bin/stat', ['-f', '%f', locked], { encoding: 'utf8' }).trim(), '2');
+    let actionRan = false, setupFailed = false;
+    await assert.rejects(withDeleteDenied(locked, () => {
+      actionRan = true; assertLocked();
+      assertDeleteDenyAcl(aclEntries(dirname(locked)));
+      throw expected;
+    }, phase === 'acl-setup' ? () => { assertLocked(); setupFailed = true; throw expected; } : undefined), error => error === expected);
+    assert.equal(actionRan, phase === 'body'); assert.equal(setupFailed, phase === 'acl-setup');
+    assert.deepEqual(aclEntries(dirname(locked)), []);
+    assert.equal(execFileSync('/usr/bin/stat', ['-f', '%f', locked], { encoding: 'utf8' }).trim(), '0');
+    rmSync(brokenRepo, { recursive: true }); assert.equal(existsSync(brokenRepo), false);
+  }
 });
 
 // ——— r7 #1：短寫入——寫了一部分、不拋錯，被截掉尾巴的檔就被 rename 成正式來源檔 ———

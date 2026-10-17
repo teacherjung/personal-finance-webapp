@@ -25,7 +25,7 @@
 ## 待辦（依優先序；已完結主線的結案紀錄在[完工紀錄](docs/archive/project-completion-log.md)）
 
 - **GN-01｜Gemini 原生事件容許契約**（#693 r1 待辦 1）：核定並驗證初始化工具宣告、permission mode 與 checkpoint 的容許契約；宣告清單不等於工具已執行。落點：`scripts/gemini-native-protocol.js` 的初始化與步驟驗證。值得做：正式接上原生 CLI 之前，依當場官方介面與核准政策補行為題及有效突變。— **Codex 本工作線負責**
-- **GN-02｜Gemini 準備入口直接自動考題**（#693 r1 待辦 2）：補 `prepareNativeScan` 的直接自動考題；已提交材料的盒外實跑收據不代替可重跑的自動題。落點：`scripts/gemini-native-runner.js` 與 `test/gemini-native-runner.test.js`。值得做：準備入口接入正式發射器，或擴充已提交材料的驗收流程時。— **Codex 本工作線負責**
+- **GN-02｜Gemini 準備入口直接自動考題**（#693 r1 待辦 2）：#701 補 `prepareNativeScan` 的直接行為題，覆蓋來源重核、提供者乾淨狀態及文字 diff 拒收；三項對應防線突變均使本題失敗。落點：`test/gemini-native-runner.test.js` 的 GN-02 題；候選證據與核收以 [#701](https://github.com/teacherjung/personal-finance-webapp/pull/701) 的正式複審及合併紀錄為準，不以合成收據代替自動題。— **直接回歸保護已補，最終核收見 #701**
 - **GN-03｜Gemini 正式入口錯誤分類**（#693 r1 待辦 3）：讓正式入口依錯誤種類回報，避免把其他失敗印成認證政策未准。落點：`scripts/gemini-native-runner.js` 的命令列 catch。值得做：`runGeminiNativeScan` 開始可能拋出認證拒絕以外的錯誤時。— **Codex 本工作線負責**
 
 - **網站小圖示請求回 404**：瀏覽器會讀取 `/favicon.ico`，主幹尚未提供；放在 `public/index.html` 的圖示宣告或靜態資產路由處理。值得做：下次整理網站資產，或需要完成無 console error 的瀏覽器驗證時；不能只過濾錯誤後宣稱全零。

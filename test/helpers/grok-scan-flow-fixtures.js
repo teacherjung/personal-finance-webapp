@@ -200,7 +200,13 @@ export const fakeCanary = (code = 0, lines = [`（假金絲雀：code ${code}）
  * `liveRoot` 是 2026-08-26 加的：正式路徑的金絲雀住**真家目錄**，而家目錄是**跨程序共用**的——
  * 另一個 session、審查樹、合併閘同時跑考題時，在那裡數 `.grok-live-canary-*` 會互相誤紅。
  */
-export const isolated = () => ({ runCanary: fakeCanary(), authDir: keep(mkdtempSync(join(tmpdir(), 'fake-auth-'))), resultsRoot: keep(mkdtempSync(join(tmpdir(), 'fake-results-'))), liveRoot: keep(mkdtempSync(join(tmpdir(), 'fake-live-'))), fetchImpl: noFetch });
+export const FAKE_SCANNER = Object.freeze({ strongest: 'grok-9.9', maxEffort: 'max' });
+export const isolated = () => {
+  // 合成流程只需要合法的 Grok 參數；不可跟著專案切換掃描者而改測別條路。
+  const settingsFile = join(keep(mkdtempSync(join(tmpdir(), 'fake-scan-settings-'))), 'settings.json');
+  writeFileSync(settingsFile, JSON.stringify({ scanner: FAKE_SCANNER }));
+  return { settingsFile, runCanary: fakeCanary(), authDir: keep(mkdtempSync(join(tmpdir(), 'fake-auth-'))), resultsRoot: keep(mkdtempSync(join(tmpdir(), 'fake-results-'))), liveRoot: keep(mkdtempSync(join(tmpdir(), 'fake-live-'))), fetchImpl: noFetch };
+};
 /**
  * 同 isolated()，但**刻意不給 liveRoot**——要考「預設落在真家目錄」就只能走預設那條路。
  * 寫成覆蓋為 undefined（不是 delete）：isolated() 日後多欄位會自動跟上；而欄位若被改名，

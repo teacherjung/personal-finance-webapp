@@ -98,11 +98,12 @@
 | 角色 | 主要責任 | 不負責 |
 |---|---|---|
 | William | 產品決定、需求優先序、畫面驗收、合併前的兩種例外（叫停、改到禁區清單的 PR 點頭，RULES A5）；**審查回饋的例外**（清單刻意不複述在這裡——見「審查回饋處置」） | 不需判斷程式實作細節；**一般的審查回饋修不修不必問他**（2026-08-14 起由**實作者**判斷；⚠️ 2026-09-10 對稱化前這裡寫死 Claude） |
-| Grok | 教學線「外部記者」三職：腳本查核／每集開工時的選題雷達／就地解釋文案的零基礎讀者測試；程式線＝**複審後掃（常設；2026-08-16 畢業、2026-08-18 由「預審」改序為複審通過後才掃）**＋**唯讀顧問（個案）**＋**暫代正式複審（2026-10-15 本人指示）**（完整邊界＝下方「Grok（本專案）」段） | 正式程式實作、轉正式與合併執行；**沙箱條款落地前不進任何 repo 樹**（主目錄／實作樹／審查樹——一律材料制，見該節）；X 輿情不得用於投資決策線 |
+| Grok | 教學線「外部記者」三職：腳本查核／選題雷達／就地解釋文案讀者測試；程式線＝**唯讀顧問（個案）**及**暫代正式複審（2026-10-15 本人指示）**；操作與界線見下方「Grok（本專案）」 | 正式程式實作、轉正式與合併；不進任何 repo 樹，採隔離材料制；X 輿情不得用於投資決策線 |
+| Gemini | 程式線的**複審後掃**；透過固定官方網頁傳輸及隔離材料流程，操作見「Gemini 接線驗證與啟用」 | 不持有登入憑證或真實資料；不做正式複審、程式實作、轉正式或合併；回覆不能指揮工具或瀏覽器 |
 | 工讀生×2（教學線，人類；2026-08-17 入列） | 教學影片的**製作與營運**：詞彙短片量產線（圖卡／配音合成／剪輯／品檢／YouTube 上架／頻道數據）＋EPxx 正片線的剪輯與上架＋生產看板（Notion 財金詞彙庫）維護（完整邊界與治理＝教學影片 repo（`../teaching-videos/`，GitHub `teacherjung/teaching-videos`） 的 `AGENTS.md`「治理」節，此處不重抄——**該線 2026-08-25 已分家獨立，規矩層不在本 repo**） | 一切程式實作、正式複審與合併；**不進 repo、無 GitHub 權限**（**與本 repo 的接點一律經 `docs/learning-hub-contract.md`**——它涵蓋 EPxx 與詞彙短片兩條產線，不只詞彙牆 metadata；2026-08-25 分家後這句原本仍寫舊的窄射程，`Grok 掃 #3` 抓到）；不接觸真實財務資料（`data/store.db`）與券商帳號憑證；語音合成與分身生成有閘（判準全文＝該檔「治理」節，**此處刻意不重抄**——重抄過一次就漂成較鬆的一份，`Codex #487 r2 High②`）；分身素材僅 EPxx |
 | CI | 型別、格式、考題的自動守門 | 不判斷產品是否好用、金額口徑是否符合使用者的意思 |
 
-- **掃描發射者與轉正式**（RULES A1、G4）＝`settings.json` 的 scanner 那一格指定；現況＝Claude（理由住那一格：送審查的指令列帶外層沙箱、那個環境實測套不上第二層、掃描者套不上沙箱就整支不掃）。要換現況＝想換的那一方自己去量、貼出可重跑的結果，再問 William。
+- **掃描發射者與轉正式**（RULES A1、G4）＝`settings.json` 的 scanner 指定。能力登記只涵蓋同一已驗入口；換提供者版本須重做資格，協作者不能用舊 Grok 路徑或未驗宿主代替。具體設定與套件借用的過渡處理見[GPT‑6.1 Sol 技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6234303771)。
 
 ### 回報（RULES J1、J2、J5）
 
@@ -129,24 +130,24 @@
 ### Gemini 接線驗證與啟用
 
 - **原生候選準備**：不含真認證的程式與合成驗證依 [施工計畫](gemini-native-formal-plan.md)。`scripts/gemini-native-runner.js` 的正式入口在啟動之前拒絕，這個準備階段不綁定 scanner；先前私人合成試跑的真 HOME／Keychain 暫例不延用。本人核定認證政策、核實模型資格及完成原生整體隔離驗收後，另補正式發射器與設定接線。合成考題及來源磁碟快照不能代替 OS 隔離、已載入程式身分或 G1 實跑證據。
-- **A 政策網頁接線**：本人選擇維持憑證分離後，依 [網頁正式掃描計畫](gemini-browser-formal-plan.md)施工。盒內 client 持有整輪狀態機；固定盒外 runner 與 CUA adapter 以新挑戰及一次性送出許可交接，只處理本場提交材料與回覆。`browser-ui/v1` 是官方畫面的可見來源觀測，不冒充原生事件或平台簽章。資格場、獨立複審、設定綁定後重驗及 G1 分開記帳；設定尚未綁定或全鏈未驗收，不能稱已啟用。這是 G2 的具體操作化，沒有豁免隔離或改用真憑證外傳。
+- **A 政策網頁接線**：沿用本人既有帳號及官方 Gemini 網頁登入，依[網頁正式掃描計畫](gemini-browser-formal-plan.md)操作；scanner 模型及推理登記 `4 Argon`／`High`。盒內 client 持有整輪狀態機；固定盒外 runner 與 CUA adapter 以新挑戰及一次性送出許可交接，只處理本場提交材料與回覆。`browser-ui/v1` 是官方畫面的可見來源觀測，不冒充原生事件或平台簽章。資格場、獨立複審、正式用途合成驗收及 G1 分開記帳；缺同版完整資格、來源釘值或任一場隔離收據均不得採用。這是有操作者的固定流程，不宣稱無人值守。
 
 - 啟用順序依 [GPT‑6.1 Sol 技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6190135649)：先用固定候選版完成能力與隔離驗證，再綁定掃描者設定並重新驗證，才啟用。驗證過程不算任何 PR 的正式複審或 G1 掃描；掃描登記與實際完成證據分別核對，不能只看接線檔案存在。
-- 正式入口依 [盒外發射器補充裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6191678827)，由發射者執行 `node <固定盒外發射器>`；掃描參數由已固定的本機部署檔指定。發射器與本機部署定位檔、提供者版本、官方公開來源均須釘雜湊，執行前後核對；實體路徑只留本機。裸 `scripts/gemini-scan.js` 沒有可信來源定位，不作正式發射入口；不能以環境變數、一般 CLI 旗標或路徑搜尋補值。
-- 官方公開 OAuth client 配置的來源規格在 `scripts/gemini-auth.js` 的 `PUBLIC_CLIENT_SOURCE_PIN`；發射器只把已核安裝實體根以 `clientSourceRoot` 傳入 runner，再傳到 auth。來源核對失敗即停止，不另尋來源、不啟動官方 CLI 或登入流程。固定來源與未推送歷史的處置依 [來源裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6191504939)；公開紀錄可留來源種類、版本與雜湊，不能附 client 實值或機器路徑。
-- 認證與額度檢查在盒外執行；掃描只把已提交的靜態材料交給盒內 client，模型回覆不當成已執行考題或正式放行。來源修補不代替既有通道的能力驗證；失敗原因只按固定分類留本機證據，不因診斷改帳號、scope 或計費。原有資料、憑證、隔離與掃前／掃後檢查仍依 RULES B、G 及本次裁示。
+- **網頁正式入口**：先核獨立保存的預期指紋，再以絕對路徑啟動固定盒外 launcher；由同版 CUA loader 呼叫 `beginBrowserScan`、`captureBrowserScan`，取消走 `cancelBrowserScan`。部署固定受掃 repo、base/head、提示、Node、提供者完整來源及資格收據，不能用環境或一般 CLI 旗標補值。完整請求上限 32 KiB；超量拒收、不截斷、不拆成多次充作一次掃描。每場只送一次、只採完整唯一回覆及同回覆官方 `Used 4 Argon 高` 明細，任何條件不合即依 G3 記未執行。實體部署路徑及原始證據只留本機。
+- **原生來源沿革（未啟用）**：`scripts/gemini-auth.js` 的 `PUBLIC_CLIENT_SOURCE_PIN` 與[原生來源裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6191504939)只約束原生候選；不授權啟動登入、讀取真憑證或替代網頁入口。網頁傳輸不讀 OAuth client 配置、cookies、tokens 或 Keychain 登入秘密。
+- **資料界線與借用遷移**：只處理已提交的靜態材料，模型回覆不當成已執行考題或正式放行；不因診斷改帳號、scope 或計費。套件原有 Grok 借用入口在理財 scanner 切換後不相容，須另由套件工作線更新專案自有設定及指路，模型、推理、wrap、禁區仍引用理財正本。遷移完成前依 G3 寫「未執行：借用掃描入口尚未完成 Gemini 遷移」；不得以額外設定、舊工作樹或 review 用途暗留另一套 G1 掃描。
 
 ### Grok（本專案）
 
 - **配方雜湊的射程**：`scanScriptSha256` 是建盒前從本機磁碟讀取的 `scripts/grok-scan.js` 檔案雜湊，不表示已載入的程式映像或完整相依的執行身分；配方也不能用它作完整身分證明。固定 provider 的前後清單只支持各次核對所列檔案的範圍，載入時釘值及全部相依記帳另排，見[本次待辦觸發裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6208198145)。
 
 - **用量回報**：Grok 帳號的額度、429 回應與用量細節只留本機；公開 PR 的未執行紀錄只寫概略原因，不附帳號或原始回應。
-- **掃描者的模型與推理（2026-10-10 整批同步起）**：RULES G1「掃描者每次都用最強的模型、最高的推理（填在專案設定）」；值填在 `settings.json` 的 `scanner.strongest`、`scanner.maxEffort`。2026-10-11 起 `scripts/grok-scan.js` 讀這兩格、用 `--model`／`--reasoning-effort` 明確指定（William 2026-10-04 常設指示「Grok掃描也請用最強模型、最高推理能力」，原話在 AGENTS.md 常設指示節）。
+- **模型與推理的角色分離**：Grok 正式複審使用 `settings.json` 的 reviewers 登記及產生器的明確參數；Gemini G1 使用 scanner 登記。Grok profile、中繼與正式 review 入口保留；`scripts/grok-scan.js` 的歷史 scan 用途讀 scanner，不能在 Gemini 登記下作為替代掃描入口。
 - **身分與管道**：William 機器裝有 Grok CLI（xAI）。它的正式工作通道都在 repo 外（材料制），站外 session 只能看發稿者提供的材料。查核、顧問與掃描材料要載明該次適用的界線；界線前綴的逐字正本＝教學影片 repo `../teaching-videos/AGENTS.md`「Grok 材料檔標準邊界前綴」節，這些材料逐字照抄那四行，本 repo 刻意不另存副本。正式複審依下一條的送審範本與基底規則材料。專案對它維持「未信任」預設。
 - **暫代正式複審（2026-10-15 本人同意；技術接法＝[Sol 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6186173332)）**：機械身分為 Grok／Grok CLI，模型與推理由 `settings.json` 的 reviewers 那列明確指定。先用 `tools/review-launch.js` 備本輪樹與提示，再依它印出的指令經 `scripts/grok-review.js` 核對本輪資料；不得直接起 CLI。入口借用 `scripts/grok-scan.js` 的 OS 隔離、試探、釘值、中繼及掃後比對，以正式 review 用途備基底、受審版、突變副本、差異、公開平台材料與雜湊清單；此用途不套用掃描選題提示。盒內無原倉庫 .git，版本依外層核過的清單表示，不能假稱盒內做過原倉庫 Git 核對。審查材料唯讀由提示與前後雜湊核對約束，突變只改另備副本，不宣稱檔案系統唯讀。GitHub 憑證不進盒，Grok 的完整最後回覆依固定範本以結論標頭起首、文末單獨寫未貼。入口保留完整 CLI 對外輸出，並從同份已驗日誌辨認完整最後回覆，分列雜湊與位元組對應；不裁切回覆自身前言。安全鏈、身分、版本、完整性與格式均通過後，由盒外逐字代貼最後回覆並依 F7 核對。發起仍指定 reviewers 登記的最強模型與最高推理，不另開自動降級程序；模型資格依 AGENTS.md 的 2026-10-15 [本人更新](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6190624197)及 `scripts/grok-scan.js` 的有限資格表（適用理財及本次套件前置修正），接受已登記的 4.6 以上單一或混合模型。收據分列指定值、解析所得集合、資格下限與資格結果；未知、低版本、零模型、不完整或損壞仍拒絕，資格通過不等於內容結論通過。不能啟動時回報原因。正式複審與 G1 掃描分開計，掃描發射者不因本次模型安排變更。
 - **合成與固定系統文字的回覆檢查**：`scripts/grok-review.js` 只豁免各自由獨立單對反引號完整包住的 `/tmp/probe-write-test`、`/tmp/mut1.out`、`/tmp/probe-write-test: Operation not permitted`、`/tmp/mut1.out: Operation not permitted`，以及 `/Users/sample`、`/Users/synthetic`、`/Users/someone`、`/Users/Shared`。暫存字面值及固定診斷依 [Grok 合成命令回饋](https://github.com/teacherjung/ai-collab-kit/pull/108#issuecomment-6197466471)與 [GPT‑6.1 Sol 固定診斷裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6198722397)；合成名稱與固定系統位置依 [Sol 精確文字補充裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6201562609)。冒號、空格、大小寫與固定診斷逐字匹配；合成名稱與系統位置只准該字串本身，不准附診斷、子路徑或其他尾文。憑證先查，例外只在原始文字識別，不把解碼後的文字當例外；未命中例外的文字依[有限解碼裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6201957907)檢查：最多三輪同步 ASCII 解碼，每個視圖核對本機路徑與憑證，只作拒收、不重套例外。過深、畸形或超出支援 byte 的候選會拒收，可能連合法技術示例也被拒；這不是任意編碼辨識器。這只管回覆與完整 stdout 的文字檢查，原文與雜湊不改、輸入材料的檢查不放寬，也不授予任何檔案存取權。缺安全或完整性收據的輸出仍不能採計；修正檢查後也不得追認舊的未受理結果。
 - **歷史通過的解除證據**：換版或換手要採計既成解除時，由 F7 收件者核對當時真實實跑證據並公開收據；格式與限制見 [結論閘檔頭「F7 當版核對收據 v1」](../tools/gates/check-review-verdicts.js)。缺據依閘的修法補當版通過或既有真實收據，不能用今天重跑冒充過去的 PR HEAD。
 - **教學線三職**（操作面分兩處）：①**查核記者**＝腳本名詞／數字／案例查核；②**選題雷達**＝每集開工時跑一次，X 輿情只回答「散戶最近在誤解什麼」供選題——**不得產出持股輿情、行情判斷或任何進入投資決策的資訊**（錢的絕對邊界規則 5 的延伸）；①②的操作面在教學影片 repo 的 `AGENTS.md`。③**讀者測試員**＝本 repo 的 app 就地解釋等文案定稿前扮零基礎讀者、回報哪句看不懂——產線在這裡；它與工讀生的讀者測試站射程不同、互不取代，見 `docs/learning-hub-contract.md` 第三節。三職都不需 repo 權限，材料由發稿者抽出來給它。
-- **程式線＝複審後掃（RULES G1〜G4；常設、對稱、每支只掃一次）**：Grok **不進任何樹**（worktree 只是另一個 checkout，對會跑指令的未信任 CLI 不構成隔離），它工作的地方是 OS 沙箱裡的**盒子**（已 commit 原始碼的副本，在裡面跑 repo 程式是准的）。**呼叫紀律**：一律 `node scripts/grok-scan.js --base <sha> --head <sha> --prompt <指示檔>`（掃別的倉庫加 `--repo <倉庫>`，2026-10-11 起；套件倉庫借本專案的隔離盒掃，William 2026-10-05「先借用試試看」），不准手動啟動它的 CLI、不在任何 repo 目錄啟動它；六步流程、沙箱劃界與三個失效條件（CLI 版本不同＝當未跑／金絲雀非 0＝不掃／缺掃描時序一行＝當未跑）住 `scripts/grok-scan.js` 檔頭。紀錄照 `templates/scan-record.md` 寫在 PR說明的固定小標 `### 複審後掃` 下（2026-09-17 切換日起用套件的小標；之前的支用「### Grok 複審後掃」，歷史紀錄不改）；逐條判定＝這一支的實作者；掃描發射者＝上一段。
+- **複審後掃的通用紀錄**（RULES G1〜G4）：第一次正式通過後、轉正式前由登記發射者使用 Gemini 入口處理一次；紀錄照 `templates/scan-record.md` 寫在 PR 說明的「### 複審後掃」下，逐條判定由實作者負責。歷史 Grok 掃描紀錄不改，舊 CLI 呼叫不作現行 G1；Grok 正式複審仍依本節材料制入口與隔離條款。
 - **主目錄禁區（隱私線，任何模式無例外）**：不得在主目錄工作——`data/store.db` 有真實餘額、IB flexToken、證件號，Grok 讀到的內容會送往 xAI 伺服器。現行條款下 Grok 本來就**不進任何樹**（上一條，材料制）；本條是兜底鐵線——連「在主目錄啟動它的 CLI」都算違規。
 - **全域段落一體適用＋先規矩後開門**：錢的絕對邊界、鐵則、協作唯一不變量寫明「適用所有 AI」，Grok 含在內。要讓 Grok 承接本段以外的任何工作＝先在本段補上角色與邊界、William 拍板，才開門。

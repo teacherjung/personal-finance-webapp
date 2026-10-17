@@ -120,22 +120,20 @@
  },
  "mainBranch": "main",
  "scanner": {
-  "tool": "Grok CLI（xAI）：一律經 node scripts/grok-scan.js --base <sha> --head <sha> --prompt <指示檔> --out <回覆檔> 發射（呼叫紀律與三個失效條件＝scripts/grok-scan.js 檔頭）、不准手動啟動它的 CLI；執行檔版本與 sha256 釘在該腳本；grok 自己會升版（裁示者 2026-09-22 裁「auto_update 維持開著」），升版＝在倉庫根目錄跑 `npm run grok:bump`（重驗必要字串→改釘值與考題 fixture；不 commit、不 push；重驗不過就退 2 不寫），細節與劃界＝`scripts/grok-bump.js` 檔頭",
-  "assignedBy": "掃描發射者＝起得了掃描者的那一方（William 2026-09-11 裁「甲」改成角色寫法）；定義＝RULES A1、G4；現況登記在本格；本專案現況＝Claude（照現行方式起的 Codex 帶外層沙箱、實測套不上第二層、金絲雀 fail-closed）；要換現況＝想換的那一方自己實測、貼出可重跑的結果，再問 William",
-  "tieBreak": "實作者（裁示者 2026-09-25 裁、第二輪 A1：兩方都起得了掃描者時，預設是實作者；原本這一格寫「出現兩方都起得了時要補一條」，這就是那一條）；本專案今天只有一方起得了（見 assignedBy），這一格要到兩方都起得了才用得到",
-  "fallback": "實作者（第二輪 G4：專案沒有掃描者、或沒有任何一方起得了時，由實作者寫未執行並轉正式）；掃得起但掃不成時，一律由掃描發射者（現況 Claude）在PR說明固定小標「### 複審後掃」下逐字寫「未執行：<原因>」、不擋合併，轉正式也由掃描發射者做",
-  "strongest": "grok-4.7",
-  "maxEffort": "xhigh",
+  "tool": "Gemini 官方網頁：固定盒外 launcher 呼叫 scripts/gemini-browser-runner.js，配合同一提供者的固定 CUA loader；操作者先核對獨立保存的 launcher、Node 與 loader 指紋，依 docs/gemini-browser-formal-plan.md 的固定交接順序執行。裸腳本不是發射入口；每場部署固定受掃 repo、base/head、提示與同版資格收據。完整請求上限 32 KiB，超量整份拒收；不直接起 CLI、不交出登入憑證。",
+  "assignedBy": "掃描發射者＝起得了掃描者的那一方（RULES A1、G4）；本輪登記 Codex，能力證據限 #701 的固定 Gemini 網頁入口、完整資格及正式用途合成驗收，不延伸到其他宿主或原生 CLI。William 掃描者改 Gemini、維持隔離的指示見 AGENTS.md；設定操作化見 #701 的 GPT-6.1 Sol 技術裁示。來源換版須重新固定及驗證。",
+  "tieBreak": "實作者（裁示者 2026-09-25 第二輪 A1）：兩方都完成同一入口的能力驗證時，預設由實作者發射；沒有驗證證據的協作者不因角色登記而取得能力資格。",
+  "fallback": "實作者（RULES G4）：沒有掃描者或沒有任何一方起得了時，記錄未執行並轉正式；已具能力但本場掃不成時，由掃描發射者在 PR 說明的「### 複審後掃」寫「未執行：<原因>」並按 G4 轉正式。不得另開 Grok 或原生通道代替已登記入口。",
+  "strongest": "4 Argon",
+  "maxEffort": "High",
   "isolation": {
    "provider": "專案自建",
    "wrap": [
     "/usr/bin/sandbox-exec",
     "-f",
-    "{projectRoot}/scripts/grok-sandbox.sb",
+    "{projectRoot}/scripts/gemini-browser-sandbox.sb",
     "-D",
-    "SCAN_DIR={box}",
-    "-D",
-    "RELAY_PORT=18765"
+    "SCAN_DIR={box}"
    ],
    "boxRoot": "/private/tmp",
    "forbidden": [
