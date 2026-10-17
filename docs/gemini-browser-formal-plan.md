@@ -30,6 +30,7 @@
 - `scripts/gemini-browser-sandbox.sb`、`scripts/gemini-browser-canary.js`
 - `scripts/grok-sandbox-canary.js` 僅修正 profile 參數的呼叫端說明
 - `scripts/grok-bump.js`、`test/grok-bump.test.js` 改善升版檢查的舊檔搜尋順序，保留完整雜湊、回退與原時限；正式 Grok 仍用既有固定版本，撤回本線不必要的 pin 升版；[判斷更正、技術裁示與重驗要求](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6233881225)
+- `scripts/grok-relay.js`、`scripts/grok-scan.js` 與固定診斷、複審流程考題：僅補既有允許請求的固定中繼分類，依[診斷邊界](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6236196018)與[施工時序](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6236218963)驗證；不新增放行路由或權限
 - `test/gemini-browser-{protocol,flow,cua,canary}.test.js`
 - `test/gemini-native-runner.test.js` 補 GN-02 的直接準備入口題；GN-01／GN-03 原生觸發待辦維持停放
 - `scripts/gemini-native-protocol.js` 僅令純協定載入不要求宿主提供 process；普通 Node 的直接入口拒絕保留
@@ -89,3 +90,9 @@ CUA 不取得、代理或探測 process；檔案擁有者用固定 loader 內釘
 - 資格收據的請求容量須數值嚴格等於 `PROMPT_CAP`；資格場要證明完整容量，超過容量的場次也不能成立。缺值、錯型別、小於或大於容量及小數由正式入口分支拒收。合成行為題在建目錄邊界停止，不代替固定來源的真資格場。
 - Grok flow 夾具的能力探測暫存目錄使用該測試的 `tmpdir()`，避免先被外層寫入限制擋在能力檢查之外；正式 `BOX_ROOT`、能力不足告警與原 skip 範圍保持。初始化的其他錯誤仍拋出。
 - ready 重用 claim challenge 的負控須先走完合法 claim，再確認拒收、沒有 permit、未授權送出；不同 challenge 留成功正控。這些獨立驗證及修法依 [GPT‑6.1 Sol 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6235503260)，不採計未受理的複審輸出。公開路徑檢查不新增例外，base 原樣保留，失敗場不追認。
+
+### Grok 正式複審的有限診斷
+
+轉送器只對既有允許路由輸出枚舉類別、HTTP 狀態、收到標頭／完成／中斷及固定錯誤分類；不記 body、headers、query、session ID、原始 URL 或錯誤訊息。每個准轉請求最多產生標頭及終態紀錄，總量沿用請求上限。未知錯誤只映成 `other`，未知紀錄欄位或值、畸形及超量摘要均拒收，不回顯候選原文。
+
+掃描 runner 在模型程序結束時摘要已收到的固定紀錄，非零仍拒收、原輸出與結果包仍刪除。診斷只輔助排障，不替代模型資格、掃後檢查或正式結論；缺紀錄、尚未完成的請求及摘要被拒收，都不能推成服務正常。429 不單獨證明額度耗盡，401／403 不單獨證明需要重新登入。這些改動也必須依新的 providerHead 重做 Gemini 完整資格與正式用途合成驗收，不沿用舊版收據。

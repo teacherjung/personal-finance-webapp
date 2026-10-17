@@ -66,6 +66,24 @@ async function reviewRun(options = {}) {
   return { result, observed, repo, box, iso, logs };
 }
 
+test('複審非零仍拒收並清理，轉送診斷只留下經驗證的固定資料', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const record = { route: 'responses', status: 429, phase: 'complete', error: 'none' };
+  for (const item of [record, { ...record, privateField: 'PRIVATE-DIAGNOSTIC' }]) {
+    const { result, logs, box, iso, observed } = await reviewRun({ fake: { status: 1, reply: 'PRIVATE-FAILED-REPLY' }, deps: { relayScript: fakeRelay('ok', '[relay] diagnostic: ' + JSON.stringify(item) + '\n') } });
+    assert.ok(observed, '必須走到模型啟動才驗失敗清理');
+    assert.equal(result.code, 2);
+    assert.equal(result.review, undefined);
+    assert.equal(existsSync(box), false);
+    assert.deepEqual(readdirSync(iso.resultsRoot), []);
+    assert.ok(!logs.join('\n').includes('PRIVATE-'));
+    const line = logs.find((value) => value.startsWith('轉送器固定診斷：'));
+    assert.ok(line, '非零路徑沒有留下固定診斷');
+    const diagnostic = JSON.parse(line.slice('轉送器固定診斷：'.length));
+    assert.equal(diagnostic.valid, item === record);
+    if (item === record) assert.deepEqual(diagnostic.groups, [{ ...record, count: 1 }]);
+  }
+});
+
 test('正式複審拒絕未指定模型或推理；不借掃描預設值補空格', async () => {
   for (const args of [{ model: undefined }, { effort: undefined }, { purpose: 'unknown' }, { review: { ...identity, source: 'Claude CLI' } }]) {
     const { result, logs } = await reviewRun({ args });

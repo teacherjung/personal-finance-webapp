@@ -59,7 +59,7 @@ import { runCanary, sandboxEnv, PROFILE, RELAY_PORT, BOX_ROOT } from './grok-san
 import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
 import { gitEnv } from '../lib/git-env.js';
 import { refreshSandboxAuth, authNeedles, authNeedleFields } from './grok-auth-refresh.js';
-import { REFUSED_PREFIX, isToleratedRefusal } from './grok-relay.js';
+import { REFUSED_PREFIX, isToleratedRefusal, summarizeRelayDiagnostics } from './grok-relay.js';
 import { finalSelectionFailureCode, finalSelectionRootDiagnostic, selectFinalReply } from './grok-final-reply.js';
 import { isMainModule } from '../lib/is-main.js';
 
@@ -1371,6 +1371,8 @@ export async function runScan(args, deps = {}) {
   const endedAt = new Date().toISOString();
   const reply = grok.stdout || '';
   log(`${formal ? '複審' : '掃描'}結束：${endedAt}；grok 退出碼 ${grok.status}；回覆 ${reply.length} 字；程序群組已收束${swept ? `、掃蕩 ${swept}` : ''}`);
+  // 只摘要此刻已收到的固定中繼資料；未完成請求或缺紀錄不能推成服務正常。
+  log('轉送器固定診斷：' + JSON.stringify(summarizeRelayDiagnostics(relayErr)));
   // 轉送器在 grok 結束前死了＝一律 2（r2 #3：r1 寫成 `relayDead && grok.status !== 0`，grok 自己回 0 就放過了）
   // r5 #1：失敗＝**全丟棄**。Grok 可控的 stdout／stderr／sessions 一律不進結果包、不進 log（stderr 尾巴也是它可控的）。
   if (grok.truncated) return failAndClean(`grok 輸出超過 ${OUT_CAP} bytes——丟棄`);

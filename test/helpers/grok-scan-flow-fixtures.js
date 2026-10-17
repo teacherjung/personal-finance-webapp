@@ -144,12 +144,12 @@ exit ${o.status ?? 0}
 }
 
 /** 假轉送器：印 READY 然後活著；或照指定行為死掉。 */
-export function fakeRelay(/** @type {'ok' | 'die-before-ready' | 'die-after-ready'} */ mode = 'ok') {
+export function fakeRelay(/** @type {'ok' | 'die-before-ready' | 'die-after-ready'} */ mode = 'ok', /** @type {string} */ diagnostics = '') {
   const d = keep(mkdtempSync(join(tmpdir(), 'fake-relay-')));
   const p = join(d, 'relay.js');
   writeFileSync(p, mode === 'die-before-ready' ? 'process.exit(1);'
     : mode === 'die-after-ready' ? "process.stdout.write('READY 1\\n'); setTimeout(() => process.exit(1), 200);"
-    : "process.stdout.write('READY 1\\n'); setInterval(() => {}, 1000);");
+    : `process.stderr.write(${JSON.stringify(diagnostics)}); process.stdout.write('READY 1\\n'); setInterval(() => {}, 1000);`);
   return p;
 }
 

@@ -108,6 +108,51 @@ export const MAX_BODY = 96 * 1024 * 1024;  // /v1/responses 會帶整份材料�
 const MAX_PATH = 2048;
 const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade', 'host']);
 
+export const DIAGNOSTIC_PREFIX = '[relay] diagnostic: ';
+export const MAX_DIAGNOSTIC_EVENTS = MAX_REQUESTS * 2;
+const DIAGNOSTIC_ROUTES = ['models', 'settings', 'feedback', 'responses', 'signals', 'turn-deltas', 'traces'];
+const DIAGNOSTIC_ERRORS = ['none', 'reset', 'timeout', 'dns', 'refused', 'tls', 'other'];
+
+/**
+ * 原始錯誤訊息可能含 URL 或憑證；診斷只接受封閉結構，不能拿它證明帳戶額度或登入根因。
+ * @param {string} text
+ */
+export function summarizeRelayDiagnostics(text) {
+  if (text.length > 1024 * 1024) return { valid: false, reason: 'limit' };
+  /** @type {Map<string, {route: string, status: number | null, phase: string, error: string, count: number}>} */
+  const groups = new Map();
+  let events = 0;
+  for (const line of text.split('\n')) {
+    if (!line.startsWith(DIAGNOSTIC_PREFIX)) continue;
+    if (++events > MAX_DIAGNOSTIC_EVENTS) return { valid: false, reason: 'limit' };
+    let value;
+    try { value = JSON.parse(line.slice(DIAGNOSTIC_PREFIX.length)); }
+    catch { return { valid: false, reason: 'invalid_record' }; }
+    if (!value || Array.isArray(value) || Object.keys(value).sort().join(',') !== 'error,phase,route,status'
+      || !DIAGNOSTIC_ROUTES.includes(value.route) || !DIAGNOSTIC_ERRORS.includes(value.error)
+      || !['headers', 'complete', 'interrupted'].includes(value.phase)
+      || !(value.status === null || (Number.isInteger(value.status) && value.status >= 100 && value.status <= 599))
+      || (value.phase !== 'interrupted' && (value.status === null || value.error !== 'none'))
+      || (value.phase === 'interrupted' && value.error === 'none')) return { valid: false, reason: 'invalid_record' };
+    const record = { route: value.route, status: value.status, phase: value.phase, error: value.error };
+    const key = JSON.stringify(record), previous = groups.get(key);
+    if (previous) previous.count++;
+    else groups.set(key, { ...record, count: 1 });
+  }
+  return { valid: true, events, groups: [...groups.values()] };
+}
+
+/** @param {unknown} error */
+function diagnosticError(error) {
+  const code = /** @type {{code?: unknown} | null} */ (error)?.code;
+  if (code === 'ECONNRESET') return 'reset';
+  if (code === 'ETIMEDOUT' || code === 'ESOCKETTIMEDOUT') return 'timeout';
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'dns';
+  if (code === 'ECONNREFUSED') return 'refused';
+  if (['CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'ERR_TLS_CERT_ALTNAME_INVALID', 'DEPTH_ZERO_SELF_SIGNED_CERT'].includes(/** @type {string} */ (code))) return 'tls';
+  return 'other';
+}
+
 /**
  * request-target → 路徑。回 `{ path, bad, absolute }`。absolute-form（`GET http://other-host/x`）
  * 只留 path——不然 path 本身就能帶走整個 URL。
@@ -291,9 +336,27 @@ const server = http.createServer((req, res) => {
   if (inflight >= MAX_INFLIGHT) { res.writeHead(503, { 'content-type': 'text/plain' }); res.end('relay: too many in flight'); req.resume(); return; }
   served++; inflight++;
   res.on('close', () => { inflight--; });
+  const path = requestPath(req.url).path.split('?')[0];
+  const route = DIAGNOSTIC_ROUTES[ALLOWED_REQUESTS.findIndex((rule) => rule.method === String(req.method || '').toUpperCase() && rule.path.test(path))];
+  let terminal = false;
+  /** @type {number | null} */ let status = null;
+  /** @param {'headers' | 'complete' | 'interrupted'} phase @param {string} error */
+  const diagnostic = (phase, error) => {
+    if (terminal) return;
+    if (phase !== 'headers') terminal = true;
+    const record = { route, status, phase, error };
+    // 即使未來路由表變長，未知分類也不能把請求原文送進診斷。
+    const line = DIAGNOSTIC_PREFIX + JSON.stringify(record) + '\n';
+    if (summarizeRelayDiagnostics(line).valid) process.stderr.write(line);
+  };
   const up = https.request(
     upstreamOptions(req, realBearer),
     (upRes) => {
+      status = Number.isInteger(upRes.statusCode) && Number(upRes.statusCode) >= 100 && Number(upRes.statusCode) <= 599 ? Number(upRes.statusCode) : null;
+      diagnostic('headers', 'none');
+      upRes.once('end', () => diagnostic('complete', 'none'));
+      upRes.once('aborted', () => diagnostic('interrupted', 'other'));
+      upRes.once('close', () => diagnostic('interrupted', 'other'));
       /** @type {Record<string, string | string[]>} */
       const out = {};
       for (const [k, v] of Object.entries(upRes.headers)) {
@@ -304,10 +367,11 @@ const server = http.createServer((req, res) => {
     }
   );
   up.on('error', (e) => {
-    process.stderr.write(`[relay] upstream error: ${e.message}\n`);
+    diagnostic('interrupted', diagnosticError(e));
     if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' });
     res.end('relay: upstream unreachable');
   });
+  up.once('close', () => diagnostic('interrupted', 'other'));
   let bodyBytes = 0;
   req.on('data', (d) => {
     bodyBytes += d.length;
