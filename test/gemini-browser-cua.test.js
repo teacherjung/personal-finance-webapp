@@ -16,10 +16,30 @@ test('固定 CUA 完整路徑只建自有分頁、送一次、存原文及官方
     const result = await captureBrowserScan(j.runId);
     assert.equal(result.state, 'CAPTURED'); assert.equal(b.state.closed, true);
     assert.equal(readMail(j.dir, 'quiescent.json').failed, false);
-    assert.equal(readMail(j.dir, 'capture.json').observation.details, 'Response details\nUsed 4 Argon 高');
+    assert.equal(readMail(j.dir, 'capture.json').observation.details, 'Used 4 Argon 高');
+    assert.equal(readMail(j.dir, 'capture.json').observation.detailsSource, 'response-details');
     await assert.rejects(captureBrowserScan(j.runId), /CAPTURE_ORDER/);
     assert.equal(b.state.sent, 1); assert.equal(b.calls.filter(c => c[0] === 'new').length, 1);
   } finally { j.cleanup(); }
+});
+test('思考步驟入口只採同一回覆官方 metadata；自稱、缺失、重複及來源歧義拒收', async () => {
+  for (const options of [{}, { details: 'Used Flash', selfReportedDetails: 'Used 4 Argon 高' },
+    { metadataCount: 0, selfReportedDetails: 'Used 4 Argon 高' }, { metadataCount: 2 }, { sidebarCount: 2 }, { responseMenu: 'ambiguous' }]) {
+    const j = jobFixture(), b = browserFixture(j, { responseMenu: 'thinking-steps', detailsLoading: true, ...options }); j.serve();
+    try {
+      await beginBrowserScan(b.browser, j.runId);
+      if (Object.keys(options).length) {
+        await assert.rejects(captureBrowserScan(j.runId));
+        assert.equal(readMail(j.dir, 'quiescent.json').failed, true);
+      } else {
+        assert.equal((await captureBrowserScan(j.runId)).state, 'CAPTURED');
+        assert.equal(readMail(j.dir, 'capture.json').observation.detailsSource, 'thinking-steps');
+        assert.equal(readMail(j.dir, 'capture.json').observation.details, 'Used 4 Argon 高');
+        assert.ok(b.calls.some(c => c[1] === 'menuitem:Show thinking steps'));
+      }
+      assert.equal(b.state.sent, 1); assert.equal(b.state.closed, true);
+    } finally { j.cleanup(); }
+  }
 });
 test('UI 前來源、請求、期限及目錄不合規拒絕，沒有瀏覽器呼叫', async () => {
   for (const variant of ['source', 'request', 'expired', 'mode', 'bad-id']) {
@@ -48,7 +68,7 @@ test('靜態工作沒有 live ACK 或只留舊 challenge 時零 UI；第二 clai
 });
 test('非空白、錯來源、雙回覆、降級與明細後內容變更不能封存成功', async () => {
   for (const options of [{ text: 'preexisting-private' }, { url: 'https://example.com' },
-    { afterSubmit: s => { s.responses = 2; } }, { details: 'Response details\nUsed Flash' },
+    { afterSubmit: s => { s.responses = 2; } }, { details: 'Used Flash' },
     { afterDetails: s => { s.raw = 'changed after capture'; } }]) {
     const j = jobFixture(), b = browserFixture(j, options); j.serve();
     try {

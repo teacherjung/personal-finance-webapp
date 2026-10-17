@@ -74,6 +74,7 @@ export async function beginBrowserScan(browser, runId) {
     await step(s, () => s.tab.goto(URL));
     await origin(s);
     await until(s, () => button(s.tab, 'Temporary chat').isVisible());
+    await step(s, () => main(s.tab).getByRole('button', { name: /^Open mode picker, currently / }).waitFor({ state: 'visible', timeoutMs: 10000 }));
     if (await step(s, () => responses(s.tab).count()) !== 0 || (await step(s, () => input(s.tab).textContent())).trim()) browserError('NONEMPTY');
     await step(s, () => button(s.tab, 'Temporary chat').click());
     await until(s, () => temporaryBefore(s));
@@ -132,23 +133,30 @@ export async function captureBrowserScan(runId) {
     writeOnce(s.dir, 'details-menu.jpg', Buffer.from(await step(s, () => s.tab.screenshot({ fullPage: false }))));
     writeOnce(s.dir, 'details-menu.json', await step(s, () => s.tab.playwright.getByRole('menu').allTextContents({ timeoutMs: 1000 })));
     const detailsItem = s.tab.playwright.getByRole('menuitem', { name: 'See response details', exact: true });
-    await step(s, () => detailsItem.waitFor({ state: 'visible', timeoutMs: 10000 }));
+    const thinkingItem = s.tab.playwright.getByRole('menuitem', { name: 'Show thinking steps', exact: true });
+    await until(s, async () => await detailsItem.isVisible() || await thinkingItem.isVisible());
+    const hasDetails = await step(s, () => detailsItem.isVisible()), hasThinking = await step(s, () => thinkingItem.isVisible());
+    if (hasDetails === hasThinking) browserError('DETAILS_SOURCE');
+    const detailsSource = hasDetails ? 'response-details' : 'thinking-steps';
     s.phase = 'details-content';
-    await step(s, () => detailsItem.click());
-    const dialog = s.tab.playwright.getByRole('dialog');
-    await step(s, () => dialog.getByText(/^Used /).waitFor({ state: 'visible', timeoutMs: 10000 }));
-    const details = await step(s, () => dialog.innerText());
+    await step(s, () => (hasDetails ? detailsItem : thinkingItem).click());
+    const sidebar = s.tab.playwright.locator('context-sidebar');
+    // 只認官方側欄的 metadata，避免把回覆或思考段落中的自報模型當來源。
+    const metadata = sidebar.locator('thought-summary .info-line');
+    await step(s, () => metadata.waitFor({ state: 'visible', timeoutMs: 10000 }));
+    if (await step(s, () => sidebar.count()) !== 1 || await step(s, () => metadata.count()) !== 1) browserError('DETAILS_SOURCE');
+    const details = await step(s, () => metadata.innerText());
     if (details !== DETAILS) browserError('ACTUAL_MODEL');
     writeOnce(s.dir, 'proof.jpg', Buffer.from(await step(s, () => s.tab.screenshot({ fullPage: false }))));
     s.phase = 'details-close';
-    await step(s, () => dialog.getByRole('button', { name: 'Close sidebar', exact: true }).click());
-    await step(s, () => dialog.waitFor({ state: 'hidden', timeoutMs: 10000 }));
+    await step(s, () => sidebar.getByRole('button', { name: 'Close sidebar', exact: true }).click());
+    await step(s, () => sidebar.waitFor({ state: 'hidden', timeoutMs: 10000 }));
     s.phase = 'final-observation';
     if (await step(s, () => responses(s.tab).count()) !== 1 || sha256(await step(s, () => responses(s.tab).innerText())) !== sha256(raw)
       || await step(s, () => selected(s.tab)) !== SELECTED || await step(s, () => button(s.tab, 'Stop response').isVisible())) browserError('REPLY_CHANGED');
     const observation = { schema: 'browser-ui/v1', scanId: s.d.scanId, tabId: s.tab.id, origin: ORIGIN,
       initialResponses: 0, submissions: 1, finalResponses: 1, temporaryBefore: true, temporaryAfter: true,
-      selectedBefore: SELECTED, selectedAfter: SELECTED, details, complete: true, regenerations: 0,
+      selectedBefore: SELECTED, selectedAfter: SELECTED, details, detailsSource, complete: true, regenerations: 0,
       promptSha256: s.d.requestSha256, responseSha256: sha256(raw), responseBytes: raw.length };
     alive(s);
     writeOnce(s.dir, 'response.txt', raw);

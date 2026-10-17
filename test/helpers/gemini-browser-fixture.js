@@ -16,7 +16,7 @@ export function answer(packet) { return JSON.stringify({ ...packet.binding, tail
 export function observation(packet, raw = answer(packet)) {
   return { schema: 'browser-ui/v1', scanId: packet.binding.scanId, tabId: 'test-owned', origin: ORIGIN,
     initialResponses: 0, submissions: 1, finalResponses: 1, temporaryBefore: true, temporaryAfter: true,
-    selectedBefore: SELECTED, selectedAfter: SELECTED, details: DETAILS, complete: true, regenerations: 0,
+    selectedBefore: SELECTED, selectedAfter: SELECTED, details: DETAILS, detailsSource: 'response-details', complete: true, regenerations: 0,
     promptSha256: packet.promptSha256, responseSha256: sha256(raw), responseBytes: Buffer.byteLength(raw) };
 }
 export function jobFixture() {
@@ -45,10 +45,21 @@ export function browserFixture(job, options = {}) {
     locator: selector => locator(`${key}/${selector}`),
     async getAttribute(name) { assertKey(name === 'aria-label' && key.includes('Open mode picker')); return state.selected; },
     async allTextContents() { assertKey(key === 'menu:'); return state.menu ? ['synthetic response menu'] : []; },
-    async count() { assertKey(key.endsWith('model-response-content')); return state.responses; },
+    async count() {
+      if (key.endsWith('model-response-content')) return state.responses;
+      if (key === 'context-sidebar') return state.sidebarCount ?? 1;
+      if (key === 'context-sidebar/thought-summary .info-line') return state.metadataCount ?? 1;
+      if (key === `text:${DETAILS}`) return 1;
+      throw Error(`unexpected count ${key}`);
+    },
     async textContent() { assertKey(key.includes('textbox:Enter a prompt for Gemini')); return state.text; },
     async fill(text) { calls.push(['fill', text]); state.text = options.truncate ? text.slice(0, -1) : text; },
-    async innerText() { if (key.endsWith('model-response-content')) return state.raw ?? raw; if (key === 'dialog:') return state.detailsLoaded ? state.details ?? DETAILS : 'Response details'; throw Error(`unexpected read ${key}`); },
+    async innerText() {
+      if (key.endsWith('model-response-content')) return state.raw ?? raw;
+      if (key === 'context-sidebar/thought-summary .info-line') return state.detailsLoaded ? state.details ?? DETAILS : '';
+      if (key === `text:${DETAILS}`) return state.selfReportedDetails ?? DETAILS;
+      throw Error(`unexpected read ${key}`);
+    },
     async isVisible() {
       if (key === 'dialog:') return state.dialog;
       if (key.includes('Temporary chat')) return true;
@@ -56,13 +67,18 @@ export function browserFixture(job, options = {}) {
       if (key.includes('text:Temporary Chat')) return state.temporary && state.sent > 0;
       if (key.includes('Stop response')) return state.pending;
       if (key.includes('Show more options')) return state.sent > 0 && !state.pending;
+      if (key.endsWith('menuitem:See response details')) return state.menu === 'response' && state.responseMenu !== 'thinking-steps';
+      if (key.endsWith('menuitem:Show thinking steps')) return state.menu === 'response' && ['thinking-steps', 'ambiguous'].includes(state.responseMenu);
       if (key.includes('menuitem:')) return !!state.menu;
       throw Error(`unexpected visibility ${key}`);
     },
     async waitFor(options) {
-      if (key === 'dialog:') { assertKey(options.state === 'hidden' && !state.dialog); return; }
-      if (key === 'dialog:/text:/^Used /') { assertKey(options.state === 'visible' && state.dialog); state.detailsLoaded = true; return; }
-      assertKey(key.endsWith('menuitem:See response details') && options.state === 'visible' && !!state.menu);
+      if (key.includes('Open mode picker')) { assertKey(options.state === 'visible'); return; }
+      if (key === 'context-sidebar') { assertKey(options.state === 'hidden' && !state.dialog); return; }
+      if (key === `text:${DETAILS}`) { assertKey(options.state === 'visible'); return; }
+      assertKey(key === 'context-sidebar/thought-summary .info-line' && options.state === 'visible' && state.dialog);
+      if (state.metadataCount === 0) throw Error('missing official metadata');
+      state.detailsLoaded = true;
     },
     async click() {
       calls.push(['click', key]);
@@ -75,12 +91,12 @@ export function browserFixture(job, options = {}) {
         const consumed = readMail(job.dir, 'consumed.json'); assertKey(consumed.stage === 'submit-once');
         state.sent++; state.responses++; state.text = ''; if (options.afterSubmit) options.afterSubmit(state);
       } else if (key.endsWith('button:Show more options')) state.menu = 'response';
-      else if (key.endsWith('menuitem:See response details')) { state.dialog = true; state.detailsLoaded = !options.detailsLoading; state.menu = ''; }
+      else if (key.endsWith('menuitem:See response details') || key.endsWith('menuitem:Show thinking steps')) { state.dialog = true; state.detailsLoaded = !options.detailsLoading; state.menu = ''; }
       else if (key.endsWith('button:Close sidebar')) { state.dialog = false; if (options.afterDetails) options.afterDetails(state); }
       else throw Error(`unexpected click ${key}`);
     },
   });
-  const tab = { id: 'test-owned', playwright: { getByRole: (role, opt = {}) => locator(`${role}:${String(opt.name ?? '')}`) },
+  const tab = { id: 'test-owned', playwright: { getByRole: (role, opt = {}) => locator(`${role}:${String(opt.name ?? '')}`), locator, getByText: text => locator(`text:${text}`) },
     async goto(url) { calls.push(['goto', url]); }, async url() { return state.url ?? ORIGIN + '/app'; },
     async screenshot() { calls.push(['screenshot']); return Buffer.from('synthetic screenshot'); },
     async close() { calls.push(['close', this.id]); state.closed = true; },

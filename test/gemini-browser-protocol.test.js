@@ -20,7 +20,7 @@ test('來源觀測不能由模型自報取代；錯模式、非臨時、雙回�
   const p = prepareBrowserPacket(material()), raw = Buffer.from(answer(p)), o = observation(p);
   for (const [key, value] of Object.entries({ schema: 'native', scanId: 'wrong', origin: 'https://example.com',
     tabId: '../old', initialResponses: 1, submissions: 2, finalResponses: 2, temporaryBefore: false, temporaryAfter: false,
-    selectedBefore: 'Auto', selectedAfter: 'Pro', details: 'Used Flash', complete: false, regenerations: 1,
+    selectedBefore: 'Auto', selectedAfter: 'Pro', details: 'Used Flash', detailsSource: 'model-text', complete: false, regenerations: 1,
     promptSha256: '0'.repeat(64), responseSha256: '0'.repeat(64), responseBytes: 0 })) {
     assert.throws(() => validateBrowserReply(raw, { ...o, [key]: value }, p), key);
   }

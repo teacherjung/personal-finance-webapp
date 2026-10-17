@@ -49,6 +49,8 @@ CUA loader 與獨立 launcher 共用內建模組的檔案核對核心，分開�
 
 CUA 不取得、代理或探測 process；檔案擁有者用固定 loader 內釘住的 UID 期望，不能宣稱驗過宿主 effective UID。沒有活 runner 回應的新 challenge 就不能建頁或取得送出許可；PID 僅留來源資訊，不代替活性證據。一般 Node runner 的程序管理留在原宿主。
 
+回覆選單依官方 UI 可提供 See response details 或 Show thinking steps；固定配方只接受其中一個明確入口，再讀 `context-sidebar` 內 `thought-summary .info-line` 的唯一官方標示。兩條路徑各自留來源名稱，均須逐字符合 `Used 4 Argon 高`；不採回覆或思考敘述自報的模型名稱，也不以送前後選擇取代實際模型。官方路徑與不得降格的界線見 [GPT‑6.1 Sol 技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6233665486)。UI 改版、來源缺失或歧義都拒收；舊失敗場不追認。
+
 請求使用單行固定文字＋JSON，避免網頁編輯器把多行轉成段落而難以逐字核對。初始整份上限為 32 KiB；資格場必須完整填入、送出並通過同上限的全鏈，才准登記正式場。超過上限的 PR 整份拒收，不能把這個能力說成不限大小。模型必須回完整封閉 JSON，包 Markdown 或加前後文也會失敗，不人工修復。
 
 掃描停止立即使結果不可採用。檔案握手不能原子撤回已在途的瀏覽器動作，最多容許已核准的一次送出嘗試；不重試、不追認晚到結果。未確認 CUA 呼叫結束及自有分頁關閉，不能解開下一掃的鎖。清理分別記程序群組、最佳努力離群掃蕩、盒子與 CUA 靜止，不宣稱關頁取消 Google 遠端計算。

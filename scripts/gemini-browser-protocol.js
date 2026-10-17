@@ -10,7 +10,7 @@ export const REPLY_CAP = RESPONSE_CAP;
 export const MODEL = '4 Argon';
 export const EFFORT = 'High';
 export const SELECTED = 'Open mode picker, currently Argon High';
-export const DETAILS = 'Response details\nUsed 4 Argon 高';
+export const DETAILS = 'Used 4 Argon 高';
 export const ORIGIN = 'https://gemini.google.com';
 export const URL = ORIGIN + '/app';
 const fail = code => { throw Error(`GEMINI_BROWSER_${code}`); };
@@ -64,12 +64,13 @@ export function prepareBrowserPacket(material, { scanId = randomBytes(16).toStri
 export function validateBrowserReply(raw, observation, packet) {
   if (!Buffer.isBuffer(raw) || !raw.length || raw.length > REPLY_CAP) fail('REPLY_SIZE');
   const response = new TextDecoder('utf-8', { fatal: true }).decode(raw);
-  fields(observation, ['schema', 'scanId', 'tabId', 'origin', 'initialResponses', 'submissions', 'finalResponses', 'temporaryBefore', 'temporaryAfter', 'selectedBefore', 'selectedAfter', 'details', 'complete', 'regenerations', 'promptSha256', 'responseSha256', 'responseBytes']);
+  fields(observation, ['schema', 'scanId', 'tabId', 'origin', 'initialResponses', 'submissions', 'finalResponses', 'temporaryBefore', 'temporaryAfter', 'selectedBefore', 'selectedAfter', 'details', 'detailsSource', 'complete', 'regenerations', 'promptSha256', 'responseSha256', 'responseBytes']);
   if (observation.schema !== 'browser-ui/v1' || observation.scanId !== packet.binding.scanId
     || !/^[a-zA-Z0-9-]{1,128}$/.test(observation.tabId) || observation.origin !== ORIGIN
     || observation.initialResponses !== 0 || observation.submissions !== 1 || observation.finalResponses !== 1
     || observation.temporaryBefore !== true || observation.temporaryAfter !== true
     || observation.selectedBefore !== SELECTED || observation.selectedAfter !== SELECTED || observation.details !== DETAILS
+    || !['response-details', 'thinking-steps'].includes(observation.detailsSource)
     || observation.complete !== true || observation.regenerations !== 0) fail('OBSERVATION');
   if (observation.promptSha256 !== packet.promptSha256 || observation.responseSha256 !== sha256(raw)
     || observation.responseBytes !== raw.length) fail('CAPTURE_BINDING');
