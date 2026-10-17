@@ -538,6 +538,7 @@ test('第二階段｜真正 router 先清空工作區，失敗後恢復同次成
   assert.match(text('#cashflowReadError'), /畫面暫時無法更新，以下是上次成功載入的內容/);
   assert.equal(el('#cashflowReadError img'), null);
   assert.equal(text('#toast-root'), '', 'router 脫離後恢復只用持續提示');
+  noticeWithoutDesktopLimit();
   await click('#retryCashflowRead');
   assert.equal(reads(), 2); assert.equal(writes().length, 0);
   assert.equal(el('#cashflowReadError'), null);
@@ -606,6 +607,7 @@ for (const importPending of [false, true]) test(`第二階段｜離頁返回沒�
     assert.equal(el('.cashflow-ledger'), null);
     assert.doesNotMatch(text('#view'), /尚無銀行收支|0\.0 萬/);
     assert.match(text('#cashflowReadError'), /暫時無法載入銀行收支/);
+    noticeWithoutDesktopLimit();
     const count = reads();
     if (importPending) {
       wait.resolve(); await settle();
@@ -878,4 +880,79 @@ for (const checked of [true, false]) test(`第二階段｜原預覽外同名控�
     assert.deepEqual(applyFlags, [{ hasSkip: checked, skip: checked ? true : undefined }]);
     assert.equal(writes().filter(x => x.path.endsWith('/apply')).length, 1);
   } finally { outside.remove(); }
+});
+
+// 這裡驗裝置限定與流程；實際 CSS 可見性另由真瀏覽器斷點兩側的操作驗證。
+function noticeWithoutDesktopLimit() {
+  const notice = el('#cashflowReadError'); assert.ok(notice);
+  assert.equal(notice.getAttribute('role'), 'alert');
+  assert.equal(notice.classList.contains('cashflow-desktop-only'), false);
+  assert.ok(el('#retryCashflowRead'));
+  return notice;
+}
+
+test('可見性｜無成功快照連續失敗保留必要提示，新成功工作區不繼承提升', async () => {
+  await navigate('#cards'); failReads = true; await navigate('#cashflow');
+  const first = noticeWithoutDesktopLimit(), oldRetry = el('#retryCashflowRead').onclick;
+  assert.match(first.textContent, /暫時無法載入銀行收支/);
+  assert.equal(el('.cashflow-ledger'), null);
+  await click('#retryCashflowRead');
+  const second = noticeWithoutDesktopLimit(); assert.notEqual(second, first);
+  const count = reads(); oldRetry(); await settle(); assert.equal(reads(), count);
+  failReads = false; await click('#retryCashflowRead');
+  assert.equal(el('#cashflowReadError'), null); assert.ok(el('.cashflow-ledger'));
+  failReads = true; await renderCashflow(); await settle();
+  assert.equal(el('#cashflowReadError').classList.contains('cashflow-desktop-only'), true);
+  assert.match(text('#toast-root'), /載入失敗/); assert.equal(writes().length, 0);
+});
+
+test('可見性｜router提升後再次頁內失敗不降級，成功後普通頁內通知沿原預設', async () => {
+  const node = el('.cashflow-workspace'); failReads = true;
+  const wait = deferred(); readQueue.push(async () => { await wait.promise; return readError(); });
+  const reading = app.router(); assert.equal(node.isConnected, false);
+  try { wait.resolve(); await reading; await settle(); }
+  finally { wait.resolve(); await reading; }
+  assert.equal(el('.cashflow-workspace'), node);
+  const notice = noticeWithoutDesktopLimit(); assert.equal(text('#toast-root'), '');
+  await click('#retryCashflowRead');
+  assert.equal(noticeWithoutDesktopLimit(), notice);
+  assert.equal(reads(), 2); assert.equal(writes().length, 0);
+  failReads = false; await click('#retryCashflowRead');
+  assert.equal(el('#cashflowReadError'), null); assert.notEqual(el('.cashflow-workspace'), node);
+  el('#toast-root').replaceChildren(); failReads = true; await renderCashflow(); await settle();
+  assert.equal(el('#cashflowReadError').classList.contains('cashflow-desktop-only'), true);
+  assert.match(text('#toast-root'), /載入失敗/);
+});
+
+for (const kind of ['import', 'partial']) test(`可見性｜提升後重試在途才確認${kind === 'import' ? '匯入' : '部分欄位'}，提示保持且入口停用`, async () => {
+  const writeWait = deferred(), readWait = deferred(); holdWrite = writeWait;
+  try {
+    if (kind === 'import') {
+      await bankPreview(); calls = []; await click('#bankApply');
+      assert.equal(rows.find(row => row.id === `${serial}-import`).amount, 42000);
+      await click('#modal-root [data-close]');
+    } else {
+      legacyText = true; await click(`tbody [data-edit="${serial}-a"]`);
+      el('#f_summary').value = '本題未確認的新摘要'; el('#f_amount').value = '35000';
+      el('#modal-root form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+      assert.equal(rows.find(row => row.id === `${serial}-a`).amount, 35000);
+      await click('#modal-root [data-cancel]');
+    }
+    await navigate('#cards'); await navigate('#cashflow');
+    failReads = true; await app.router(); await settle(); noticeWithoutDesktopLimit();
+    readQueue.push(async () => { await readWait.promise; return readError(); });
+    await click('#retryCashflowRead'); const count = reads(), previousButton = el('#retryCashflowRead');
+    assert.equal(previousButton.disabled, true);
+    writeWait.resolve(); await settle();
+    noticeWithoutDesktopLimit();
+    assert.match(text('#cashflowReadError'), kind === 'import' ? /資料已儲存，畫面尚未更新/ : /部分欄位尚未確認儲存/);
+    assert.equal(el('#retryCashflowRead').disabled, true);
+    previousButton.onclick(); el('#retryCashflowRead').onclick(); await settle();
+    assert.equal(reads(), count); assert.equal(writes().length, 1);
+    readWait.resolve(); await settle(); noticeWithoutDesktopLimit();
+    assert.equal(el('#retryCashflowRead').disabled, false);
+    assert.equal(el('#cashflowReadError img'), null);
+    failReads = false; await click('#retryCashflowRead');
+    assert.equal(el('#cashflowReadError'), null); assert.equal(writes().length, 1);
+  } finally { writeWait.resolve(); readWait.resolve(); holdWrite = null; await settle(); }
 });

@@ -75,8 +75,8 @@ function flowOf(t) {
   return { label: '支出', cls: 'neg', sign: '−' };
 }
 
-/** @param {string} message @param {CashflowWorkspace} state @param {number} generation */
-function showCashflowReadError(message, state, generation) {
+/** @param {string} message @param {CashflowWorkspace} state @param {number} generation @param {boolean} [allWidths] */
+function showCashflowReadError(message, state, generation, allWidths = false) {
   let notice = state.node.querySelector('#cashflowReadError');
   if (!notice) {
     notice = document.createElement('div');
@@ -85,6 +85,8 @@ function showCashflowReadError(message, state, generation) {
     notice.setAttribute('role', 'alert');
     state.node.insertBefore(notice, state.node.querySelector('.cashflow-summary'));
   }
+  // 這個失敗工作區若已無其他可見退路，後續重試或晚回確認不能再藏掉提示。
+  if (allWidths) notice.classList.remove('cashflow-desktop-only');
   notice.innerHTML = `<span>${esc(message)}</span> <button type="button" class="btn-ghost" id="retryCashflowRead">重新讀取</button>`;
   const button = /** @type {HTMLButtonElement} */ (notice.querySelector('#retryCashflowRead'));
   button.disabled = !!cashflowRead;
@@ -163,7 +165,7 @@ export async function renderCashflow() {
         for (const id of ['monthSel', 'monthSelDesktop']) byId(id).value = monthFilter.slice(5, 7);
         const pending = pendingCashflowMessage(saved);
         const message = `${pending || '畫面暫時無法更新，以下是上次成功載入的內容'}。載入失敗：${e.message}`;
-        showCashflowReadError(message, saved, generation);
+        showCashflowReadError(message, saved, generation, !!detachedByRouter);
         if (!detachedByRouter) toast(message, true);
       } else {
         renderedState = null;
@@ -171,7 +173,7 @@ export async function renderCashflow() {
         failedState = { month: monthFilter, flow: flowFilter, sort: { ...listSort }, nav, revision: readRevision,
           error: e.message, node: host.querySelector('.cashflow-workspace'), visit, route: seq, success: false };
         const pending = pendingCashflowMessage(failedState);
-        showCashflowReadError(`${pending || '暫時無法載入銀行收支'}。載入失敗：${e.message}`, failedState, generation);
+        showCashflowReadError(`${pending || '暫時無法載入銀行收支'}。載入失敗：${e.message}`, failedState, generation, true);
       }
     }
     return;
