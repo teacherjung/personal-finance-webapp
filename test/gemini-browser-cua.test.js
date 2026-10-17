@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, chmodSync, symlinkSync, rmSync } from 'node:fs';
+import { writeFileSync, readFileSync, lstatSync, chmodSync, symlinkSync, rmSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { beginBrowserScan, captureBrowserScan, cancelBrowserScan } from '../scripts/gemini-browser-cua.js';
@@ -90,14 +90,42 @@ test('等待中取消只關自有分頁，晚到內容不能再採用或補送',
   } finally { j.cleanup(); }
 });
 
-test('已結束的真合成 runner、符號連結及雙 adapter 競爭都不多送', async () => {
+test('同內容的一般檔可送出，符號連結在 UI 前被檔案守門拒收', async t => {
+  // 同內容與活 ACK 排除其他拒收理由；本題守整組檔案保護，不證明各單層或替換競態。
+  for (const variant of ['regular', 'symlink']) {
+    await t.test(variant, async () => {
+      const j = jobFixture(), b = browserFixture(j); j.serve();
+      try {
+        const prompt = join(j.dir, 'prompt.txt'), target = join(j.dir, 'prompt-target.txt');
+        writeFileSync(target, j.packet.prompt, { mode: 0o600, flag: 'wx' });
+        const targetStat = lstatSync(target);
+        assert.equal(targetStat.isFile(), true); assert.equal(targetStat.nlink, 1);
+        assert.equal(targetStat.uid, lstatSync(prompt).uid); assert.equal(targetStat.mode & 0o777, 0o600);
+        assert.deepEqual(readFileSync(target), readFileSync(prompt));
+        assert.equal(targetStat.size, j.descriptor.requestBytes);
+        if (variant === 'symlink') {
+          rmSync(prompt); symlinkSync(target, prompt); assert.equal(lstatSync(prompt).isSymbolicLink(), true);
+        }
+        let result, error;
+        try { result = await beginBrowserScan(b.browser, j.runId); } catch (e) { error = e; }
+        assert.equal(j.error(), undefined);
+        assert.equal(b.state.sent, variant === 'regular' ? 1 : 0);
+        if (variant === 'regular') { assert.equal(error, undefined); assert.equal(result.state, 'SUBMITTED'); }
+        else { assert.match(error?.message ?? '', /GEMINI_BROWSER_FILE_PATH/); assert.deepEqual(b.calls, []); }
+      } finally {
+        try { if (b.state.sent) await cancelBrowserScan(j.runId); } finally { j.cleanup(); }
+      }
+    });
+  }
+});
+
+test('已結束的真合成 runner 及雙 adapter 競爭都不多送', async () => {
   const dead = spawn(process.execPath, ['-e', ''], { env: { PATH: '/usr/bin:/bin' }, stdio: 'ignore' });
   await new Promise(resolve => dead.once('close', resolve));
-  for (const variant of ['dead', 'symlink']) {
+  {
     const j = jobFixture(), b = browserFixture(j);
     try {
-      if (variant === 'dead') writeFileSync(join(j.dir, 'descriptor.json'), JSON.stringify({ ...j.descriptor, pid: dead.pid }));
-      else { rmSync(join(j.dir, 'prompt.txt')); symlinkSync('/dev/null', join(j.dir, 'prompt.txt')); }
+      writeFileSync(join(j.dir, 'descriptor.json'), JSON.stringify({ ...j.descriptor, pid: dead.pid }));
       await assert.rejects(beginBrowserScan(b.browser, j.runId)); assert.deepEqual(b.calls, []);
     } finally { j.cleanup(); }
   }
