@@ -3,32 +3,32 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { spawnSync } from 'node:child_process';
 import { browserClient } from '../scripts/gemini-browser-client.js';
-import { prepareBrowserPacket, PROMPT_CAP, sha256 } from '../scripts/gemini-browser-protocol.js';
-import { beginBrowserScan, captureBrowserScan } from '../scripts/gemini-browser-cua.js';
+import { prepareBrowserPacket, ATTACHMENT_CAP, sha256 } from '../scripts/gemini-browser-protocol.js';
+import { captureBrowserScan } from '../scripts/gemini-browser-cua.js';
 import { readMail, mailExists, readBoundedFile } from '../scripts/gemini-browser-files.js';
-import { material, answer, observation, jobFixture, browserFixture } from './helpers/gemini-browser-fixture.js';
+import { runBrowserScanUi, material, answer, observation, jobFixture, browserFixture } from './helpers/gemini-browser-fixture.js';
 
 const CAPACITY = 2 * 1024 * 1024;
 function sizedMaterial(bytes) {
   const m = material(), value = JSON.parse(m.text);
   value.prompt = '合成中文 "quoted" \\escaped\n';
   const build = () => { const text = JSON.stringify(value); return { ...m, text, sha256: sha256(text) }; };
-  const overhead = prepareBrowserPacket(build()).promptBytes;
+  const overhead = prepareBrowserPacket(build()).manifest.attachment.bytes;
   assert.ok(bytes >= overhead);
   value.prompt += 'x'.repeat(bytes - overhead);
   return build();
 }
 
 test('完整文字請求以 UTF-8 與 JSON 跳脫後 bytes 計算：2 MiB 接受，多一 byte 拒收', () => {
-  assert.equal(PROMPT_CAP, CAPACITY);
+  assert.equal(ATTACHMENT_CAP, CAPACITY);
   const full = sizedMaterial(CAPACITY), packet = prepareBrowserPacket(full);
-  assert.equal(packet.promptBytes, CAPACITY);
-  assert.equal(Buffer.byteLength(packet.prompt), CAPACITY);
-  assert.ok(packet.prompt.length < CAPACITY);
-  assert.ok(packet.prompt.includes('合成中文 \\"quoted\\" \\\\escaped\\n'));
-  const start = packet.prompt.indexOf('{'), end = packet.prompt.lastIndexOf('}');
-  assert.deepEqual(JSON.parse(packet.prompt.slice(start, end + 1)).material, JSON.parse(full.text));
-  assert.throws(() => prepareBrowserPacket(sizedMaterial(CAPACITY + 1)), /GEMINI_BROWSER_PROMPT_SIZE/);
+  assert.equal(packet.manifest.attachment.bytes, CAPACITY);
+  assert.equal(Buffer.byteLength(packet.attachmentText), CAPACITY);
+  assert.ok(packet.attachmentText.length < CAPACITY);
+  assert.ok(packet.attachmentText.includes('合成中文 \\"quoted\\" \\\\escaped\\n'));
+  const start = packet.attachmentText.indexOf('{'), end = packet.attachmentText.lastIndexOf('}');
+  assert.deepEqual(JSON.parse(packet.attachmentText.slice(start, end + 1)).material, JSON.parse(full.text));
+  assert.throws(() => prepareBrowserPacket(sizedMaterial(CAPACITY + 1)), /GEMINI_BROWSER_ATTACHMENT_SIZE/);
 });
 
 test('盒內 client 完整容量請求與唯一原文回覆往返', async () => {
@@ -37,7 +37,7 @@ test('盒內 client 完整容量請求與唯一原文回覆往返', async () => 
   await browserClient(input, line => {
     const frame = JSON.parse(line); output.push(frame);
     if (frame.kind === 'request') {
-      assert.equal(frame.packet.promptBytes, CAPACITY);
+      assert.equal(frame.packet.manifest.attachment.bytes, CAPACITY);
       assert.equal(frame.packet.binding.materialSha256, full.sha256);
       input.end(JSON.stringify({ kind: 'reply', response: answer(frame.packet), observation: observation(frame.packet) }) + '\n');
     }
@@ -52,27 +52,22 @@ test('固定 CUA 讀取完整容量並核逐字內容；少一字時零送出且
   for (const truncate of [false, true]) {
     const j = jobFixture(sizedMaterial(CAPACITY)), b = browserFixture(j, { truncate, textContentCap: 1000000 }); j.serve();
     try {
-      b.state.text = j.packet.prompt;
-      const input = b.tab.playwright.getByRole('textbox', { name: 'Enter a prompt for Gemini', exact: true });
-      assert.equal((await input.textContent()).length, 1000000);
-      assert.equal(await input.evaluate((el, expected) => el.textContent === expected, j.packet.prompt), true);
-      b.state.text = '';
-      assert.throws(() => readBoundedFile(j.dir + '/prompt.txt'), /GEMINI_BROWSER_FILE/);
+      assert.throws(() => readBoundedFile(j.dir + '/' + j.packet.manifest.attachment.name), /GEMINI_BROWSER_FILE/);
       if (truncate) {
-        await assert.rejects(beginBrowserScan(b.browser, j.runId), /GEMINI_BROWSER_UI_STATE/);
+        await assert.rejects(runBrowserScanUi(b.browser, j.runId), /GEMINI_BROWSER_UI_STATE/);
         assert.equal(b.state.sent, 0); assert.equal(mailExists(j.dir, 'permit.json'), false);
         assert.equal(readMail(j.dir, 'quiescent.json').failed, true);
         const diagnostic = readMail(j.dir, 'adapter-failed.json');
         assert.equal(diagnostic.phase, 'input-readback');
         assert.equal(diagnostic.readbacks.input.sampled, true);
-        assert.equal(diagnostic.readbacks.input.expectedCodeUnits, j.packet.prompt.length);
-        assert.equal(diagnostic.readbacks.input.actualCodeUnits, j.packet.prompt.length - 1);
+        assert.equal(diagnostic.readbacks.input.expectedCodeUnits, j.packet.controlPrompt.length);
+        assert.equal(diagnostic.readbacks.input.actualCodeUnits, j.packet.controlPrompt.length - 1);
         assert.equal(diagnostic.readbacks.input.match, false);
       } else {
-        assert.equal((await beginBrowserScan(b.browser, j.runId)).state, 'SUBMITTED');
-        assert.equal(b.calls.find(c => c[0] === 'fill')[1], j.packet.prompt);
+        assert.equal((await runBrowserScanUi(b.browser, j.runId)).state, 'SUBMITTED');
+        assert.equal(b.calls.find(c => c[0] === 'fill')[1], j.packet.controlPrompt);
         assert.equal((await captureBrowserScan(j.runId)).state, 'CAPTURED');
-        await assert.rejects(beginBrowserScan(b.browser, j.runId), /REPLAY/);
+        await assert.rejects(runBrowserScanUi(b.browser, j.runId), /REPLAY/);
         assert.equal(b.state.sent, 1); assert.equal(readMail(j.dir, 'quiescent.json').failed, false);
       }
       assert.equal(b.state.closed, true); assert.equal(j.error(), undefined);
@@ -96,7 +91,7 @@ test('runner 的活性核對可讀完整容量，普通信箱仍維持小容量�
     import * as protocol from ${JSON.stringify(protocol)};
     import {material} from ${JSON.stringify(fixture)};
     const base=material(), value=JSON.parse(base.text);
-    value.prompt+='x'.repeat(${CAPACITY}-protocol.prepareBrowserPacket(base).promptBytes);
+    value.prompt+='x'.repeat(${CAPACITY}-protocol.prepareBrowserPacket(base).manifest.attachment.bytes);
     const text=JSON.stringify(value), full={...base,text,sha256:protocol.sha256(text)};
     const root=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'browser-capacity-test-'))), jobs=join(root,'jobs');
     const context=vm.createContext({Buffer,TextDecoder,process,setTimeout,clearTimeout});
@@ -118,7 +113,7 @@ test('runner 的活性核對可讀完整容量，普通信箱仍維持小容量�
         JOB_ROOT:jobs,sourceDigest:()=>({sha256:'2'.repeat(64)}),
         readBoundedFile:(path,cap)=>{
           const bytes=real.readBoundedFile(path,cap);
-          if(path.endsWith('/prompt.txt')){
+          if(path.split('/').pop().startsWith('gemini-') && path.endsWith('.txt')){
             assert.equal(bytes.length,${CAPACITY});
             assert.throws(()=>real.readBoundedFile(path),/GEMINI_BROWSER_FILE/);
             promptRead=true;throw Error('CAPACITY_READ_COMPLETE');
@@ -187,8 +182,8 @@ test('失敗診斷分辨等待階段與讀回差異，寫檔失敗仍收尾且�
       target('effort-menu-wait',role('menuitem','Thinking level'),'isVisible',1,true),target('effort-menu-select',role('menuitem','Thinking level'),'click'),
       target('effort-option-wait',role('menuitem','High Extra thorough'),'isVisible',1,true),target('effort-select',role('menuitem','High Extra thorough'),'click'),
       target('effort-confirm',picker,'getAttribute',2,true),target('input-fill',textbox,'fill'),
-      target('input-readback',textbox,'evaluate'),target('ready-precondition','getByText:Just stopping by?','isVisible',2),
-      {phase:'permit-wait',mail:'permit.json'},target('submit-precondition','tab','url',2),target('submit-attempt',role('button','Send message'),'click'),
+      target('input-readback',textbox,'evaluate'),target('ready-precondition','getByText:Just stopping by?','isVisible',3),
+      {phase:'permit-wait',mail:'permit.json'},target('submit-precondition','tab','url',3),target('submit-attempt',role('button','Send message'),'click'),
       ...['missing','extra','bool','length','negative','unsampled'].map(invalid=>({...target('input-readback',textbox,'evaluate'),invalid})),
       ...['short','same-bytes','null','bad-encoding'].map(mode=>({...target('input-readback',textbox,'evaluate'),mode})),
       {...target('submit-precondition',textbox,'evaluate',2),mode:'same-bytes'},
@@ -211,7 +206,7 @@ test('失敗診斷分辨等待階段與讀回差異，寫檔失敗仍收尾且�
           if(current.path===path&&current.action===key&&count===current.nth){
             reached++;
             if(current.invalid){
-              const result=args[0]({textContent:j.packet.prompt},args[1]);
+              const result=args[0]({textContent:j.packet.controlPrompt},args[1]);
               if(current.invalid==='missing')delete result.actualCodeUnits;
               if(current.invalid==='extra')result.other=true;
               if(current.invalid==='bool')result.match='true';
@@ -221,7 +216,7 @@ test('失敗診斷分辨等待階段與讀回差異，寫檔失敗仍收尾且�
               return Promise.resolve(result);
             }
             if(current.mode){
-              actual=current.mode==='short'?j.packet.prompt.slice(0,-1):current.mode==='same-bytes'?j.packet.prompt.slice(0,Math.floor(j.packet.prompt.length/2))+'X'+j.packet.prompt.slice(Math.floor(j.packet.prompt.length/2)+1):current.mode==='null'?null:'\\ud800';
+              actual=current.mode==='short'?j.packet.controlPrompt.slice(0,-1):current.mode==='same-bytes'?j.packet.controlPrompt.slice(0,Math.floor(j.packet.controlPrompt.length/2))+'X'+j.packet.controlPrompt.slice(Math.floor(j.packet.controlPrompt.length/2)+1):current.mode==='null'?null:'\\ud800';
               now+=11000;return Promise.resolve(args[0]({textContent:actual},args[1]));
             }
             if(current.timeout){now+=11000;return Promise.resolve(key==='getAttribute'?'wrong-model':false);}
@@ -232,7 +227,7 @@ test('失敗診斷分辨等待階段與讀回差異，寫檔失敗仍收尾且�
       }});}
       j.serve();
       try{
-        await assert.rejects(module.namespace.beginBrowserScan(wrap(b.browser,'browser'),j.runId));
+        await assert.rejects(async()=>{await module.namespace.beginBrowserScan(wrap(b.browser,'browser'),j.runId);await module.namespace.uploadBrowserScan(j.runId);await module.namespace.submitBrowserScan(j.runId);});
         assert.equal(b.state.sent,0);assert.equal(files.mailExists(j.dir,'submitted.json'),false);
         if(!current.mail)assert.equal(reached,1,item.phase);
         const expectedTab=item.phase!=='claim-ack'&&item.phase!=='new-tab';
@@ -250,11 +245,11 @@ test('失敗診斷分辨等待階段與讀回差異，寫檔失敗仍收尾且�
           if(current.mode){
             const sample=d.readbacks[item.phase==='input-readback'?'input':'submit'];
             assert.equal(sample.sampled,typeof actual==='string');
-            assert.equal(sample.expectedCodeUnits,j.packet.prompt.length);
+            assert.equal(sample.expectedCodeUnits,j.packet.controlPrompt.length);
             assert.equal(sample.actualCodeUnits,typeof actual==='string'?actual.length:null);assert.equal(sample.match,false);
             if(item.phase==='input-readback')assert.equal(files.mailExists(j.dir,'ready.json'),false);
           }
-          if(item.phase==='input-fill')assert.deepEqual(d.readbacks.input,{sampled:false,expectedCodeUnits:j.packet.prompt.length,actualCodeUnits:null,match:false});
+          if(item.phase==='input-fill')assert.deepEqual(d.readbacks.input,{sampled:false,expectedCodeUnits:j.packet.controlPrompt.length,actualCodeUnits:null,match:false});
         }
       }finally{j.cleanup();}
     }

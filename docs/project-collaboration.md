@@ -130,7 +130,7 @@
 ### Gemini 接線驗證與啟用
 
 - **原生候選準備**：不含真認證的程式與合成驗證依 [施工計畫](gemini-native-formal-plan.md)。`scripts/gemini-native-runner.js` 的正式入口在啟動之前拒絕，這個準備階段不綁定 scanner；先前私人合成試跑的真 HOME／Keychain 暫例不延用。本人核定認證政策、核實模型資格及完成原生整體隔離驗收後，另補正式發射器與設定接線。合成考題及來源磁碟快照不能代替 OS 隔離、已載入程式身分或 G1 實跑證據。
-- **A 政策網頁接線**：沿用本人既有帳號及官方 Gemini 網頁登入，依[網頁正式掃描計畫](gemini-browser-formal-plan.md)操作；scanner 模型及推理登記 `4 Argon`／`High`。盒內 client 持有整輪狀態機；固定盒外 runner 與 CUA adapter 以新挑戰及一次性送出許可交接，只處理本場提交材料與回覆。`browser-ui/v1` 是官方畫面的可見來源觀測，不冒充原生事件或平台簽章。資格場、獨立複審、正式用途合成驗收及 G1 分開記帳；缺同版完整資格、來源釘值或任一場隔離收據均不得採用。這是有操作者的固定流程，不宣稱無人值守。
+- **A 政策網頁接線**：沿用本人既有帳號及官方 Gemini 網頁登入，依[網頁正式掃描計畫](gemini-browser-formal-plan.md)操作；scanner 模型及推理登記 `4 Argon`／`High`。盒內 client 持有整輪狀態機；固定盒外 runner 與 CUA adapter 以新挑戰、一次性附件上傳許可與一次性送出許可交接，只處理本場提交材料與回覆。`browser-attachment-ui/v1` 是官方畫面的可見來源觀測，不冒充原生事件或平台簽章。資格場、獨立複審、正式用途合成驗收及 G1 分開記帳；缺同版完整資格、來源釘值或任一場隔離收據均不得採用。這是有操作者的固定流程，不宣稱無人值守。
 
 - 啟用順序依 [GPT‑6.1 Sol 技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6190135649)：先用固定候選版完成能力與隔離驗證，再綁定掃描者設定並重新驗證，才啟用。驗證過程不算任何 PR 的正式複審或 G1 掃描；掃描登記與實際完成證據分別核對，不能只看接線檔案存在。
 - **網頁正式入口**：先核獨立保存的預期指紋，再以絕對路徑啟動固定盒外 launcher；由同版 CUA loader 呼叫 `beginBrowserScan`、`captureBrowserScan`，取消走 `cancelBrowserScan`。部署固定受掃 repo、base/head、提示、Node、提供者完整來源及資格收據，不能用環境或一般 CLI 旗標補值。完整請求上限 2 MiB（2,097,152 UTF-8 bytes；本機傳輸界線，非平台容量宣稱；擴容驗收見[容量計畫](gemini-browser-capacity-plan.md)）；超量拒收、不截斷、不拆成多次充作一次掃描。每場只送一次、只採完整唯一回覆及同回覆官方 `Used 4 Argon 高` 明細，任何條件不合即依 G3 記未執行。實體部署路徑及原始證據只留本機。

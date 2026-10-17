@@ -1,12 +1,13 @@
 // @ts-check
 // 只在官方 CUA REPL 載入；瀏覽器權限由可信固定配方持有，模型文字只落進資料檔。
 import { randomBytes } from 'node:crypto';
+import { lstatSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { join } from 'node:path';
 import { URL as NodeURL } from 'node:url';
 import { isMainModule } from '../lib/is-main.js';
 import { SOURCE_ROOT, SOURCE_FILES, jobDirectory, readMail, readBoundedFile, writeOnce, mailExists, sourceDigest, browserError } from './gemini-browser-files.js';
-import { URL, ORIGIN, SELECTED, DETAILS, PROMPT_CAP, REPLY_CAP, sha256, fields, validateDescriptor, leaseMessage } from './gemini-browser-protocol.js';
+import { URL, ORIGIN, SELECTED, DETAILS, ATTACHMENT_CAP, CONTROL_CAP, OBSERVATION, REPLY_CAP, sha256, fields, validateDescriptor, leaseMessage } from './gemini-browser-protocol.js';
 
 const sessions = new Map();
 const pause = () => new Promise(resolve => setTimeout(resolve, 100));
@@ -22,10 +23,15 @@ function alive(s) {
   if (Date.now() >= s.d.expiresAt || performance.now() - s.started > s.remaining
     || mailExists(s.dir, 'aborted.json') || mailExists(s.dir, 'cancel.json')) browserError('ABORTED');
   if (sourceDigest(SOURCE_ROOT, SOURCE_FILES).sha256 !== s.d.sourceSha256
-    || sha256(readBoundedFile(join(s.dir, 'prompt.txt'), PROMPT_CAP)) !== s.d.requestSha256
     || !equal(readMail(s.dir, 'descriptor.json'), s.d)) browserError('SOURCE_CHANGED');
+  const control = readBoundedFile(join(s.dir, 'control.txt'), CONTROL_CAP);
+  const attachment = readBoundedFile(s.attachmentPath, ATTACHMENT_CAP);
+  const st = lstatSync(s.attachmentPath, { bigint: true });
+  if ([st.dev, st.ino, st.size, st.mtimeNs, st.ctimeNs, st.mode, st.nlink].join(':') !== s.d.attachmentIdentity) browserError('SOURCE_CHANGED');
+  if (control.length !== s.d.manifest.control.bytes || sha256(control) !== s.d.manifest.control.sha256
+    || attachment.length !== s.d.manifest.attachment.bytes || sha256(attachment) !== s.d.manifest.attachment.sha256) browserError('SOURCE_CHANGED');
 }
-async function step(s, action, phase) { if (phase) s.phase = phase; alive(s); return await action(); }
+async function step(s, action, phase) { if (phase) s.phase = phase; alive(s); const result = await action(); alive(s); return result; }
 async function waitMail(s, name, expected) {
   const end = performance.now() + 5000;
   while (!mailExists(s.dir, name)) {
@@ -49,10 +55,38 @@ async function temporaryBefore(s) {
 }
 async function cleanup(s, failed) {
   // close 不等於 Google 遠端取消；只在已發出的呼叫都返回後公布本地靜止。
+  s.state = 'CLOSING';
   if (s.tab) await s.tab.close();
   writeOnce(s.dir, 'quiescent.json', { instance: s.instance, tabClosed: !!s.tab, failed });
   s.state = 'CLOSED';
 }
+async function attachmentState(s) {
+  const composer = main(s.tab).locator('input-area-v2');
+  if (await step(s, () => composer.count()) !== 1) browserError('ATTACHMENT_UI');
+  const result = await step(s, () => composer.evaluate(element => {
+    const previews = Array.from(element.querySelectorAll('uploader-file-preview'));
+    const selectedFiles = Array.from(element.querySelectorAll('input[type=file]')).reduce((n, input) => n + input.files.length, 0);
+    if (previews.length !== 1) return { count: previews.length, selectedFiles, name: null, ready: false };
+    const preview = previews[0], containers = preview.querySelectorAll('.file-preview-container');
+    const content = preview.querySelectorAll('.gem-attachment-content'), extension = preview.querySelectorAll('.gem-attachment-extension-label');
+    if (containers.length !== 1) return { count: 1, selectedFiles, name: null, ready: false };
+    const ids = (containers[0].getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean);
+    const name = ids.length === 1 ? element.ownerDocument.getElementById(ids[0])?.textContent : null;
+    const boundedName = typeof name === 'string' && name.length <= 200 ? name : null;
+    return { count: 1, selectedFiles, name: boundedName,
+      ready: preview.getClientRects().length > 0 && content.length === 1 && !content[0].classList.contains('loading')
+        && extension.length === 1 && extension[0].textContent === 'TXT' && preview.querySelectorAll('[role="progressbar"]').length === 0 };
+  }));
+  fields(result, ['count', 'selectedFiles', 'name', 'ready']);
+  if (!Number.isSafeInteger(result.count) || result.count < 0 || !Number.isSafeInteger(result.selectedFiles) || result.selectedFiles < 0
+    || typeof result.ready !== 'boolean' || (result.name !== null && typeof result.name !== 'string')) browserError('ATTACHMENT_UI');
+  return result;
+}
+async function attachmentReady(s) {
+  const observed = await attachmentState(s);
+  return observed.count === 1 && observed.ready === true && observed.name === s.d.manifest.attachment.name;
+}
+
 function unreadSummary(s) {
   return { sampled: false, expectedCodeUnits: s.prompt.length, actualCodeUnits: null, match: false };
 }
@@ -88,9 +122,9 @@ async function failed(s, error) {
 export async function beginBrowserScan(browser, runId) {
   const dir = jobDirectory(runId), d = validateDescriptor(readMail(dir, 'descriptor.json'));
   if (d.runId !== runId || sessions.has(runId)) browserError('REPLAY');
-  const prompt = new TextDecoder('utf-8', { fatal: true }).decode(readBoundedFile(join(dir, 'prompt.txt'), PROMPT_CAP));
-  if (Buffer.byteLength(prompt) !== d.requestBytes || sha256(prompt) !== d.requestSha256) browserError('REQUEST');
-  const s = { dir, d, prompt, instance: nonce(16), started: performance.now(), remaining: Math.min(15 * 60000, d.expiresAt - Date.now()), state: 'CLAIMING', phase: 'initial-source', readbacks: {}, tab: /** @type {any} */ (null) };
+  const prompt = new TextDecoder('utf-8', { fatal: true }).decode(readBoundedFile(join(dir, 'control.txt'), CONTROL_CAP));
+  if (Buffer.byteLength(prompt) !== d.manifest.control.bytes || sha256(prompt) !== d.manifest.control.sha256) browserError('REQUEST');
+  const s = { dir, d, prompt, attachmentPath: join(dir, d.manifest.attachment.name), uploads: 0, instance: nonce(16), started: performance.now(), remaining: Math.min(15 * 60000, d.expiresAt - Date.now()), state: 'CLAIMING', phase: 'initial-source', readbacks: {}, tab: /** @type {any} */ (null) };
   s.readbacks = { input: unreadSummary(s), submit: unreadSummary(s) };
   alive(s);
   const claim = leaseMessage(d, s.instance, nonce(32), 'claim');
@@ -100,7 +134,7 @@ export async function beginBrowserScan(browser, runId) {
     s.phase = 'claim-ack';
     await waitMail(s, 'claim-ack.json', { ...claim, stage: 'claimed' });
     s.state = 'PREPARING';
-    s.tab = await step(s, () => browser.tabs.new(), 'new-tab');
+    await step(s, async () => { s.tab = await browser.tabs.new(); }, 'new-tab');
     await step(s, () => s.tab.goto(URL), 'navigate');
     s.phase = 'initial-origin';
     await origin(s);
@@ -120,11 +154,63 @@ export async function beginBrowserScan(browser, runId) {
     await until(s, () => s.tab.playwright.getByRole('menuitem', { name: 'High Extra thorough', exact: true }).isVisible(), 'effort-option-wait');
     await step(s, () => s.tab.playwright.getByRole('menuitem', { name: 'High Extra thorough', exact: true }).click(), 'effort-select');
     await until(s, async () => await selected(s.tab) === SELECTED, 'effort-confirm');
+    const initialAttachment = await attachmentState(s);
+    if (initialAttachment.count !== 0 || initialAttachment.selectedFiles !== 0) browserError('NONEMPTY');
+    s.state = 'PREPARED';
+    return { runId, state: s.state, tabId: s.tab.id };
+  } catch (e) { await failed(s, e); throw e; }
+}
+
+export async function uploadBrowserScan(runId) {
+  const s = sessions.get(runId);
+  if (!s || s.state !== 'PREPARED') browserError('UPLOAD_ORDER');
+  s.state = 'UPLOADING';
+  try {
+    s.phase = 'upload-precondition'; await origin(s);
+    const initial = await attachmentState(s);
+    if (initial.count !== 0 || initial.selectedFiles !== 0 || await step(s, () => selected(s.tab)) !== SELECTED
+      || !await step(s, () => temporaryBefore(s)) || await step(s, () => responses(s.tab).count()) !== 0) browserError('PRECONDITION');
+    const request = { ...leaseMessage(s.d, s.instance, nonce(32), 'upload-request'), tabId: s.tab.id, temporary: true,
+      initialResponses: 0, selected: SELECTED, initialAttachments: 0, attachment: s.d.manifest.attachment };
+    writeOnce(s.dir, 'upload-request.json', request);
+    const permit = { ...request, stage: 'upload-once' };
+    await waitMail(s, 'upload-permit.json', permit);
+    writeOnce(s.dir, 'upload-consumed.json', permit);
+    await step(s, () => main(s.tab).getByRole('button', { name: 'Upload & tools', exact: true }).click({ timeoutMs: 10000 }), 'upload-menu-open');
+    const menu = s.tab.playwright.getByRole('menu', { name: 'Upload file options', exact: true });
+    await until(s, () => menu.isVisible(), 'upload-menu-wait');
+    const item = menu.getByRole('menuitem', { name: 'Upload files. Documents, data, code files', exact: true });
+    if (await step(s, () => menu.count()) !== 1 || await step(s, () => item.count()) !== 1) browserError('ATTACHMENT_UI');
+    let chooserPromise;
+    try {
+      chooserPromise = step(s, () => s.tab.playwright.waitForEvent('filechooser', { timeoutMs: 30000 }), 'chooser-event');
+      chooserPromise.catch(() => {});
+      await step(s, () => item.click({ timeoutMs: 30000 }), 'chooser-open');
+      const chooser = await chooserPromise; alive(s);
+      s.uploads = 1;
+      writeOnce(s.dir, 'upload-attempted.json', { instance: s.instance, tabId: s.tab.id, uploads: 1, attachment: s.d.manifest.attachment });
+      await step(s, () => chooser.setFiles([s.attachmentPath], { timeoutMs: 30000 }), 'upload-attempt');
+    } finally { if (chooserPromise) await chooserPromise.catch(() => {}); }
+    s.state = 'UPLOADED';
+    writeOnce(s.dir, 'uploaded.json', { instance: s.instance, tabId: s.tab.id, uploads: 1, attachment: s.d.manifest.attachment });
+    return { runId, state: s.state, tabId: s.tab.id };
+  } catch (e) { await failed(s, e); throw e; }
+}
+
+export async function submitBrowserScan(runId) {
+  const s = sessions.get(runId);
+  if (!s || s.state !== 'UPLOADED') browserError('SUBMIT_ORDER');
+  s.state = 'PREPARING';
+  const { dir, d, prompt } = s;
+  try {
+    await until(s, () => attachmentReady(s), 'attachment-ready');
     await step(s, () => input(s.tab).fill(prompt), 'input-fill');
     await until(s, async () => await readback(s, 'input') === true, 'input-readback');
     s.phase = 'ready-precondition';
-    if (!await step(s, () => temporaryBefore(s)) || await step(s, () => responses(s.tab).count()) !== 0) browserError('PRECONDITION');
-    const ready = { ...leaseMessage(d, s.instance, nonce(32), 'ready'), tabId: s.tab.id, temporary: true, initialResponses: 0, selected: SELECTED };
+    if (!await attachmentReady(s) || await step(s, () => selected(s.tab)) !== SELECTED
+      || !await step(s, () => temporaryBefore(s)) || await step(s, () => responses(s.tab).count()) !== 0
+      || !await step(s, () => button(s.tab, 'Send message').isEnabled())) browserError('PRECONDITION');
+    const ready = { ...leaseMessage(d, s.instance, nonce(32), 'ready'), tabId: s.tab.id, temporary: true, initialResponses: 0, selected: SELECTED, attachmentReady: true };
     writeOnce(dir, 'ready.json', ready);
     const permit = { ...ready, stage: 'submit-once' };
     s.phase = 'permit-wait';
@@ -132,7 +218,8 @@ export async function beginBrowserScan(browser, runId) {
     writeOnce(dir, 'consumed.json', permit);
     s.phase = 'submit-precondition';
     await origin(s);
-    if (await step(s, () => selected(s.tab)) !== SELECTED || await step(s, () => readback(s, 'submit')) !== true
+    if (!await attachmentReady(s) || !await step(s, () => button(s.tab, 'Send message').isEnabled())
+      || await step(s, () => selected(s.tab)) !== SELECTED || await step(s, () => readback(s, 'submit')) !== true
       || !await step(s, () => temporaryBefore(s)) || await step(s, () => responses(s.tab).count()) !== 0) browserError('PRECONDITION');
     s.state = 'ATTEMPTED';
     await step(s, () => button(s.tab, 'Send message').click(), 'submit-attempt');
@@ -189,10 +276,11 @@ export async function captureBrowserScan(runId) {
     s.phase = 'final-observation';
     if (await step(s, () => responses(s.tab).count()) !== 1 || sha256(await step(s, () => responses(s.tab).innerText())) !== sha256(raw)
       || await step(s, () => selected(s.tab)) !== SELECTED || await step(s, () => button(s.tab, 'Stop response').isVisible())) browserError('REPLY_CHANGED');
-    const observation = { schema: 'browser-ui/v1', scanId: s.d.scanId, tabId: s.tab.id, origin: ORIGIN,
+    const observation = { schema: OBSERVATION, scanId: s.d.scanId, tabId: s.tab.id, origin: ORIGIN,
       initialResponses: 0, submissions: 1, finalResponses: 1, temporaryBefore: true, temporaryAfter: true,
       selectedBefore: SELECTED, selectedAfter: SELECTED, details, detailsSource, complete: true, regenerations: 0,
-      promptSha256: s.d.requestSha256, responseSha256: sha256(raw), responseBytes: raw.length };
+      requestSha256: s.d.requestSha256, controlSha256: s.d.manifest.control.sha256,
+      attachment: { name: s.d.manifest.attachment.name, count: 1, ready: true, uploads: s.uploads, localSha256: s.d.manifest.attachment.sha256 }, responseSha256: sha256(raw), responseBytes: raw.length };
     alive(s);
     writeOnce(s.dir, 'response.txt', raw);
     writeOnce(s.dir, 'capture.json', { instance: s.instance, observation });
@@ -203,9 +291,9 @@ export async function captureBrowserScan(runId) {
 
 export async function cancelBrowserScan(runId) {
   const s = sessions.get(runId);
-  if (!s || !['CLAIMING', 'PREPARING', 'ATTEMPTED', 'CAPTURING', 'SUBMITTED'].includes(s.state)) browserError('CANCEL_ORDER');
-  writeOnce(s.dir, 'cancel.json', { instance: s.instance });
-  if (s.state !== 'SUBMITTED') return { runId, state: 'CANCEL_REQUESTED' };
+  if (!s || !['CLAIMING', 'PREPARED', 'UPLOADING', 'UPLOADED', 'PREPARING', 'ATTEMPTED', 'CAPTURING', 'SUBMITTED'].includes(s.state)) browserError('CANCEL_ORDER');
+  if (!mailExists(s.dir, 'cancel.json')) writeOnce(s.dir, 'cancel.json', { instance: s.instance });
+  if (!['SUBMITTED', 'PREPARED', 'UPLOADED'].includes(s.state)) return { runId, state: 'CANCEL_REQUESTED' };
   s.state = 'CANCELLING';
   await cleanup(s, true);
   return { runId, state: 'CLOSED' };

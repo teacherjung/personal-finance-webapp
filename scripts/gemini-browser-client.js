@@ -1,6 +1,6 @@
 // @ts-check
 // 盒內持有一次請求到終態；不把任何模型文字解讀成下一個工具動作。
-import { prepareBrowserPacket, validateBrowserReply, fields, PROMPT_CAP, REPLY_CAP } from './gemini-browser-protocol.js';
+import { prepareBrowserPacket, validateBrowserReply, fields, FRAME_CAP } from './gemini-browser-protocol.js';
 import { parseUniqueJson } from './gemini-native-protocol.js';
 import { isMainModule } from '../lib/is-main.js';
 
@@ -8,7 +8,7 @@ export async function browserClient(input, output) {
   let state = 'START', buffered = Buffer.alloc(0), packet;
   for await (const bytes of input) {
     buffered = Buffer.concat([buffered, bytes]);
-    if (buffered.length > (PROMPT_CAP + REPLY_CAP) * 8) throw Error('GEMINI_BROWSER_CLIENT_SIZE');
+    if (buffered.length > FRAME_CAP) throw Error('GEMINI_BROWSER_CLIENT_SIZE');
     let newline;
     while ((newline = buffered.indexOf(10)) >= 0) {
       const line = buffered.subarray(0, newline); buffered = buffered.subarray(newline + 1);

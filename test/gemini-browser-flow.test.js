@@ -9,8 +9,17 @@ import { spawnSync } from 'node:child_process';
 import { browserClient } from '../scripts/gemini-browser-client.js';
 import { leaseMessage, sha256, SELECTED } from '../scripts/gemini-browser-protocol.js';
 import { writeOnce, readMail, mailExists, SOURCE_FILES } from '../scripts/gemini-browser-files.js';
-import { BrowserLease, checkBrowserArtifacts, renderBrowserLauncher, renderBrowserCuaLoader } from '../scripts/gemini-browser-runner.js';
+import { checkBrowserArtifacts, renderBrowserLauncher, renderBrowserCuaLoader } from '../scripts/gemini-browser-runner.js';
 import { material, answer, observation, jobFixture } from './helpers/gemini-browser-fixture.js';
+
+function authorizeUpload(j, claim) {
+  const request = { ...leaseMessage(j.descriptor, claim.instance, '9'.repeat(64), 'upload-request'), tabId: 'test-owned',
+    temporary: true, initialResponses: 0, selected: SELECTED, initialAttachments: 0, attachment: j.packet.manifest.attachment };
+  writeOnce(j.dir, 'upload-request.json', request); j.lease.tick();
+  assert.deepEqual(readMail(j.dir, 'upload-permit.json'), { ...request, stage: 'upload-once' });
+  writeOnce(j.dir, 'upload-consumed.json', { ...request, stage: 'upload-once' });
+  writeOnce(j.dir, 'uploaded.json', { instance: claim.instance, tabId: request.tabId, uploads: 1, attachment: j.packet.manifest.attachment });
+}
 
 test('信箱根採固定系統根的正規化結果，不跟環境暫存目錄走', () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'browser-root-env-test-')));
@@ -62,7 +71,8 @@ test('lease 必須回答新 challenge；只核准一次且先消耗後才接受�
     const claim = leaseMessage(j.descriptor, 'c'.repeat(32), 'd'.repeat(64), 'claim');
     writeOnce(j.dir, 'claim.json', claim); j.lease.tick();
     assert.deepEqual(readMail(j.dir, 'claim-ack.json'), { ...claim, stage: 'claimed' });
-    const ready = { ...leaseMessage(j.descriptor, claim.instance, 'e'.repeat(64), 'ready'), tabId: 'test-owned', temporary: true, initialResponses: 0, selected: 'Open mode picker, currently Argon High' };
+    authorizeUpload(j, claim);
+    const ready = { ...leaseMessage(j.descriptor, claim.instance, 'e'.repeat(64), 'ready'), tabId: 'test-owned', temporary: true, initialResponses: 0, selected: 'Open mode picker, currently Argon High', attachmentReady: true };
     writeOnce(j.dir, 'ready.json', ready); j.lease.tick();
     assert.equal(j.lease.state, 'SUBMIT_AUTHORIZED'); assert.equal(readMail(j.dir, 'permit.json').challenge, ready.challenge);
     assert.throws(() => writeOnce(j.dir, 'ready.json', ready));
@@ -147,27 +157,24 @@ test('根發射器在匯入前核固定設定、node、提示及執行來源；�
 });
 
 
-test('ready 沿用 claim challenge 時不產生 permit；不同 challenge 才授權', () => {
-  for (const repeated of [true, false]) {
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'browser-ready-test-')));
+test('ready 沿用 claim 或 upload challenge 不產生 Submit permit；新挑戰才授權', () => {
+  for (const repeated of ['claim', 'upload', 'fresh']) {
+    const j = jobFixture();
     try {
-      const descriptor = { runId: 'a'.repeat(32), lease: 'b'.repeat(64), requestSha256: 'c'.repeat(64), expiresAt: Date.now() + 60000 };
-      const lease = new BrowserLease(dir, descriptor, () => {});
-      const claim = leaseMessage(descriptor, 'd'.repeat(32), 'e'.repeat(64), 'claim');
-      writeOnce(dir, 'claim.json', claim); lease.tick();
-      assert.equal(lease.state, 'CLAIMED');
-      assert.deepEqual(readMail(dir, 'claim-ack.json'), { ...claim, stage: 'claimed' });
-      const challenge = repeated ? claim.challenge : 'f'.repeat(64);
-      const ready = { ...leaseMessage(descriptor, claim.instance, challenge, 'ready'), tabId: 'test-owned', temporary: true, initialResponses: 0, selected: SELECTED };
-      writeOnce(dir, 'ready.json', ready);
-      if (repeated) {
-        assert.throws(() => lease.tick(), /GEMINI_BROWSER_READY/);
-        assert.equal(lease.state, 'CLAIMED'); assert.equal(mailExists(dir, 'permit.json'), false);
+      const claim = leaseMessage(j.descriptor, 'd'.repeat(32), 'e'.repeat(64), 'claim');
+      writeOnce(j.dir, 'claim.json', claim); j.lease.tick(); authorizeUpload(j, claim);
+      const challenge = repeated === 'claim' ? claim.challenge : repeated === 'upload' ? '9'.repeat(64) : 'f'.repeat(64);
+      const ready = { ...leaseMessage(j.descriptor, claim.instance, challenge, 'ready'), tabId: 'test-owned', temporary: true,
+        initialResponses: 0, selected: SELECTED, attachmentReady: true };
+      writeOnce(j.dir, 'ready.json', ready);
+      if (repeated !== 'fresh') {
+        assert.throws(() => j.lease.tick(), /GEMINI_BROWSER_READY/);
+        assert.equal(j.lease.state, 'UPLOAD_AUTHORIZED'); assert.equal(mailExists(j.dir, 'permit.json'), false);
       } else {
-        lease.tick(); assert.equal(lease.state, 'SUBMIT_AUTHORIZED');
-        assert.deepEqual(readMail(dir, 'permit.json'), { ...ready, stage: 'submit-once' });
+        j.lease.tick(); assert.equal(j.lease.state, 'SUBMIT_AUTHORIZED');
+        assert.deepEqual(readMail(j.dir, 'permit.json'), { ...ready, stage: 'submit-once' });
       }
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { j.cleanup(); }
   }
 });
 
@@ -202,10 +209,10 @@ test('正式入口只接受數值精確等於完整容量的資格收據', () =>
       return new vm.SyntheticModule(Object.keys(value),function(){for(const k of Object.keys(value))this.setExport(k,value[k]);},{context,identifier:id});
     });
     await module.evaluate();
-    const cap=protocol.PROMPT_CAP;
-    for(const [label,promptBytes] of [['good',cap],['missing',undefined],['object',{}],['string',String(cap)],['below',cap-1],['above',cap+1],['fraction',cap+0.5]]){
-      receiptBytes=Buffer.from(JSON.stringify({purpose:'qualification',status:'PUBLISHED',sourceSha256:sourceSha,
-        providerHead:head,promptBytes,sourcePins:[{name:'node',sha256:nodeSha}]}));
+    const cap=protocol.ATTACHMENT_CAP;
+    for(const [label,attachmentBytes] of [['good',cap],['legacy',cap],['missing-transport',cap],['missing',undefined],['object',{}],['string',String(cap)],['below',cap-1],['above',cap+1],['fraction',cap+0.5]]){
+      receiptBytes=Buffer.from(JSON.stringify({schema:'browser-attachment-scan/v1',transport:label==='legacy'?'text/v1':label==='missing-transport'?undefined:protocol.TRANSPORT,sourceKind:protocol.OBSERVATION,purpose:'qualification',status:'PUBLISHED',sourceSha256:sourceSha,
+        providerHead:head,attachmentBytes,sourcePins:[{name:'node',sha256:nodeSha}]}));
       reached=0;
       const pins=['wrapper','deployment','prompt','node','cua-loader'].map(name=>({name,
         path:name==='node'?node:name==='prompt'?'/synthetic/prompt':'/synthetic/'+name,sha256:nodeSha}));

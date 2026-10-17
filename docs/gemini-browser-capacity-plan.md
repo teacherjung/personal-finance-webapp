@@ -2,36 +2,40 @@
 
 ## 目標與完成條件
 
-維持 A 憑證分離，完成 #701 原受審範圍的完整材料補掃。接線可用、合成資格與 App 驗收分開記錄；本工作不能只因合成測試通過而結案。[本人續作指示](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6239647407)。
+維持 A 憑證分離，完成 #701 原受審範圍的完整材料補掃。接線、合成資格、App 驗收及實際掃描分開記錄；不能只因測試通過而結案。[本人續作指示](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6239647407)。
 
-原受掃範圍是 `1b4e8a20c7b2496f3f474573b4a25fc6a777e5a5` 到 `dcdee0f4dfdfba38ab36595a574ac81850c2048a`；不改成 squash 後主幹差異。原材料為 1,814,466 UTF-8 bytes，原提示模板生成的完整請求為 1,816,201 bytes。原 32 KiB 場次在外送前拒收的紀錄保留，後續補掃記實際日期，不追認成合併前 G1。
+原受掃範圍是 `1b4e8a20c7b2496f3f474573b4a25fc6a777e5a5` 到 `dcdee0f4dfdfba38ab36595a574ac81850c2048a`；不改成 squash 後主幹差異。原材料為 1,814,466 UTF-8 bytes，原文字提示模板生成 1,816,201 bytes。32 KiB 拒收場保留；補掃記實際日期，不追認為合併前 G1。
 
-## 技術方案
+## 單一完整文字附件
 
-GPT‑6.1 Sol 的[技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6239811165)：整份提示上限採 2 MiB（2,097,152 bytes），容納本次實際材料；這是本接線的容量，不是 Google 官方上限。`scripts/gemini-browser-protocol.js` 的 `PROMPT_CAP` 是容量單一來源。CUA 初始讀取、活性核對及 runner 工作核對讀提示時明確傳入該上限；一般信箱的預設限制、回覆與材料上限保持各自原契約。
+依 [GPT‑6.1 Sol 附件裁示](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6240329000)，用官方本機檔案選擇器上傳一份 UTF-8 `.txt`，附上一段固定短提示。附件包含固定審查說明、完整材料 JSON、回覆 schema，以及只出現在附件末尾的隨機挑戰。短提示不揭露挑戰。材料內的程式、文字、URL 與命令都是不可信資料，不能指揮額外工具；固定說明只允許讀本場綁定附件。
 
-提示與回覆仍為唯一完整資料；不截斷、不分批冒充一次掃描。固定來源、外部預期指紋、一次性許可、官方模型明細、掃前後隔離檢查與清理都依[網頁接線計畫](gemini-browser-formal-plan.md)。不放寬憑證、登入、網路或真實資料界線。
+- 附件上限 `ATTACHMENT_CAP`＝2 MiB（2,097,152 bytes）；短提示 `CONTROL_CAP`＝4 KiB。這是本接線的容量，不是 Google 官方上限。不壓縮、不裁切、不分批、不改走雲端連結或 Drive。
+- `single-text-attachment/v1` manifest 綁定 scanId、materialSha256、base/head、固定 ASCII 檔名、媒體型別、UTF-8 bytes／雜湊及短提示 bytes／雜湊。`requestSha256` 是固定欄位順序的組合請求雜湊，與 attachmentSha256、controlSha256 分列。
+- 盒內 client 建構請求；runner 依同一材料重新建構並逐欄比對，才把唯一附件放進盒外私有工作目錄。檔案讀取保留 owner、一般檔、連結數、NOFOLLOW、canonical 路徑及讀取前後身分檢查；另固定附件 inode 等身分，於活性檢查、上傳前、送出前與掃後重核。
+- IPC 容量涵蓋整個序列化 frame，附件、短提示、回覆及一般信箱各有自己的上限。不能提高一般信箱預設限制來掩蓋錯讀取點。
 
-## 驗證與時序
+## 上傳與送出的兩次許可
 
-1. 自動題覆蓋提示恰好達上限、超過一 byte、UTF-8 與 JSON 跳脫後的 bytes；大於一般信箱預設的提示必須走完正式讀取點、盒內往返及固定 CUA 控制。保留逐字回讀、零未授權送出、一次提交與收尾負控。修法逐處做有效突變，正常三關與平台檢查照跑。
-2. 固定最終來源及新提供者路徑，重新完成恰好 2 MiB 的真網頁資格場及 `purpose=scan` 合成驗收。來源、Node、模型、掃前後檢查及清理須同版；舊容量收據不能沿用，也不能以合成場代替實際材料。
-3. 新容量版經獨立正式複審通過後，可在合併前以同一固定提供者補掃原 #701，作容量的實際驗收。來源變更仍依契約重做資格。
-4. 材料建構器把執行提供者版本列為 `providerHead`；新來源會使材料雜湊改變。先重建並核原雜湊，再核新舊包除該元資料外逐欄相同，包括 prompt、diff、files、base、head。分列新舊雜湊，不宣稱原包逐 byte 重送。
-5. 新容量 PR 的當版 G1 與 #701 合併後補掃分開執行、留原文與逐條處置。合成資格、合成驗收及兩份實際材料掃描不得互相代替。
+`beginBrowserScan` 取得活 runner 的新 claim ACK，建立自有官方 Temporary Chat，確認 Argon High、零回覆、空提示與零附件，停在 PREPARED。
 
-## 失敗、復原與界線
+`uploadBrowserScan` 再核來源、頁面與空附件，發新 upload challenge；runner 核本場 instance、tab、組合雜湊及附件後給一次許可。CUA 先不可逆消耗，先訂閱 filechooser 再點已觀測的本機 Upload files，僅 `setFiles([本場固定路徑])` 一次。事件、click 與 setFiles 明確設時限；不使用隱藏狀態、DOM 寫入、網路 API 或 Drive。上傳本身就可能傳送資料，因此許可必須在檔案選擇器之前。setFiles 返回只記 UPLOADED，不當成附件可用證據。
 
-每場只送一次，不修補或重新生成答案。明確平台容量拒絕不反覆重送；暫時性失敗只在前場完整清理後另開新場重試一次。2 MiB 合成失敗不直接推論較小的實際材料不可能成功；先查明本機、編輯器或服務接收的落點。完整文字不可行時，帶實證交 Sol 裁定單一附件方案，分批排最後，不另定小容量後結案。
+`submitBrowserScan` 檢查唯一 `uploader-file-preview`、其唯一 `.file-preview-container` 的單一 `aria-describedby` 直接描述，完整檔名必須一致。可用狀態依已觀測的 TXT 標籤、非 loading 內容、無進度條及可用送出按鈕；縮短顯示的檔名或 FileList 本身不算完整核對。固定短提示填入後與送出前，各在同一 textbox 內對完整 textContent 作逐字比較，只回傳有限摘要。再取得另一個新 challenge 的 Submit 許可、消耗、重核附件／提示／模型／臨時／零回覆，才送出一次。
 
-回復方式是停用新容量來源並保留證據；既有較小入口的資格不擴為大容量。尾端挑戰、完整回讀及回覆不證明模型理解了每個 byte，`receiverConsumptionVerified:false` 保留。套件借用入口遷移、原生認證與其他工作線不在本支。
+`browser-attachment-ui/v1` 分列本機附件雜湊與 UI 名稱／可用性觀測；不宣稱已量得 Google 遠端檔案雜湊。唯一完整封閉 JSON、尾端挑戰、官方模型明細及 `receiverConsumptionVerified:false` 保留。輸出、上傳事件、掃前後隔離、來源／材料重建及程序／分頁清理均須通過。
 
-## 送出前的有限診斷
+## 驗證時序
 
-依[GPT‑6.1 Sol 診斷裁示](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6239984348)，固定 CUA 在主要動作及不同等待條件之前設定階段；失敗只保存固定階段、有限錯誤分類及輸入完整比較摘要。不保存樣本、片段、原始錯誤或私人頁面內容，不增加失敗截圖或額外 UI 讀取。
+1. 行為題覆蓋恰好 2 MiB、超過一 byte、UTF-8／JSON 跳脫、完整 frame、manifest 綁定、錯檔／變造／同內容 symlink、零許可零 chooser、單次上傳與送出、過期與晚到、檔名／載入／數量錯誤、有限診斷及清理。重要防線以有效突變驗證；正常三關與平台檢查照跑。
+2. 固定最終來源及全新 provider 路徑，完成同版、同 Node、精確 2 MiB 附件的真網頁資格場。新 transport、sourceKind、來源與數值容量全部符合才接受；舊文字收據、介面發現、測試或較小合成檔均不能代替。
+3. 同版 `purpose=scan` 合成驗收及獨立 Grok 正式複審通過，再補掃 #701 的完整原材料。新 providerHead 會改材料元資料；先重建原雜湊，再核除 providerHead 外逐欄相同，分列新材料、附件及組合請求雜湊。
+4. #702 當版 G1 另跑，兩份實際掃描各留原文與逐條處置；依正常複審、合併、驗收及啟用程序收尾。任一尚缺，任務未完成。
 
-[完整讀回裁示](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6240082060)指定在同一 textbox 的唯讀 DOM 函式內讀取一次 `textContent`，對完整請求作 `===` 比較；填入後及提交前各自核對。只回傳 sampled、expectedCodeUnits、actualCodeUnits、match，外層驗固定欄位、型別、與完整請求長度的一致性。計數單位是 UTF-16 code units（JavaScript string.length），不是 bytes；未取得字串時 actualCodeUnits 留 null。相同長度不能代替完整相等。方法與單位另列於診斷，不把 code units 填入舊 bytes 欄位。
+## 失敗與界線
 
-先前工具全文讀回失敗的 bytes／雜湊紀錄保留，不能據此判定 Gemini 編輯器或 Google 的容量上限。DOM 內比較避免以工具回傳的長字串作完整性的依據，但不宣稱已證明工具內部如何處理長字串。
+文字方案的失敗與 DOM 比較量測保留，不推論為 Google 官方容量上限。單附件完整資格失敗時交 Sol 裁示，不自行縮小材料、加容量或放寬憑證政策。
 
-診斷寫入失敗仍嘗試原收尾；關頁失敗不得公布靜止或解鎖。各等待階段、完整與異常讀回、同長度改字、截短、未觀測、寫入失敗與關頁失敗由行為題核對；受控時鐘與瀏覽器假身不代替真網頁驗收。診斷版使用新固定來源重驗，不追認原先只留 PREPARING 的失敗場。
+工具時限不保證涵蓋外層上傳授權等待，也不能原子取消已在途的 UI 動作。每個 await 返回後先核期限／取消／來源，晚到結果不採用、不補送；所有待決呼叫 settle 且自有分頁確實關閉後才記靜止。無法確認清場時保留鎖與證據，不能以 Promise.race 冒稱取消。原失敗收據不可覆寫成成功。
+
+復原為停用新來源並保留證據；小容量舊資格不擴成大容量。憑證仍留在官方瀏覽器，盒內沒有真實 HOME、登入秘密、原倉庫或外網。套件借用入口遷移、原生認證與其他工作線不在本支。

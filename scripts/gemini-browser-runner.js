@@ -1,13 +1,13 @@
 // @ts-check
 // 入口只由釘住的盒外部署呼叫；CUA 交接是資料搬運，不讓回覆決定工具、路徑或第二次送出。
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync, lstatSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 import { SOURCE_ROOT, SOURCE_FILES, JOB_ROOT, configureBrowserOwner, privateDirectory, readMail, readBoundedFile, writeOnce, mailExists, sourceDigest, browserError } from './gemini-browser-files.js';
-import { prepareBrowserPacket, validateBrowserReply, validateLease, fields, PROMPT_CAP, REPLY_CAP, MODEL, EFFORT, sha256, SELECTED } from './gemini-browser-protocol.js';
+import { prepareBrowserPacket, validateBrowserReply, validateLease, fields, ATTACHMENT_CAP, CONTROL_CAP, FRAME_CAP, TRANSPORT, OBSERVATION, REPLY_CAP, MODEL, EFFORT, sha256, SELECTED } from './gemini-browser-protocol.js';
 import { parseUniqueJson } from './gemini-native-protocol.js';
 import { snapshotPinnedSources, verifyPinnedSourcesUnchanged } from './gemini-native-runner.js';
 import { buildScanMaterials, verifyProvider } from './gemini-scan.js';
@@ -19,6 +19,7 @@ import { isMainModule } from '../lib/is-main.js';
 const pause = () => new Promise(resolve => setTimeout(resolve, 100));
 const random = n => randomBytes(n).toString('hex');
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const fileIdentity = path => { const s = lstatSync(path, { bigint: true }); return [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs, s.mode, s.nlink].join(':'); };
 export const WORKER_FILES = ['scripts/gemini-browser-client.js', 'scripts/gemini-browser-protocol.js', 'scripts/gemini-native-protocol.js', 'lib/is-main.js'];
 const WALL_MS = 15 * 60000;
 configureBrowserOwner(process.getuid?.());
@@ -44,7 +45,7 @@ export function renderBrowserCuaLoader(configPath, configSha256, providerRoot) {
   return `${bootstrapSource(configPath, configSha256, providerRoot, 'cua', null)};\n`
     + `const files = await import(${JSON.stringify(files)}); files.configureBrowserOwner(${JSON.stringify(process.getuid?.())});\n`
     + `const adapter = await import(${JSON.stringify(entry)});\n`
-    + 'export const beginBrowserScan = adapter.beginBrowserScan, captureBrowserScan = adapter.captureBrowserScan, cancelBrowserScan = adapter.cancelBrowserScan;\n';
+    + 'export const beginBrowserScan = adapter.beginBrowserScan, uploadBrowserScan = adapter.uploadBrowserScan, submitBrowserScan = adapter.submitBrowserScan, captureBrowserScan = adapter.captureBrowserScan, cancelBrowserScan = adapter.cancelBrowserScan;\n';
 }
 
 // 此函式序列化成獨立 root launcher；核對執行來源前只載入 Node 內建模組。
@@ -104,7 +105,7 @@ async function pinnedBootstrap(configPath, configSha256, requiredSources, provid
 export class BrowserLease {
   constructor(dir, descriptor, check) {
     this.dir = dir; this.d = descriptor; this.check = check; this.state = 'WAIT_CLAIM';
-    this.instance = ''; this.permit = null; this.started = performance.now();
+    this.instance = ''; this.permit = null; this.uploadPermit = null; this.started = performance.now();
   }
   active() {
     if (performance.now() - this.started > WALL_MS || Date.now() >= this.d.expiresAt
@@ -118,18 +119,40 @@ export class BrowserLease {
       this.instance = claim.instance; this.state = 'CLAIMED';
       writeOnce(this.dir, 'claim-ack.json', { ...claim, stage: 'claimed' });
     }
-    if (this.state === 'CLAIMED' && mailExists(this.dir, 'ready.json')) {
+    if (this.state === 'CLAIMED' && mailExists(this.dir, 'upload-request.json')) {
+      const request = readMail(this.dir, 'upload-request.json');
+      fields(request, ['runId', 'lease', 'requestSha256', 'instance', 'challenge', 'stage', 'tabId', 'temporary', 'initialResponses', 'selected', 'initialAttachments', 'attachment']);
+      const { tabId, temporary, initialResponses, selected, initialAttachments, attachment, ...message } = request;
+      validateLease(message, this.d, 'upload-request');
+      if (request.instance !== this.instance || !/^[a-zA-Z0-9-]{1,128}$/.test(tabId) || temporary !== true
+        || initialResponses !== 0 || selected !== SELECTED || initialAttachments !== 0 || !equal(attachment, this.d.manifest.attachment)
+        || request.challenge === readMail(this.dir, 'claim.json').challenge) browserError('UPLOAD_REQUEST');
+      this.state = 'UPLOAD_AUTHORIZED'; this.uploadPermit = { ...request, stage: 'upload-once' };
+      writeOnce(this.dir, 'upload-permit.json', this.uploadPermit);
+    }
+    if (this.state === 'UPLOAD_AUTHORIZED' && mailExists(this.dir, 'ready.json')) {
+      if (!equal(readMail(this.dir, 'upload-consumed.json'), this.uploadPermit)) browserError('UPLOAD_CONSUMPTION');
+      const uploaded = readMail(this.dir, 'uploaded.json');
+      fields(uploaded, ['instance', 'tabId', 'uploads', 'attachment']);
+      if (uploaded.instance !== this.instance || uploaded.tabId !== this.uploadPermit.tabId || uploaded.uploads !== 1
+        || !equal(uploaded.attachment, this.d.manifest.attachment)) browserError('UPLOAD');
       const ready = readMail(this.dir, 'ready.json');
-      fields(ready, ['runId', 'lease', 'requestSha256', 'instance', 'challenge', 'stage', 'tabId', 'temporary', 'initialResponses', 'selected']);
-      const { tabId, temporary, initialResponses, selected, ...message } = ready;
+      fields(ready, ['runId', 'lease', 'requestSha256', 'instance', 'challenge', 'stage', 'tabId', 'temporary', 'initialResponses', 'selected', 'attachmentReady']);
+      const { tabId, temporary, initialResponses, selected, attachmentReady, ...message } = ready;
       validateLease(message, this.d, 'ready');
-      if (ready.instance !== this.instance || !/^[a-zA-Z0-9-]{1,128}$/.test(tabId) || temporary !== true
-        || initialResponses !== 0 || selected !== SELECTED || ready.challenge === readMail(this.dir, 'claim.json').challenge) browserError('READY');
-      this.state = 'SUBMIT_AUTHORIZED';
-      this.permit = { ...ready, stage: 'submit-once' };
+      if (ready.instance !== this.instance || tabId !== this.uploadPermit.tabId || temporary !== true
+        || initialResponses !== 0 || selected !== SELECTED || attachmentReady !== true
+        || [readMail(this.dir, 'claim.json').challenge, this.uploadPermit.challenge].includes(ready.challenge)) browserError('READY');
+      this.state = 'SUBMIT_AUTHORIZED'; this.permit = { ...ready, stage: 'submit-once' };
       writeOnce(this.dir, 'permit.json', this.permit);
     }
     if (this.state === 'SUBMIT_AUTHORIZED' && mailExists(this.dir, 'capture.json')) {
+      for (const [name, expected] of [
+        ['upload-request.json', { ...this.uploadPermit, stage: 'upload-request' }], ['upload-permit.json', this.uploadPermit],
+        ['upload-consumed.json', this.uploadPermit], ['ready.json', { ...this.permit, stage: 'ready' }], ['permit.json', this.permit],
+      ]) if (!equal(readMail(this.dir, name), expected)) browserError('EVENT_CHANGED');
+      const uploaded = { instance: this.instance, tabId: this.permit.tabId, uploads: 1, attachment: this.d.manifest.attachment };
+      for (const name of ['upload-attempted.json', 'uploaded.json']) if (!equal(readMail(this.dir, name), uploaded)) browserError('EVENT_CHANGED');
       if (!equal(readMail(this.dir, 'consumed.json'), this.permit)) browserError('CONSUMPTION');
       const submitted = readMail(this.dir, 'submitted.json');
       fields(submitted, ['instance', 'tabId', 'submissions']);
@@ -147,8 +170,16 @@ export class BrowserLease {
     const q = readMail(this.dir, 'quiescent.json');
     fields(q, ['instance', 'tabClosed', 'failed']);
     if (q.instance !== this.instance || typeof q.failed !== 'boolean' || (!failureAllowed && q.failed)
-      || (this.permit && q.tabClosed !== true) || typeof q.tabClosed !== 'boolean') browserError('QUIESCENCE');
+      || ((this.permit || this.uploadPermit) && q.tabClosed !== true) || typeof q.tabClosed !== 'boolean') browserError('QUIESCENCE');
   }
+}
+
+function verifyRequestFiles(job, packet, identity) {
+  if (fileIdentity(join(job, packet.manifest.attachment.name)) !== identity) browserError('REQUEST_CHANGED');
+  const attachment = readBoundedFile(join(job, packet.manifest.attachment.name), ATTACHMENT_CAP);
+  const control = readBoundedFile(join(job, 'control.txt'), CONTROL_CAP);
+  if (attachment.length !== packet.manifest.attachment.bytes || sha256(attachment) !== packet.manifest.attachment.sha256
+    || control.length !== packet.manifest.control.bytes || sha256(control) !== packet.manifest.control.sha256) browserError('REQUEST_CHANGED');
 }
 
 export function checkBrowserArtifacts(buffers, marker, materialText) {
@@ -163,7 +194,7 @@ export function checkBrowserArtifacts(buffers, marker, materialText) {
 function childFrames(child) {
   const frames = [], chunks = [];
   let buffer = Buffer.alloc(0), size = 0, error = null, exited = false, exitCode = null;
-  const cap = (PROMPT_CAP + REPLY_CAP) * 8;
+  const cap = FRAME_CAP;
   child.stdout.on('data', bytes => {
     try {
       chunks.push(bytes); size += bytes.length;
@@ -214,8 +245,9 @@ export async function runBrowserScan(deployment) {
     const bytes = readBoundedFile(q.path);
     if (sha256(bytes) !== q.sha256) browserError('QUALIFICATION_HASH');
     const receipt = parseUniqueJson(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-    if (receipt.purpose !== 'qualification' || receipt.status !== 'PUBLISHED' || receipt.sourceSha256 !== sources.sha256
-      || receipt.promptBytes !== PROMPT_CAP || receipt.providerHead !== deployment.providerHead) browserError('QUALIFICATION');
+    if (receipt.schema !== 'browser-attachment-scan/v1' || receipt.transport !== TRANSPORT || receipt.sourceKind !== OBSERVATION
+      || receipt.purpose !== 'qualification' || receipt.status !== 'PUBLISHED' || receipt.sourceSha256 !== sources.sha256
+      || receipt.attachmentBytes !== ATTACHMENT_CAP || receipt.providerHead !== deployment.providerHead) browserError('QUALIFICATION');
     if (receipt.sourcePins?.find(p => p.name === 'node')?.sha256 !== deployment.pins.find(p => p.name === 'node').sha256) browserError('QUALIFICATION_NODE');
   } else if (deployment.qualification !== null) browserError('QUALIFICATION');
   try { mkdirSync(JOB_ROOT, { mode: 0o700 }); } catch (e) { if (/** @type {NodeJS.ErrnoException} */ (e).code !== 'EEXIST') throw e; }
@@ -250,23 +282,30 @@ export async function runBrowserScan(deployment) {
     child = spawn('/usr/bin/sandbox-exec', ['-f', BROWSER_PROFILE, '-D', `SCAN_DIR=${box}`, process.execPath, join(box, 'scripts/gemini-browser-client.js')],
       { cwd: box, env: sandboxEnv(box), detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
     wire = childFrames(child);
+    const boxStat = lstatSync(box, { bigint: true });
+    writeOnce(job, 'process-binding.json', { runId, runnerPid: process.pid, childPid: child.pid, box,
+      boxIdentity: { dev: String(boxStat.dev), ino: String(boxStat.ino), uid: String(boxStat.uid), mode: String(boxStat.mode) } });
     child.stdin.write(JSON.stringify({ kind: 'start', material }) + '\n');
     while (!wire.frames.length) { check(); wire.waiting(); await pause(); }
     fields(wire.frames[0], ['kind', 'packet']);
     if (wire.frames[0].kind !== 'request') browserError('CHILD_REQUEST');
     packet = prepareBrowserPacket(material, { scanId: wire.frames[0].packet.binding.scanId, tailChallenge: wire.frames[0].packet.tailChallenge });
     if (!equal(packet, wire.frames[0].packet) || wire.frames.length !== 1) browserError('CHILD_REQUEST');
-    writeOnce(job, 'prompt.txt', packet.prompt);
-    const descriptor = { schema: 'browser-job/v1', runId, lease: random(32), sourceSha256: sources.sha256,
-      requestSha256: packet.promptSha256, requestBytes: packet.promptBytes, scanId: packet.binding.scanId,
+    writeOnce(job, 'control.txt', packet.controlPrompt);
+    writeOnce(job, packet.manifest.attachment.name, packet.attachmentText);
+    const descriptor = { schema: 'browser-attachment-job/v1', runId, lease: random(32), sourceSha256: sources.sha256,
+      requestSha256: packet.requestSha256, manifest: packet.manifest, attachmentIdentity: fileIdentity(join(job, packet.manifest.attachment.name)), scanId: packet.binding.scanId,
       pid: process.pid, expiresAt: Date.now() + Math.floor(Math.max(0, WALL_MS - (performance.now() - started))) };
     writeOnce(job, 'descriptor.json', descriptor);
     lease = new BrowserLease(job, descriptor, () => { check(); wire.waiting();
-      if (wire.frames.length !== 1 || sha256(readBoundedFile(join(job, 'prompt.txt'), PROMPT_CAP)) !== packet.promptSha256) browserError('REQUEST_CHANGED');
+      if (wire.frames.length !== 1) browserError('REQUEST_CHANGED');
+      verifyRequestFiles(job, packet, descriptor.attachmentIdentity);
+      if (!equal(readMail(job, 'descriptor.json'), descriptor)) browserError('REQUEST_CHANGED');
     });
     process.stdout.write(JSON.stringify({ state: 'HANDOFF_READY', runId, purpose: deployment.purpose }) + '\n');
     let capture;
     while (!(capture = lease.tick())) await pause();
+    verifyRequestFiles(job, packet, descriptor.attachmentIdentity);
     const result = validateBrowserReply(capture.raw, capture.observation, packet);
     child.stdin.end(JSON.stringify({ kind: 'reply', response: new TextDecoder('utf-8', { fatal: true }).decode(capture.raw), observation: capture.observation }) + '\n');
     while (!wire.ended()) { check(); wire.check(); await pause(); }
@@ -277,22 +316,29 @@ export async function runBrowserScan(deployment) {
     const post = await browserCanary(box, job, marker);
     writeOnce(job, 'postcanary.json', post);
     if (post.code !== 0) browserError('POSTCANARY');
-    check();
+    check(); verifyRequestFiles(job, packet, descriptor.attachmentIdentity);
     if (readBoundedFile(join(job, 'outside-canary.txt')).toString() !== marker || mailExists(job, 'forbidden-write.txt')) browserError('CANARY_CHANGED');
     const sessionFiles = readSessionsOnce(box);
     if (sessionFiles.odd?.length) browserError('BOX_FILES');
     for (const path of WORKER_FILES) if (!sessionFiles.files.get(path)?.equals(readBoundedFile(join(SOURCE_ROOT, path)))) browserError('WORKER_CHANGED');
-    const artifacts = [...wire.chunks, capture.raw, Buffer.from(JSON.stringify(capture.observation)), Buffer.from([...sessionFiles.files.keys()].join('\n')), ...sessionFiles.files.values()];
+    const attachmentArtifacts = ['upload-attempted.json', 'upload-request.json', 'upload-permit.json', 'upload-consumed.json', 'uploaded.json', 'ready.json', 'permit.json', 'consumed.json'].map(name => {
+      const event = readMail(job, name);
+      // lease 是握手事件的固定能力欄位；只移除這一欄，其他位置仍接受洩漏檢查。
+      if (Object.hasOwn(event, 'lease')) { if (event.lease !== descriptor.lease) browserError('EVENT_CHANGED'); delete event.lease; }
+      return Buffer.from(JSON.stringify(event));
+    });
+    const artifacts = [...attachmentArtifacts, ...wire.chunks, capture.raw, Buffer.from(JSON.stringify(capture.observation)), Buffer.from([...sessionFiles.files.keys()].join('\n')), ...sessionFiles.files.values()];
     checkBrowserArtifacts(artifacts, marker, material.text);
     checkBrowserArtifacts(artifacts, descriptor.lease, material.text);
     if (verifyProvider(SOURCE_ROOT, deployment.providerHead).digest !== provider.digest
       || buildScanMaterials({ ...deployment, outFile: '' }).materialSha256 !== material.sha256) browserError('SOURCE_CHANGED');
     lease.requireQuiescent(false);
     rmSync(box, { recursive: true, force: true }); cleaned = true;
-    const receipt = { schema: 'browser-scan/v1', status: 'PUBLISHED', purpose: deployment.purpose,
+    const receipt = { schema: 'browser-attachment-scan/v1', transport: TRANSPORT, status: 'PUBLISHED', purpose: deployment.purpose,
       formalScan: deployment.purpose === 'scan', runId, base: deployment.base, head: deployment.head,
       providerHead: deployment.providerHead, providerDigest: provider.digest, sourceSha256: sources.sha256, sourcePins: pinsBefore,
-      promptBytes: packet.promptBytes, promptSha256: packet.promptSha256, materialSha256: material.sha256,
+      attachmentBytes: packet.manifest.attachment.bytes, attachmentSha256: packet.manifest.attachment.sha256,
+      controlBytes: packet.manifest.control.bytes, controlSha256: packet.manifest.control.sha256, requestSha256: packet.requestSha256, manifest: packet.manifest, materialSha256: material.sha256,
       ...result, observation: capture.observation, cleanup: { groupEmpty: true, escapeSweep: 'best-effort', sweepLog, boxRemoved: true, cuaQuiescent: true, ownTabClosed: true } };
     writeOnce(job, 'receipt.json', receipt);
     rmSync(lock, { recursive: true });
