@@ -44,6 +44,7 @@ export function browserFixture(job, options = {}) {
     getByText: text => locator(`${key}/text:${text}`),
     locator: selector => locator(`${key}/${selector}`),
     async getAttribute(name) { assertKey(name === 'aria-label' && key.includes('Open mode picker')); return state.selected; },
+    async allTextContents() { assertKey(key === 'menu:'); return state.menu ? ['synthetic response menu'] : []; },
     async count() { assertKey(key.endsWith('model-response-content')); return state.responses; },
     async textContent() { assertKey(key.includes('textbox:Enter a prompt for Gemini')); return state.text; },
     async fill(text) { calls.push(['fill', text]); state.text = options.truncate ? text.slice(0, -1) : text; },

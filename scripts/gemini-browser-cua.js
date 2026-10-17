@@ -128,6 +128,9 @@ export async function captureBrowserScan(runId) {
     if (!raw.length || raw.length > REPLY_CAP) browserError('REPLY_SIZE');
     s.phase = 'details-menu';
     await step(s, () => button(s.tab, 'Show more options').click());
+    // 保留本場選單畫面，才能分辨介面改版與控制失敗；它不是採用回覆的資格。
+    writeOnce(s.dir, 'details-menu.jpg', Buffer.from(await step(s, () => s.tab.screenshot({ fullPage: false }))));
+    writeOnce(s.dir, 'details-menu.json', await step(s, () => s.tab.playwright.getByRole('menu').allTextContents({ timeoutMs: 1000 })));
     const detailsItem = s.tab.playwright.getByRole('menuitem', { name: 'See response details', exact: true });
     await step(s, () => detailsItem.waitFor({ state: 'visible', timeoutMs: 10000 }));
     s.phase = 'details-content';
