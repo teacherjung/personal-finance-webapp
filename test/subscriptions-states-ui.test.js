@@ -148,7 +148,7 @@ function assertStateWiring(source) {
   assert.match(render, /export async function renderSubscriptions\(\{ showLoading = true \} = \{\}\)/);
   assert.match(render, /const seq = currentRouteSeq\(\);\s*const notice = subscriptionNotice;\s*subscriptionNotice = '';\s*destroyCharts\(\);\s*if \(showLoading\) view\(\)\.innerHTML = subscriptionsLoadingHtml\(\);/);
   assert.match(source, /try \{\s*\[raw, cards\] = await Promise\.all\(\[api\('\/subscriptions'\), api\('\/cards'\)\]\);/);
-  assert.match(source, /\} catch \(e\) \{\s*if \(seq !== currentRouteSeq\(\) \|\| !current\(\)\) return;\s*finishFlagFocus\(focusJob\);\s*view\(\)\.innerHTML = subscriptionsLoadErrorHtml/);
+  assert.match(source, /\} catch \(e\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;\s*if \(!current\(\)\) return;\s*finishFlagFocus\(focusJob\);\s*view\(\)\.innerHTML = subscriptionsLoadErrorHtml/);
   assert.match(source, /if \(retry\) retry\.onclick = \(\) => renderSubscriptions\(\);/);
   assert.match(emptyBranch, /byId\('emptyAddSub'\)\.onclick = \(\) => openSubForm\(null, creditCards\);/);
   assert.match(emptyBranch, /renderHistorySection\(byId\('historySection'\)\);/);
@@ -208,7 +208,7 @@ test('訂閱追蹤狀態：破壞消毒、重試、空白接線、路由守衛�
   assert.ok(source.includes(emptyCta), '突變目標必須存在：空白引導接線');
   assert.throws(() => assertStateWiring(source.replace(emptyCta, `byId('emptyAddSub').onclick = () => {}; // ${emptyCta}`)));
 
-  const catchGuard = 'if (seq !== currentRouteSeq() || !current()) return;\n    finishFlagFocus(focusJob);\n    view().innerHTML = subscriptionsLoadErrorHtml';
+  const catchGuard = 'if (seq !== currentRouteSeq()) return;\n    if (!current()) return;\n    finishFlagFocus(focusJob);\n    view().innerHTML = subscriptionsLoadErrorHtml';
   assert.ok(source.includes(catchGuard), '突變目標必須存在：失敗狀態路由守衛');
   assert.throws(() => assertStateWiring(source.replace(catchGuard, `/* ${catchGuard} */\n    view().innerHTML = subscriptionsLoadErrorHtml`)));
 

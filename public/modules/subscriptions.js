@@ -353,15 +353,18 @@ async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = n
   let cards;
   try {
     [raw, cards] = await Promise.all([api('/subscriptions'), api('/cards')]);
-    if (seq !== currentRouteSeq() || !current()) return;   // fetch 期間切走了頁（Codex r10#6）
+    if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁（Codex r10#6）
+    if (!current()) return;
     const expired = await autoExpire(raw);
-    if (seq !== currentRouteSeq() || !current()) return;   // autoExpire 的 PUT 往返期間切走了頁——含下面的遞迴分支都別再動
+    if (seq !== currentRouteSeq()) return;   // autoExpire 的 PUT 往返期間切走了頁——含下面的遞迴分支都別再動
+    if (!current()) return;
     if (expired) {
       subscriptionNotice = notice;
       return renderSubscriptionsPage({ showLoading: false }, focusJob, chain);   // 沿用目前畫面／首次載入卡，不讓內部校正造成頁面高度跳動
     }
   } catch (e) {
-    if (seq !== currentRouteSeq() || !current()) return;
+    if (seq !== currentRouteSeq()) return;
+    if (!current()) return;
     finishFlagFocus(focusJob);
     view().innerHTML = subscriptionsLoadErrorHtml(e?.message);
     const retry = byId('retrySubscriptions');
