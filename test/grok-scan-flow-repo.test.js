@@ -27,15 +27,15 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename, dirname } from 'node:path';
 import { GROK_WALL_MS, needsInstall, repoLabelFrom, runScan } from '../scripts/grok-scan.js';
-import { CLEAN_ENV, ROOT, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeGrok, fakeRelay, isolated, keep, promptFile, quiet, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
+import { CLEAN_ENV, FAKE_SCANNER, ROOT, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeGrok, fakeRelay, isolated, keep, promptFile, quiet, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
 
 after(cleanupTempRoots);
 
-const SETTINGS = JSON.parse(readFileSync(join(ROOT, 'settings.json'), 'utf8')).scanner;
 /** 停在 grok 雜湊那一步（建盒子之後、沙箱之前）：建盒前的檢查都過了才會走到這裡，而這一步在 CI 也跑得到 */
 const STOP_AT_HASH = { expectedSha256: '0'.repeat(64) };
 const run = async (/** @type {Record<string, unknown>} */ args, /** @type {Record<string, unknown>} */ deps = {}) => {
@@ -234,8 +234,41 @@ test('掃描設定：缺檔、壞 JSON、沒有掃描那一節、strongest／max
   }
   const ok = await run({ base: repo.base, head: repo.head }, { repo: repo.dir, settingsFile: write('ok.json', JSON.stringify({ scanner: { strongest: 'grok-9.9', maxEffort: 'max' } })) });
   assert.ok(ok.logs.some((l) => l.includes('指定模型 grok-9.9、推理 max')), ok.logs.join('\n'));
-  const def = await run({ base: repo.base, head: repo.head }, { repo: repo.dir });
-  assert.ok(def.logs.some((l) => l.includes(`指定模型 ${SETTINGS.strongest}、推理 ${SETTINGS.maxEffort}`)), '預設要讀本倉庫 settings.json 掃描那一節');
+
+});
+
+test('正式預設設定：Gemini 登記使舊 Grok 掃描在建盒、CLI、試探及外連之前拒絕；不讀受掃倉庫或目前資料夾的設定', async () => {
+  const repo = tinyRepo();
+  const cwd = keep(mkdtempSync(join(tmpdir(), 'scan-decoy-cwd-')));
+  // 兩份誘餌必須合法；若用非法值，誤讀誘餌也會退場而假綠。
+  writeFileSync(join(repo.dir, 'settings.json'), JSON.stringify({ scanner: { strongest: 'grok-8.1', maxEffort: 'high' } }));
+  writeFileSync(join(cwd, 'settings.json'), JSON.stringify({ scanner: { strongest: 'grok-8.2', maxEffort: 'low' } }));
+  const iso = isolated(), install = withGrok(fakeGrok()), prompt = promptFile();
+  const fs = createRequire(import.meta.url)('node:fs');
+  const original = fs.mkdtempSync, previousCwd = process.cwd();
+  let boxes = 0, canaries = 0, fetches = 0;
+  /** @type {string[]} */ const logs = [];
+  fs.mkdtempSync = (/** @type {string} */ prefix, ...args) => {
+    if (String(prefix).includes('grok-scan-')) boxes++;
+    return original(prefix, ...args);
+  };
+  syncBuiltinESMExports();
+  try {
+    process.chdir(cwd);
+    const result = await runScan({ base: repo.base, head: repo.head, repo: repo.dir, promptFile: prompt }, {
+      ...iso, ...install, settingsFile: undefined, log: line => logs.push(line),
+      runCanary: async () => { canaries++; throw new Error('不得啟動試探'); },
+      fetchImpl: async () => { fetches++; throw new Error('不得外連'); },
+    });
+    assert.equal(result.code, 2);
+    assert.match(result.summary.join('\n'), /settings.json 掃描那一節的 strongest（最強模型）沒填或形狀不對/);
+    assert.equal(boxes, 0, 'CLI 只在建盒後啟動，不能先建盒再清掉');
+    assert.equal(canaries, 0); assert.equal(fetches, 0);
+    assert.deepEqual(readdirSync(iso.resultsRoot), []);
+    assert.ok(!passedPreBox({ logs }));
+  } finally {
+    process.chdir(previousCwd); fs.mkdtempSync = original; syncBuiltinESMExports();
+  }
 });
 
 test('受掃倉庫的身分：只留 owner/name，網址裡的權杖與本機路徑都不出現；認不出就寫固定字串', async () => {
@@ -309,29 +342,31 @@ test('結構題：沙箱參數只有那三組（要掃的倉庫、設定、參�
 test('沒有相依的倉庫整條走到退 0：假 grok 收到 --model／--reasoning-effort＝設定的值；配方聲明與 launch.json 記了受掃倉庫、模型、推理、程式雜湊；沙箱參數裡沒有倉庫路徑', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
   const repo = tinyRepo({ nodeModules: false, remote: 'git@github.com:acme/kit.git' });
-  // 要掃的倉庫與目前資料夾都放一份「錯的」設定：讀設定只能讀本掃描程式所在的倉庫
-  writeFileSync(join(repo.dir, 'settings.json'), JSON.stringify({ scanner: { strongest: 'grok-wrong', maxEffort: 'wrong' } }));
+  // 合成流程明確注入自己的設定；受掃倉庫的設定不能覆蓋它。
+  writeFileSync(join(repo.dir, 'settings.json'), JSON.stringify({ scanner: { strongest: 'grok-8.3', maxEffort: 'low' } }));
   const inst = fakeGrok();
   const bin = join(inst, 'bin', 'grok');
-  writeFileSync(bin, readFileSync(bin, 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'for a in "$@"; do printf \'<%s>\' "$a"; done'));
+  writeFileSync(bin, readFileSync(bin, 'utf8').replace(/^(printf '%s' .*# REPLY-LINE)$/m, 'for a in "$@"; do printf \'<%s>\' "$a"; done; printf "SCAN-USER=<%s>" "${USER-NOT-PRESENT}"'));
   const iso = isolated();
   const out = join(keep(mkdtempSync(join(tmpdir(), 'out-'))), 'reply.txt');
   /** @type {string[]} */ const logs = [];
   const r = await runScan(/** @type {any} */ ({ base: repo.base, head: repo.head, promptFile: promptFile(), outFile: out, repo: repo.dir }), /** @type {any} */ ({ log: (/** @type {string} */ m) => logs.push(m), ...iso, ...withGrok(inst), relayScript: fakeRelay('ok') }));
   assert.equal(r.code, 0, r.summary.join('\n'));
   const reply = readFileSync(out, 'utf8');
-  assert.ok(reply.includes(`<--model><${SETTINGS.strongest}><--reasoning-effort><${SETTINGS.maxEffort}>`), `假 grok 沒收到設定的模型與推理：${reply.slice(0, 300)}`);
+  assert.ok(reply.includes(`<--model><${FAKE_SCANNER.strongest}><--reasoning-effort><${FAKE_SCANNER.maxEffort}>`), `假 grok 沒收到設定的模型與推理：${reply.slice(0, 300)}`);
   assert.ok(logs.some((l) => l.includes('沒有宣告相依套件、也沒有 node_modules')), '沒走跳過 node_modules 那一支');
   const recipe = r.summary.find((l) => l.startsWith('base..head=')) ?? '';
   assert.match(recipe, /｜受掃=acme\/kit｜/);
-  assert.ok(recipe.includes(`｜指定模型=${SETTINGS.strongest}（推理 ${SETTINGS.maxEffort}）｜模型=`), recipe);
+  assert.ok(recipe.includes(`｜指定模型=${FAKE_SCANNER.strongest}（推理 ${FAKE_SCANNER.maxEffort}）｜模型=`), recipe);
   const sha = createHash('sha256').update(readFileSync(join(ROOT, 'scripts', 'grok-scan.js'))).digest('hex');
   assert.ok(recipe.includes(`｜掃描程式 sha256=${sha.slice(0, 12)}｜`), recipe);
   const resultsDir = /結果包=([^（]+)/.exec(recipe)?.[1] ?? '';
   const launch = JSON.parse(readFileSync(join(resultsDir, 'launch.json'), 'utf8'));
   assert.equal(launch.repo, 'acme/kit');
-  assert.equal(launch.model, SETTINGS.strongest);
-  assert.equal(launch.reasoningEffort, SETTINGS.maxEffort);
+  assert.equal(launch.model, FAKE_SCANNER.strongest);
+  assert.equal(launch.reasoningEffort, FAKE_SCANNER.maxEffort);
+  assert.ok(reply.includes('SCAN-USER=<NOT-PRESENT>'));
+  assert.equal(Object.hasOwn(launch.env, 'USER'), false);
   assert.equal(launch.scanScriptSha256, sha);
   assert.equal(launch.sbArgv.length, 6);
   assert.ok(!JSON.stringify(launch.sbArgv).includes(repo.dir) && !JSON.stringify(launch.env).includes(repo.dir), '要掃的倉庫路徑進了沙箱參數或環境');
@@ -516,4 +551,34 @@ test('不擋的：盒內的相對捷徑、點開頭的 @範圍、optional 同名
     assert.match(r.summary.join('\n'), /轉送器/, label);
     assert.equal(logs.some((l) => /有 1 個捷徑在盒子裡解不開/.test(l)), missingLine, `${label}：解不開那一行${missingLine ? '沒' : '不該'}記`);
   }
+});
+
+
+test('外層限制寫入時仍可載入能力夾具並執行純本地題', (t) => {
+  if (!SANDBOX_OK) return t.skip(SKIP_AFTER_CANARY);
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'grok-fixture-host-')));
+  try {
+    const fixture = new URL('./helpers/grok-scan-flow-fixtures.js', import.meta.url).href;
+    const source = new URL('../scripts/grok-scan.js', import.meta.url).href;
+    const script = `
+      import assert from 'node:assert/strict';
+      import {readdirSync} from 'node:fs';
+      import {tmpdir} from 'node:os';
+      import {SANDBOX_OK} from ${JSON.stringify(fixture)};
+      import {needsInstall} from ${JSON.stringify(source)};
+      assert.equal(typeof SANDBOX_OK,'boolean');
+      assert.equal(needsInstall({dependencies:{synthetic:'1'}}),true);
+      assert.equal(needsInstall({optionalDependencies:{synthetic:'1'}}),false);
+      assert.deepEqual(readdirSync(tmpdir()),[]);
+      process.stdout.write(JSON.stringify({loaded:true,sandbox:SANDBOX_OK}));
+    `;
+    // 此 profile 只考夾具在受限寫入位置的載入；正式隔離由 canary 與資格場另驗。
+    const profile = '(version 1)(allow default)(deny network*)(deny file-write*)(allow file-write* (subpath (param "TEST_DIR")) (literal "/dev/null"))';
+    const r = spawnSync('/usr/bin/sandbox-exec', ['-p', profile, '-D', `TEST_DIR=${dir}`, process.execPath, '--input-type=module', '-e', script],
+      { encoding: 'utf8', timeout: 15000, env: { PATH: '/usr/bin:/bin', HOME: dir, TMPDIR: dir } });
+    assert.equal(r.status, 0, r.stderr);
+    const result = JSON.parse(r.stdout); assert.equal(result.loaded, true);
+    if (!result.sandbox) assert.match(r.stderr, /跳過＝不等於通過/);
+    assert.deepEqual(readdirSync(dir), []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

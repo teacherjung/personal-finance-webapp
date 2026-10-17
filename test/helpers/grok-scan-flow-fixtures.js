@@ -26,12 +26,13 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { EXPECTED_GROK_VERSION } from '../../scripts/grok-scan.js';
-import { canApplySandbox, BOX_ROOT } from '../../scripts/grok-sandbox-canary.js';
+import { canApplySandbox } from '../../scripts/grok-sandbox-canary.js';
 import { createHash } from 'node:crypto';
 import { PINNED_ISSUER, PINNED_CLIENT_ID } from '../../scripts/grok-auth-refresh.js';
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');   // 本檔在 test/helpers/ ⇒ 要往上兩層才是 repo 根
-export const SANDBOX_OK = (() => { const d = mkdtempSync(join(BOX_ROOT, 'grok-flow-cap-')); try { return canApplySandbox(d).ok; } finally { rmSync(d, { recursive: true, force: true }); } })();
+// 能力探測前也要能在外層測試盒內建立夾具，不能借用正式掃描的盒外根。
+export const SANDBOX_OK = (() => { const d = mkdtempSync(join(tmpdir(), 'grok-flow-cap-')); try { return canApplySandbox(d).ok; } finally { rmSync(d, { recursive: true, force: true }); } })();
 // ⚠️ **探測失敗要出聲**（Grok #581 掃後 2）：`t.skip()` 在執行器裡算「通過」，所以能力探測若在高並行下
 //    偶發失敗，這一支檔的沙箱題會整批安靜跳過、畫面上看起來全綠。拆成同族五支之後探測會做五次＝
 //    偶發的機會變成五倍，所以這裡把它印到 stderr：跳過仍然發生（那是刻意的平台劃界），但不再無聲。
@@ -143,12 +144,12 @@ exit ${o.status ?? 0}
 }
 
 /** 假轉送器：印 READY 然後活著；或照指定行為死掉。 */
-export function fakeRelay(/** @type {'ok' | 'die-before-ready' | 'die-after-ready'} */ mode = 'ok') {
+export function fakeRelay(/** @type {'ok' | 'die-before-ready' | 'die-after-ready'} */ mode = 'ok', /** @type {string} */ diagnostics = '') {
   const d = keep(mkdtempSync(join(tmpdir(), 'fake-relay-')));
   const p = join(d, 'relay.js');
   writeFileSync(p, mode === 'die-before-ready' ? 'process.exit(1);'
     : mode === 'die-after-ready' ? "process.stdout.write('READY 1\\n'); setTimeout(() => process.exit(1), 200);"
-    : "process.stdout.write('READY 1\\n'); setInterval(() => {}, 1000);");
+    : `process.stderr.write(${JSON.stringify(diagnostics)}); process.stdout.write('READY 1\\n'); setInterval(() => {}, 1000);`);
   return p;
 }
 
@@ -200,7 +201,13 @@ export const fakeCanary = (code = 0, lines = [`（假金絲雀：code ${code}）
  * `liveRoot` 是 2026-08-26 加的：正式路徑的金絲雀住**真家目錄**，而家目錄是**跨程序共用**的——
  * 另一個 session、審查樹、合併閘同時跑考題時，在那裡數 `.grok-live-canary-*` 會互相誤紅。
  */
-export const isolated = () => ({ runCanary: fakeCanary(), authDir: keep(mkdtempSync(join(tmpdir(), 'fake-auth-'))), resultsRoot: keep(mkdtempSync(join(tmpdir(), 'fake-results-'))), liveRoot: keep(mkdtempSync(join(tmpdir(), 'fake-live-'))), fetchImpl: noFetch });
+export const FAKE_SCANNER = Object.freeze({ strongest: 'grok-9.9', maxEffort: 'max' });
+export const isolated = () => {
+  // 合成流程只需要合法的 Grok 參數；不可跟著專案切換掃描者而改測別條路。
+  const settingsFile = join(keep(mkdtempSync(join(tmpdir(), 'fake-scan-settings-'))), 'settings.json');
+  writeFileSync(settingsFile, JSON.stringify({ scanner: FAKE_SCANNER }));
+  return { settingsFile, runCanary: fakeCanary(), authDir: keep(mkdtempSync(join(tmpdir(), 'fake-auth-'))), resultsRoot: keep(mkdtempSync(join(tmpdir(), 'fake-results-'))), liveRoot: keep(mkdtempSync(join(tmpdir(), 'fake-live-'))), fetchImpl: noFetch };
+};
 /**
  * 同 isolated()，但**刻意不給 liveRoot**——要考「預設落在真家目錄」就只能走預設那條路。
  * 寫成覆蓋為 undefined（不是 delete）：isolated() 日後多欄位會自動跟上；而欄位若被改名，

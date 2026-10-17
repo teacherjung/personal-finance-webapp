@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { MODEL_WALK_MAX_NODES, reviewModelsQualified, runScan } from '../scripts/grok-scan.js';
+import { sandboxEnv } from '../scripts/grok-sandbox-canary.js';
 import { cleanupTempRoots, fakeCanary, fakeGrok, fakeRelay, isolated, keep, promptFile, SANDBOX_OK, SKIP_AFTER_CANARY, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
 
 after(cleanupTempRoots);
@@ -18,6 +19,10 @@ test('複審資格採精確的非空全員集合，不按陌生名稱推級別',
     assert.equal(reviewModelsQualified(models), false);
   }
   assert.equal(reviewModelsQualified(['grok-4.6-build', 'grok-4.7']), true);
+});
+
+test('通用沙箱環境不包含複審模型專用的合成 USER', () => {
+  assert.equal(Object.hasOwn(sandboxEnv('/synthetic-box'), 'USER'), false);
 });
 
 /** @param {Record<string, any>} [options] */
@@ -60,6 +65,24 @@ async function reviewRun(options = {}) {
   } });
   return { result, observed, repo, box, iso, logs };
 }
+
+test('複審非零仍拒收並清理，轉送診斷只留下經驗證的固定資料', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const record = { route: 'responses', status: 429, phase: 'complete', error: 'none' };
+  for (const item of [record, { ...record, privateField: 'PRIVATE-DIAGNOSTIC' }]) {
+    const { result, logs, box, iso, observed } = await reviewRun({ fake: { status: 1, reply: 'PRIVATE-FAILED-REPLY' }, deps: { relayScript: fakeRelay('ok', '[relay] diagnostic: ' + JSON.stringify(item) + '\n') } });
+    assert.ok(observed, '必須走到模型啟動才驗失敗清理');
+    assert.equal(result.code, 2);
+    assert.equal(result.review, undefined);
+    assert.equal(existsSync(box), false);
+    assert.deepEqual(readdirSync(iso.resultsRoot), []);
+    assert.ok(!logs.join('\n').includes('PRIVATE-'));
+    const line = logs.find((value) => value.startsWith('轉送器固定診斷：'));
+    assert.ok(line, '非零路徑沒有留下固定診斷');
+    const diagnostic = JSON.parse(line.slice('轉送器固定診斷：'.length));
+    assert.equal(diagnostic.valid, item === record);
+    if (item === record) assert.deepEqual(diagnostic.groups, [{ ...record, count: 1 }]);
+  }
+});
 
 test('正式複審拒絕未指定模型或推理；不借掃描預設值補空格', async () => {
   for (const args of [{ model: undefined }, { effort: undefined }, { purpose: 'unknown' }, { review: { ...identity, source: 'Claude CLI' } }]) {
@@ -119,12 +142,22 @@ test('正式複審保留基底、受審與突變材料，原文與 manifest 可�
   assert.equal(saved.replySha256, result.review.replySha256);
 });
 
-test('正式複審把本輪明確指定的模型與推理傳進 CLI，不拿掃描設定代替', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
-  const { result } = await reviewRun({ args: { model: 'grok-4.6', effort: 'high' }, fake: { model: 'grok-4.6' }, shell: 'printf "%s\\n" "$@"' });
-  assert.equal(result.code, 0, result.summary.join('\n'));
-  assert.ok(result.review, '修正 runner 正式複審回傳後重跑本檔');
-  assert.ok(result.review.stdout.includes('--model\ngrok-4.6\n'));
-  assert.ok(result.review.stdout.includes('--reasoning-effort\nhigh\n'));
+test('正式複審把本輪明確指定的模型、推理與固定合成 USER 傳進 CLI，不拿掃描設定或外層 USER 代替', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const previous = process.env.USER;
+  process.env.USER = 'SYNTHETIC-OUTER-USER';
+  try {
+    const { result, iso } = await reviewRun({ args: { model: 'grok-4.6', effort: 'high' }, fake: { model: 'grok-4.6' }, shell: 'printf "%s\\n" "$@"; printf "REVIEW-USER=<%s>\\n" "${USER-NOT-PRESENT}"' });
+    assert.equal(result.code, 0, result.summary.join('\n'));
+    assert.ok(result.review, '修正 runner 正式複審回傳後重跑本檔');
+    assert.ok(result.review.stdout.includes('--model\ngrok-4.6\n'));
+    assert.ok(result.review.stdout.includes('--reasoning-effort\nhigh\n'));
+    assert.ok(result.review.stdout.includes('REVIEW-USER=<group:everyone>\n'));
+    assert.ok(!result.review.stdout.includes('SYNTHETIC-OUTER-USER'));
+    const launch = JSON.parse(readFileSync(join(iso.resultsRoot, readdirSync(iso.resultsRoot)[0], 'launch.json'), 'utf8'));
+    assert.equal(launch.env.USER, 'group:everyone');
+  } finally {
+    if (previous === undefined) delete process.env.USER; else process.env.USER = previous;
+  }
 });
 
 test('正式複審在首次未信任 CLI 之前備妥材料與突變相依副本', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {

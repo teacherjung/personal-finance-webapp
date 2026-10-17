@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, realpathSync, writeFileSync, readFileSync, rmSync, symlinkSync, linkSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { snapshotPinnedSources, verifyPinnedSourcesUnchanged, prepareNativePacket, runGeminiNativeScan } from '../scripts/gemini-native-runner.js';
+import cp, { spawnSync } from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { snapshotPinnedSources, verifyPinnedSourcesUnchanged, prepareNativePacket, prepareNativeScan, runGeminiNativeScan } from '../scripts/gemini-native-runner.js';
 import { sha256 } from '../scripts/gemini-native-protocol.js';
 import { FILES, MODEL } from './helpers/gemini-native-fixture.js';
 
@@ -68,4 +71,54 @@ test('屬性或外部設定使文字差異變成二進位摘要時拒絕準備�
     const text = JSON.stringify({ files: FILES, diff, prompt: 'synthetic' });
     assert.throws(() => prepareNativePacket({ text, materialSha256: sha256(text) }, { scanId: 'synthetic', model: MODEL }), /TEXT_DIFF_REQUIRED/);
   }
+});
+
+test('GN-02：直接準備入口串起來源、提供者與完整提交材料；假 Git 物件不建立或改寫 repo', () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'native-prepare-entry-')));
+  const provider = realpathSync(fileURLToPath(new URL('..', import.meta.url)));
+  const base = 'a'.repeat(40), head = 'b'.repeat(40), providerHead = 'c'.repeat(40);
+  const promptFile = join(dir, 'prompt.txt'); writeFileSync(promptFile, 'Synthetic review only.', { mode: 0o600 });
+  const pins = [{ name: 'prompt', path: promptFile, sha256: sha256(readFileSync(promptFile)) }];
+  const blob = text => createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
+  const entry = (path, text) => ({ path, text: Buffer.from(text), oid: blob(text), mode: '100644' });
+  const sources = ['scripts/gemini-client.js', 'lib/is-main.js', 'scripts/grok-sandbox.sb', 'package.json'].map(path => entry(path, readFileSync(join(provider, path))));
+  const before = entry('synthetic.js', 'export const value = 1;\n'), after = entry('synthetic.js', 'export const value = 2;\n');
+  const tree = entries => Buffer.from(entries.map(e => `${e.mode} blob ${e.oid}\t${e.path}\0`).join(''));
+  const original = cp.spawnSync;
+  const calls = [];
+  let dirtyProvider = false, binary = false, mutatePrompt = false;
+  cp.spawnSync = (command, argv, opts) => {
+    assert.equal(command, 'git');
+    assert.deepEqual(Object.keys(opts.env).filter(key => key.startsWith('GIT_')), []);
+    const repo = argv[2], args = argv.slice(3); calls.push({ repo, args });
+    let stdout;
+    if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') stdout = repo + '\n';
+    else if (args[0] === 'rev-parse') stdout = args[2] === 'HEAD^{commit}' ? providerHead + '\n' : args[2].slice(0, 40) + '\n';
+    else if (args[0] === 'status') stdout = dirtyProvider ? ' M package.json\0' : '';
+    else if (args[0] === 'ls-tree') stdout = tree(repo === provider ? sources : args.at(-1) === base ? [before] : [after]);
+    else if (args[0] === 'diff' && args.includes('--name-only')) stdout = 'synthetic.js\0';
+    else if (args[0] === 'diff') {
+      stdout = binary ? 'Binary files a/synthetic.js and b/synthetic.js differ\n' : 'diff --git a/synthetic.js b/synthetic.js\n-export const value = 1;\n+export const value = 2;\n';
+      if (mutatePrompt) writeFileSync(promptFile, 'Changed after source pin.');
+    } else if (args[0] === 'cat-file') {
+      stdout = Buffer.concat(opts.input.toString().trim().split('\n').map(id => {
+        const e = [before, after].find(x => x.oid === id); assert.ok(e);
+        return Buffer.concat([Buffer.from(`${id} blob ${e.text.length}\n`), e.text, Buffer.from('\n')]);
+      }));
+    } else throw Error(`Unexpected fixture command ${args}`);
+    return { status: 0, stdout: Buffer.from(stdout), stderr: Buffer.alloc(0), signal: null };
+  };
+  syncBuiltinESMExports();
+  try {
+    const args = { repo: dir, base, head, providerHead, promptFile, model: MODEL, scanId: 'direct-entry' };
+    const result = prepareNativeScan(args, pins);
+    assert.equal(result.preparationOnly, true); assert.equal(result.authenticationAuthorized, false);
+    assert.equal(result.isolationVerified, false); assert.equal(result.files[0].path, 'synthetic.js');
+    assert.equal(calls.filter(c => c.repo === provider && c.args[0] === 'status').length, 2);
+    assert.ok(calls.some(c => c.args[0] === 'cat-file'));
+    assert.throws(() => prepareNativeScan(args, []), /PINS/);
+    dirtyProvider = true; assert.throws(() => prepareNativeScan(args, pins), /PROVIDER/); dirtyProvider = false;
+    binary = true; assert.throws(() => prepareNativeScan(args, pins), /TEXT_DIFF_REQUIRED/); binary = false;
+    mutatePrompt = true; assert.throws(() => prepareNativeScan(args, pins), /SOURCE/);
+  } finally { cp.spawnSync = original; syncBuiltinESMExports(); rmSync(dir, { recursive: true, force: true }); }
 });

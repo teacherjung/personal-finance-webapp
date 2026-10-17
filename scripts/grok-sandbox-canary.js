@@ -68,8 +68,8 @@ export const BOX_ROOT = existsSync('/private/tmp') ? '/private/tmp' : tmpdir();
  * @param {string} box
  * @param {string[]} argv 指令與參數（絕對路徑）
  * @param {{ cwd?: string, env?: Record<string, string>, timeout?: number, relayPort?: number, profile?: string }} [opt]
- *   `profile`＝沙箱設定檔路徑，預設 PROFILE。**只給考題用**：拿一份故意寬鬆的設定證明金絲雀真的會叫
- *   （2026-09-02 第二輪稽核第 1 條：計分器與退出碼映射原本零考題＝沙箱失效仍報「可以掃」）。正式掃描不傳。
+ *   `profile` 必須由可信呼叫端固定，不接受模型提供路徑。Grok 入口使用預設；網頁入口固定為只收緊的 profile。
+ *   考題可用故意寬鬆的設定，證明金絲雀會叫（計分器的其他反控不能代替這項證據）。
  */
 export function runInSandbox(box, argv, opt = {}) {
   // ⚠️ 傳給沙箱的路徑一律先 realpath：sandbox-exec 比對的是**解析後**路徑，
@@ -120,7 +120,7 @@ export function canApplySandbox(box, opt = {}) {
  * 跑完整金絲雀。回傳 { code, lines }——lines 是逐條結果（給 PR 描述貼）。
  * @param {string} box
  * @param {{ relayPort?: number, profile?: string }} [opt] 正式掃描傳本掃的隨機 port——金絲雀跟發射用同一組沙箱參數；
- *   `profile` 只給考題（見 runInSandbox）
+ *   `profile` 的固定來源與考題例外見 runInSandbox。
  */
 export async function runCanary(box, opt = {}) {
   const relayPort = opt.relayPort ?? RELAY_PORT;

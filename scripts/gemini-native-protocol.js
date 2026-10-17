@@ -193,6 +193,6 @@ export function validateNativeStream({ stdout, stderr, code, timedOut, capped },
     receiverConsumptionVerified: false, formalScan: false };
 }
 
-if (isMainModule(import.meta.url)) {
+if (typeof process !== 'undefined' && isMainModule(import.meta.url)) {
   process.stderr.write('GEMINI_NATIVE_LIBRARY_ONLY\n'); process.exitCode = 2;
 }
