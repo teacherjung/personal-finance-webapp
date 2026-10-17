@@ -57,6 +57,13 @@ test('固定 CUA 讀取完整容量並核逐字內容；少一字時零送出且
         await assert.rejects(beginBrowserScan(b.browser, j.runId), /GEMINI_BROWSER_UI_STATE/);
         assert.equal(b.state.sent, 0); assert.equal(mailExists(j.dir, 'permit.json'), false);
         assert.equal(readMail(j.dir, 'quiescent.json').failed, true);
+        const diagnostic = readMail(j.dir, 'adapter-failed.json');
+        assert.equal(diagnostic.phase, 'input-readback');
+        assert.equal(diagnostic.readbacks.input.sampled, true);
+        assert.equal(diagnostic.readbacks.input.expectedBytes, CAPACITY);
+        assert.equal(diagnostic.readbacks.input.actualBytes, CAPACITY - 1);
+        assert.equal(diagnostic.readbacks.input.actualSha256, sha256(j.packet.prompt.slice(0, -1)));
+        assert.equal(diagnostic.readbacks.input.match, false);
       } else {
         assert.equal((await beginBrowserScan(b.browser, j.runId)).state, 'SUBMITTED');
         assert.equal(b.calls.find(c => c[0] === 'fill')[1], j.packet.prompt);
@@ -138,4 +145,105 @@ test('runner 的活性核對可讀完整容量，普通信箱仍維持小容量�
     { encoding: 'utf8', timeout: 20000, env: { PATH: '/usr/bin:/bin' } });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.endsWith('RUNNER-CAPACITY-OK'), true);
+});
+
+test('失敗診斷分辨等待階段與讀回差異，寫檔失敗仍收尾且不洩露樣本', () => {
+  const adapter = new URL('../scripts/gemini-browser-cua.js', import.meta.url).href;
+  const fixture = new URL('./helpers/gemini-browser-fixture.js', import.meta.url).href;
+  const files = new URL('../scripts/gemini-browser-files.js', import.meta.url).href;
+  const protocol = new URL('../scripts/gemini-browser-protocol.js', import.meta.url).href;
+  // 受控時鐘只讓既有等待越過期限；瀏覽器是假身，不證明平台狀態或實際傳輸容量。
+  const script = `
+    import assert from 'node:assert/strict';import vm from 'node:vm';import fs from 'node:fs';
+    import {jobFixture,browserFixture,material} from ${JSON.stringify(fixture)};
+    import * as files from ${JSON.stringify(files)};import {sha256} from ${JSON.stringify(protocol)};
+    let now=0,current;
+    const context=vm.createContext({Buffer,TextDecoder,Error,setTimeout,clearTimeout});
+    const module=new vm.SourceTextModule(fs.readFileSync(new URL(${JSON.stringify(adapter)}),'utf8'),
+      {context,identifier:${JSON.stringify(adapter)},initializeImportMeta(meta,m){meta.url=m.identifier;}});
+    await module.link(async(specifier,ref)=>{
+      const id=specifier.startsWith('node:')?specifier:new URL(specifier,ref.identifier).href, value={...await import(id)};
+      if(specifier==='node:perf_hooks')value.performance={now:()=>now};
+      if(specifier==='./gemini-browser-files.js'){
+        value.writeOnce=(dir,name,data)=>{if(current.writeFail&&name==='adapter-failed.json')throw Error('synthetic-write-failure');return files.writeOnce(dir,name,data);};
+        value.readMail=(dir,name)=>{if(current.mail===name)throw Error(current.decoy);return files.readMail(dir,name);};
+      }
+      return new vm.SyntheticModule(Object.keys(value),function(){for(const k of Object.keys(value))this.setExport(k,value[k]);},{context,identifier:id});
+    });await module.evaluate();
+    const role=(role,name)=>'getByRole:'+role+':'+name;
+    const picker=role('button','/^Open mode picker, currently /'), textbox=role('textbox','Enter a prompt for Gemini');
+    const target=(phase,path,action,nth=1,timeout=false)=>({phase,path,action,nth,timeout});
+    const cases=[
+      {phase:'claim-ack',mail:'claim-ack.json'},target('new-tab','tabs','new'),target('navigate','tab','goto'),target('initial-origin','tab','url'),
+      target('initial-controls',role('button','Temporary chat'),'isVisible',1,true),target('initial-model-control',picker,'waitFor'),
+      target('initial-empty','locator:model-response-content','count'),target('temporary-activate',role('button','Temporary chat'),'click'),
+      target('temporary-confirm','getByText:Just stopping by?','isVisible',1,true),target('model-menu-open',picker,'click'),
+      target('model-option-wait',role('menuitem','/4 Argon Complex tasks/'),'isVisible',1,true),target('model-select',role('menuitem','/4 Argon Complex tasks/'),'click'),
+      target('model-confirm',picker,'getAttribute',1,true),target('effort-menu-open',picker,'click',2),
+      target('effort-menu-wait',role('menuitem','Thinking level'),'isVisible',1,true),target('effort-menu-select',role('menuitem','Thinking level'),'click'),
+      target('effort-option-wait',role('menuitem','High Extra thorough'),'isVisible',1,true),target('effort-select',role('menuitem','High Extra thorough'),'click'),
+      target('effort-confirm',picker,'getAttribute',2,true),target('input-fill',textbox,'fill'),
+      target('input-readback',textbox,'textContent',2),target('ready-precondition','getByText:Just stopping by?','isVisible',2),
+      {phase:'permit-wait',mail:'permit.json'},target('submit-precondition','tab','url',2),target('submit-attempt',role('button','Send message'),'click'),
+      ...['short','same-bytes','null','bad-encoding'].map(mode=>({...target('input-readback',textbox,'textContent',2),mode})),
+      {...target('submit-precondition',textbox,'textContent',3),mode:'same-bytes'},
+      {...target('input-fill',textbox,'fill'),writeFail:true},
+      {...target('input-fill',textbox,'fill'),closeFail:true}
+    ];
+    for(const item of cases){
+      now=0;current={...item,decoy:'PRIVATE-SYNTHETIC-'+Math.random()+'中文'};
+      const base=material(),data=JSON.parse(base.text);data.prompt+=current.decoy;
+      const text=JSON.stringify(data),j=jobFixture({...base,text,sha256:sha256(text)}),b=browserFixture(j);
+      const counts=new Map();let reached=0,actual,closeAttempts=0;
+      function wrap(object,path){return new Proxy(object,{get(target,key){
+        const value=target[key];if(typeof value!=='function')return value&&typeof value==='object'?wrap(value,String(key)):value;
+        return(...args)=>{
+          if(['getByRole','getByText','locator'].includes(String(key))){
+            const next=key==='getByRole'?role(args[0],String(args[1]?.name??'')):String(key)+':'+String(args[0]);return wrap(value.apply(target,args),next);
+          }
+          if(key==='close'){closeAttempts++;if(current.closeFail)throw Error(current.decoy);}
+          const id=path+'/'+String(key),count=(counts.get(id)??0)+1;counts.set(id,count);
+          if(current.path===path&&current.action===key&&count===current.nth){
+            reached++;
+            if(current.mode){
+              actual=current.mode==='short'?j.packet.prompt.slice(0,-1):current.mode==='same-bytes'?'X'+j.packet.prompt.slice(1):current.mode==='null'?null:'\\ud800';
+              now+=11000;return Promise.resolve(actual);
+            }
+            if(current.timeout){now+=11000;return Promise.resolve(key==='getAttribute'?'wrong-model':false);}
+            throw Error(current.decoy);
+          }
+          const result=value.apply(target,args);return key==='new'?result.then(tab=>wrap(tab,'tab')):result;
+        };
+      }});}
+      j.serve();
+      try{
+        await assert.rejects(module.namespace.beginBrowserScan(wrap(b.browser,'browser'),j.runId));
+        assert.equal(b.state.sent,0);assert.equal(files.mailExists(j.dir,'submitted.json'),false);
+        if(!current.mail)assert.equal(reached,1,item.phase);
+        const expectedTab=item.phase!=='claim-ack'&&item.phase!=='new-tab';
+        assert.equal(closeAttempts,expectedTab?1:0,item.phase);
+        assert.equal(files.mailExists(j.dir,'quiescent.json'),!current.closeFail,item.phase);
+        if(!current.closeFail)assert.equal(files.readMail(j.dir,'quiescent.json').tabClosed,expectedTab);
+        if(!current.writeFail){
+          const raw=fs.readFileSync(j.dir+'/adapter-failed.json','utf8'),d=JSON.parse(raw);
+          assert.equal(d.phase,item.phase);assert.equal(raw.includes(current.decoy),false);
+          assert.deepEqual(Object.keys(d).sort(),['code','instance','phase','readbacks']);
+          if(current.timeout||current.mode&&item.phase==='input-readback')assert.equal(d.code,'UI_STATE');
+          else if(current.mode)assert.equal(d.code,'PRECONDITION');else assert.equal(d.code,'other');
+          if(current.mode){
+            const sample=d.readbacks[item.phase==='input-readback'?'input':'submit'],valid=typeof actual==='string'&&actual.isWellFormed();
+            assert.equal(sample.sampled,typeof actual==='string');assert.equal(sample.wellFormed,valid);
+            assert.equal(sample.expectedBytes,j.packet.promptBytes);assert.equal(sample.expectedSha256,j.packet.promptSha256);
+            assert.equal(sample.actualBytes,valid?Buffer.byteLength(actual):null);assert.equal(sample.actualSha256,valid?sha256(actual):null);assert.equal(sample.match,false);
+            if(item.phase==='input-readback')assert.equal(files.mailExists(j.dir,'ready.json'),false);
+          }
+          if(item.phase==='input-fill')assert.deepEqual(d.readbacks.input,{sampled:false,wellFormed:false,expectedBytes:j.packet.promptBytes,actualBytes:null,expectedSha256:j.packet.promptSha256,actualSha256:null,match:false});
+        }
+      }finally{j.cleanup();}
+    }
+    process.stdout.write('DIAGNOSTICS-OK');
+  `;
+  const result = spawnSync(process.execPath, ['--experimental-vm-modules', '--input-type=module', '-e', script],
+    { encoding: 'utf8', timeout: 20000, env: { PATH: '/usr/bin:/bin' } });
+  assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, 'DIAGNOSTICS-OK');
 });
