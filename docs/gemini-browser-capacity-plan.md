@@ -28,6 +28,10 @@ GPT‑6.1 Sol 的[技術裁示](https://github.com/teacherjung/personal-finance-
 
 ## 送出前的有限診斷
 
-依[GPT‑6.1 Sol 診斷裁示](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6239984348)，固定 CUA 在主要動作及不同等待條件之前設定階段；失敗只保存固定階段、有限錯誤分類，以及既有輸入讀回的 bytes／雜湊／逐字相等摘要。未取得字串時明記未觀測，實際值留 null；不保存樣本、片段、原始錯誤或私人頁面內容，不增加失敗截圖或額外 UI 讀取。完整字串相等仍是送出前提。
+依[GPT‑6.1 Sol 診斷裁示](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6239984348)，固定 CUA 在主要動作及不同等待條件之前設定階段；失敗只保存固定階段、有限錯誤分類及輸入完整比較摘要。不保存樣本、片段、原始錯誤或私人頁面內容，不增加失敗截圖或額外 UI 讀取。
+
+[完整讀回裁示](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6240082060)指定在同一 textbox 的唯讀 DOM 函式內讀取一次 `textContent`，對完整請求作 `===` 比較；填入後及提交前各自核對。只回傳 sampled、expectedCodeUnits、actualCodeUnits、match，外層驗固定欄位、型別、與完整請求長度的一致性。計數單位是 UTF-16 code units（JavaScript string.length），不是 bytes；未取得字串時 actualCodeUnits 留 null。相同長度不能代替完整相等。方法與單位另列於診斷，不把 code units 填入舊 bytes 欄位。
+
+先前工具全文讀回失敗的 bytes／雜湊紀錄保留，不能據此判定 Gemini 編輯器或 Google 的容量上限。DOM 內比較避免以工具回傳的長字串作完整性的依據，但不宣稱已證明工具內部如何處理長字串。
 
 診斷寫入失敗仍嘗試原收尾；關頁失敗不得公布靜止或解鎖。各等待階段、完整與異常讀回、同長度改字、截短、未觀測、寫入失敗與關頁失敗由行為題核對；受控時鐘與瀏覽器假身不代替真網頁驗收。診斷版使用新固定來源重驗，不追認原先只留 PREPARING 的失敗場。

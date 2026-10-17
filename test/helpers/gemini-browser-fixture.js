@@ -52,7 +52,8 @@ export function browserFixture(job, options = {}) {
       if (key === `text:${DETAILS}`) return 1;
       throw Error(`unexpected count ${key}`);
     },
-    async textContent() { assertKey(key.includes('textbox:Enter a prompt for Gemini')); return state.text; },
+    async textContent() { assertKey(key.includes('textbox:Enter a prompt for Gemini')); return state.text.slice(0, options.textContentCap); },
+    async evaluate(fn, expected) { assertKey(key.includes('textbox:Enter a prompt for Gemini')); return fn({ textContent: state.text }, expected); },
     async fill(text) { calls.push(['fill', text]); state.text = options.truncate ? text.slice(0, -1) : text; },
     async innerText() {
       if (key.endsWith('model-response-content')) return state.raw ?? raw;
@@ -101,6 +102,6 @@ export function browserFixture(job, options = {}) {
     async screenshot() { calls.push(['screenshot']); return Buffer.from('synthetic screenshot'); },
     async close() { calls.push(['close', this.id]); state.closed = true; },
   };
-  return { calls, state, browser: { tabs: { async new() { calls.push(['new']); return tab; } } } };
+  return { calls, state, tab, browser: { tabs: { async new() { calls.push(['new']); return tab; } } } };
 }
 function assertKey(ok) { if (!ok) throw Error('unexpected fixture action'); }

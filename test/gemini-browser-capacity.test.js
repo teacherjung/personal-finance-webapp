@@ -50,8 +50,13 @@ test('盒內 client 完整容量請求與唯一原文回覆往返', async () => 
 test('固定 CUA 讀取完整容量並核逐字內容；少一字時零送出且關閉自有分頁', async () => {
   // API 假身只證明本機配方；實際網頁、沙箱與接收容量另由固定版資格場驗收。
   for (const truncate of [false, true]) {
-    const j = jobFixture(sizedMaterial(CAPACITY)), b = browserFixture(j, { truncate }); j.serve();
+    const j = jobFixture(sizedMaterial(CAPACITY)), b = browserFixture(j, { truncate, textContentCap: 1000000 }); j.serve();
     try {
+      b.state.text = j.packet.prompt;
+      const input = b.tab.playwright.getByRole('textbox', { name: 'Enter a prompt for Gemini', exact: true });
+      assert.equal((await input.textContent()).length, 1000000);
+      assert.equal(await input.evaluate((el, expected) => el.textContent === expected, j.packet.prompt), true);
+      b.state.text = '';
       assert.throws(() => readBoundedFile(j.dir + '/prompt.txt'), /GEMINI_BROWSER_FILE/);
       if (truncate) {
         await assert.rejects(beginBrowserScan(b.browser, j.runId), /GEMINI_BROWSER_UI_STATE/);
@@ -60,9 +65,8 @@ test('固定 CUA 讀取完整容量並核逐字內容；少一字時零送出且
         const diagnostic = readMail(j.dir, 'adapter-failed.json');
         assert.equal(diagnostic.phase, 'input-readback');
         assert.equal(diagnostic.readbacks.input.sampled, true);
-        assert.equal(diagnostic.readbacks.input.expectedBytes, CAPACITY);
-        assert.equal(diagnostic.readbacks.input.actualBytes, CAPACITY - 1);
-        assert.equal(diagnostic.readbacks.input.actualSha256, sha256(j.packet.prompt.slice(0, -1)));
+        assert.equal(diagnostic.readbacks.input.expectedCodeUnits, j.packet.prompt.length);
+        assert.equal(diagnostic.readbacks.input.actualCodeUnits, j.packet.prompt.length - 1);
         assert.equal(diagnostic.readbacks.input.match, false);
       } else {
         assert.equal((await beginBrowserScan(b.browser, j.runId)).state, 'SUBMITTED');
@@ -183,10 +187,11 @@ test('失敗診斷分辨等待階段與讀回差異，寫檔失敗仍收尾且�
       target('effort-menu-wait',role('menuitem','Thinking level'),'isVisible',1,true),target('effort-menu-select',role('menuitem','Thinking level'),'click'),
       target('effort-option-wait',role('menuitem','High Extra thorough'),'isVisible',1,true),target('effort-select',role('menuitem','High Extra thorough'),'click'),
       target('effort-confirm',picker,'getAttribute',2,true),target('input-fill',textbox,'fill'),
-      target('input-readback',textbox,'textContent',2),target('ready-precondition','getByText:Just stopping by?','isVisible',2),
+      target('input-readback',textbox,'evaluate'),target('ready-precondition','getByText:Just stopping by?','isVisible',2),
       {phase:'permit-wait',mail:'permit.json'},target('submit-precondition','tab','url',2),target('submit-attempt',role('button','Send message'),'click'),
-      ...['short','same-bytes','null','bad-encoding'].map(mode=>({...target('input-readback',textbox,'textContent',2),mode})),
-      {...target('submit-precondition',textbox,'textContent',3),mode:'same-bytes'},
+      ...['missing','extra','bool','length','negative','unsampled'].map(invalid=>({...target('input-readback',textbox,'evaluate'),invalid})),
+      ...['short','same-bytes','null','bad-encoding'].map(mode=>({...target('input-readback',textbox,'evaluate'),mode})),
+      {...target('submit-precondition',textbox,'evaluate',2),mode:'same-bytes'},
       {...target('input-fill',textbox,'fill'),writeFail:true},
       {...target('input-fill',textbox,'fill'),closeFail:true}
     ];
@@ -205,9 +210,19 @@ test('失敗診斷分辨等待階段與讀回差異，寫檔失敗仍收尾且�
           const id=path+'/'+String(key),count=(counts.get(id)??0)+1;counts.set(id,count);
           if(current.path===path&&current.action===key&&count===current.nth){
             reached++;
+            if(current.invalid){
+              const result=args[0]({textContent:j.packet.prompt},args[1]);
+              if(current.invalid==='missing')delete result.actualCodeUnits;
+              if(current.invalid==='extra')result.other=true;
+              if(current.invalid==='bool')result.match='true';
+              if(current.invalid==='length'){result.expectedCodeUnits--;result.actualCodeUnits--;}
+              if(current.invalid==='negative')result.actualCodeUnits=-1;
+              if(current.invalid==='unsampled'){result.sampled=false;result.actualCodeUnits=null;}
+              return Promise.resolve(result);
+            }
             if(current.mode){
-              actual=current.mode==='short'?j.packet.prompt.slice(0,-1):current.mode==='same-bytes'?'X'+j.packet.prompt.slice(1):current.mode==='null'?null:'\\ud800';
-              now+=11000;return Promise.resolve(actual);
+              actual=current.mode==='short'?j.packet.prompt.slice(0,-1):current.mode==='same-bytes'?j.packet.prompt.slice(0,Math.floor(j.packet.prompt.length/2))+'X'+j.packet.prompt.slice(Math.floor(j.packet.prompt.length/2)+1):current.mode==='null'?null:'\\ud800';
+              now+=11000;return Promise.resolve(args[0]({textContent:actual},args[1]));
             }
             if(current.timeout){now+=11000;return Promise.resolve(key==='getAttribute'?'wrong-model':false);}
             throw Error(current.decoy);
@@ -227,17 +242,19 @@ test('失敗診斷分辨等待階段與讀回差異，寫檔失敗仍收尾且�
         if(!current.writeFail){
           const raw=fs.readFileSync(j.dir+'/adapter-failed.json','utf8'),d=JSON.parse(raw);
           assert.equal(d.phase,item.phase);assert.equal(raw.includes(current.decoy),false);
-          assert.deepEqual(Object.keys(d).sort(),['code','instance','phase','readbacks']);
-          if(current.timeout||current.mode&&item.phase==='input-readback')assert.equal(d.code,'UI_STATE');
+          assert.equal(d.readbackMethod,'dom-textContent-equality/v1');assert.equal(d.readbackUnit,'utf16-code-units');
+          assert.deepEqual(Object.keys(d).sort(),['code','instance','phase','readbackMethod','readbackUnit','readbacks']);
+          if(current.invalid)assert.equal(d.code,['missing','extra'].includes(current.invalid)?'other':'READBACK_RESULT');
+          else if(current.timeout||current.mode&&item.phase==='input-readback')assert.equal(d.code,'UI_STATE');
           else if(current.mode)assert.equal(d.code,'PRECONDITION');else assert.equal(d.code,'other');
           if(current.mode){
-            const sample=d.readbacks[item.phase==='input-readback'?'input':'submit'],valid=typeof actual==='string'&&actual.isWellFormed();
-            assert.equal(sample.sampled,typeof actual==='string');assert.equal(sample.wellFormed,valid);
-            assert.equal(sample.expectedBytes,j.packet.promptBytes);assert.equal(sample.expectedSha256,j.packet.promptSha256);
-            assert.equal(sample.actualBytes,valid?Buffer.byteLength(actual):null);assert.equal(sample.actualSha256,valid?sha256(actual):null);assert.equal(sample.match,false);
+            const sample=d.readbacks[item.phase==='input-readback'?'input':'submit'];
+            assert.equal(sample.sampled,typeof actual==='string');
+            assert.equal(sample.expectedCodeUnits,j.packet.prompt.length);
+            assert.equal(sample.actualCodeUnits,typeof actual==='string'?actual.length:null);assert.equal(sample.match,false);
             if(item.phase==='input-readback')assert.equal(files.mailExists(j.dir,'ready.json'),false);
           }
-          if(item.phase==='input-fill')assert.deepEqual(d.readbacks.input,{sampled:false,wellFormed:false,expectedBytes:j.packet.promptBytes,actualBytes:null,expectedSha256:j.packet.promptSha256,actualSha256:null,match:false});
+          if(item.phase==='input-fill')assert.deepEqual(d.readbacks.input,{sampled:false,expectedCodeUnits:j.packet.prompt.length,actualCodeUnits:null,match:false});
         }
       }finally{j.cleanup();}
     }

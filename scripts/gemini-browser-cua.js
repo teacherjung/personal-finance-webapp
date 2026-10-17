@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { URL as NodeURL } from 'node:url';
 import { isMainModule } from '../lib/is-main.js';
 import { SOURCE_ROOT, SOURCE_FILES, jobDirectory, readMail, readBoundedFile, writeOnce, mailExists, sourceDigest, browserError } from './gemini-browser-files.js';
-import { URL, ORIGIN, SELECTED, DETAILS, PROMPT_CAP, REPLY_CAP, sha256, validateDescriptor, leaseMessage } from './gemini-browser-protocol.js';
+import { URL, ORIGIN, SELECTED, DETAILS, PROMPT_CAP, REPLY_CAP, sha256, fields, validateDescriptor, leaseMessage } from './gemini-browser-protocol.js';
 
 const sessions = new Map();
 const pause = () => new Promise(resolve => setTimeout(resolve, 100));
@@ -53,22 +53,34 @@ async function cleanup(s, failed) {
   writeOnce(s.dir, 'quiescent.json', { instance: s.instance, tabClosed: !!s.tab, failed });
   s.state = 'CLOSED';
 }
-function readbackSummary(s, value) {
-  const sampled = typeof value === 'string', wellFormed = sampled && /** @type {string & {isWellFormed(): boolean}} */ (value).isWellFormed();
-  return { sampled, wellFormed, expectedBytes: s.d.requestBytes, actualBytes: wellFormed ? Buffer.byteLength(value) : null,
-    expectedSha256: s.d.requestSha256, actualSha256: wellFormed ? sha256(value) : null, match: sampled && value === s.prompt };
+function unreadSummary(s) {
+  return { sampled: false, expectedCodeUnits: s.prompt.length, actualCodeUnits: null, match: false };
 }
 async function readback(s, key) {
-  const value = await input(s.tab).textContent();
-  s.readbacks[key] = readbackSummary(s, value);
-  return value;
+  if (typeof s.prompt !== 'string') browserError('READBACK_RESULT');
+  // 在 DOM 內逐字比較，避免工具回傳長字串時的截短改變完整性判斷。
+  const result = await input(s.tab).evaluate((element, expected) => {
+    if (typeof expected !== 'string') throw Error('GEMINI_BROWSER_READBACK_RESULT');
+    const actual = element.textContent, sampled = typeof actual === 'string';
+    return { sampled, expectedCodeUnits: expected.length, actualCodeUnits: sampled ? actual.length : null,
+      match: sampled && actual === expected };
+  }, s.prompt);
+  fields(result, ['sampled', 'expectedCodeUnits', 'actualCodeUnits', 'match']);
+  if (typeof result.sampled !== 'boolean' || typeof result.match !== 'boolean'
+    || !Number.isSafeInteger(result.expectedCodeUnits) || result.expectedCodeUnits < 0 || result.expectedCodeUnits !== s.prompt.length
+    || (!result.sampled && (result.actualCodeUnits !== null || result.match))
+    || (result.sampled && (!Number.isSafeInteger(result.actualCodeUnits) || result.actualCodeUnits < 0))
+    || (result.match && result.actualCodeUnits !== result.expectedCodeUnits)) browserError('READBACK_RESULT');
+  s.readbacks[key] = result;
+  return result.match;
 }
 async function failed(s, error) {
-  const codes = ['UI_STATE', 'NO_LIVE_RUNNER', 'ACK', 'PRECONDITION', 'ORIGIN', 'NONEMPTY', 'ABORTED', 'SOURCE_CHANGED'];
+  const codes = ['UI_STATE', 'NO_LIVE_RUNNER', 'ACK', 'PRECONDITION', 'ORIGIN', 'NONEMPTY', 'ABORTED', 'SOURCE_CHANGED', 'READBACK_RESULT'];
   const code = codes.find(value => error instanceof Error && error.message === 'GEMINI_BROWSER_' + value) ?? 'other';
   try {
     if (!mailExists(s.dir, 'adapter-failed.json')) writeOnce(s.dir, 'adapter-failed.json', {
-      instance: s.instance, phase: s.phase ?? s.state, code, readbacks: s.readbacks,
+      instance: s.instance, phase: s.phase ?? s.state, code, readbackMethod: 'dom-textContent-equality/v1',
+      readbackUnit: 'utf16-code-units', readbacks: s.readbacks,
     });
   } finally { await cleanup(s, true); }
 }
@@ -79,7 +91,7 @@ export async function beginBrowserScan(browser, runId) {
   const prompt = new TextDecoder('utf-8', { fatal: true }).decode(readBoundedFile(join(dir, 'prompt.txt'), PROMPT_CAP));
   if (Buffer.byteLength(prompt) !== d.requestBytes || sha256(prompt) !== d.requestSha256) browserError('REQUEST');
   const s = { dir, d, prompt, instance: nonce(16), started: performance.now(), remaining: Math.min(15 * 60000, d.expiresAt - Date.now()), state: 'CLAIMING', phase: 'initial-source', readbacks: {}, tab: /** @type {any} */ (null) };
-  s.readbacks = { input: readbackSummary(s, null), submit: readbackSummary(s, null) };
+  s.readbacks = { input: unreadSummary(s), submit: unreadSummary(s) };
   alive(s);
   const claim = leaseMessage(d, s.instance, nonce(32), 'claim');
   writeOnce(dir, 'claim.json', claim);
@@ -109,7 +121,7 @@ export async function beginBrowserScan(browser, runId) {
     await step(s, () => s.tab.playwright.getByRole('menuitem', { name: 'High Extra thorough', exact: true }).click(), 'effort-select');
     await until(s, async () => await selected(s.tab) === SELECTED, 'effort-confirm');
     await step(s, () => input(s.tab).fill(prompt), 'input-fill');
-    await until(s, async () => await readback(s, 'input') === prompt, 'input-readback');
+    await until(s, async () => await readback(s, 'input') === true, 'input-readback');
     s.phase = 'ready-precondition';
     if (!await step(s, () => temporaryBefore(s)) || await step(s, () => responses(s.tab).count()) !== 0) browserError('PRECONDITION');
     const ready = { ...leaseMessage(d, s.instance, nonce(32), 'ready'), tabId: s.tab.id, temporary: true, initialResponses: 0, selected: SELECTED };
@@ -120,7 +132,7 @@ export async function beginBrowserScan(browser, runId) {
     writeOnce(dir, 'consumed.json', permit);
     s.phase = 'submit-precondition';
     await origin(s);
-    if (await step(s, () => selected(s.tab)) !== SELECTED || await step(s, () => readback(s, 'submit')) !== prompt
+    if (await step(s, () => selected(s.tab)) !== SELECTED || await step(s, () => readback(s, 'submit')) !== true
       || !await step(s, () => temporaryBefore(s)) || await step(s, () => responses(s.tab).count()) !== 0) browserError('PRECONDITION');
     s.state = 'ATTEMPTED';
     await step(s, () => button(s.tab, 'Send message').click(), 'submit-attempt');
