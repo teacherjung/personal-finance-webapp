@@ -29,7 +29,7 @@
 - `scripts/gemini-browser-files.js`、`test/helpers/gemini-browser-fixture.js`
 - `scripts/gemini-browser-sandbox.sb`、`scripts/gemini-browser-canary.js`
 - `scripts/grok-sandbox-canary.js` 僅修正 profile 參數的呼叫端說明
-- `scripts/grok-scan.js`、`test/grok-scan-flow-preflight.test.js` 僅依既有升版助手同步正式複審前置的版本／指紋與對照值；[補充範圍與重驗要求](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6233792323)
+- `scripts/grok-bump.js`、`test/grok-bump.test.js` 改善升版檢查的舊檔搜尋順序，保留完整雜湊、回退與原時限；正式 Grok 仍用既有固定版本，撤回本線不必要的 pin 升版；[判斷更正、技術裁示與重驗要求](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6233881225)
 - `test/gemini-browser-{protocol,flow,cua,canary}.test.js`
 - `test/gemini-native-runner.test.js` 補 GN-02 的直接準備入口題；GN-01／GN-03 原生觸發待辦維持停放
 - `scripts/gemini-native-protocol.js` 僅令純協定載入不要求宿主提供 process；普通 Node 的直接入口拒絕保留

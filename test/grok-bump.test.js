@@ -225,6 +225,53 @@ test('bump｜舊版執行檔用**雜湊**認出來，不是靠檔名（對照組
   assert.ok(!out.includes('舊版執行檔＝grok-1.2.3-macos-aarch64'), '靠檔名就會挑到誘餌');
 });
 
+test('bump｜優先讀版本名候選，雜湊命中後不讀無關下載檔', async () => {
+  const oldB = body({ filler: 'OLD' }), newB = body({ filler: 'NEWER' });
+  const repo = fakeRepo({ version: '1.2.3', sha256: sha(oldB) });
+  const before = snapshot(repo);
+  const preferred = 'grok-1.2.3-macos-aarch64', unrelated = 'a-unrelated-download';
+  const home = fakeGrokHome({ version: '1.3.0', body: newB, alsoKeep: [
+    { name: unrelated, body: 'unrelated bytes' }, { name: preferred, body: oldB },
+  ] });
+  const dl = join(home, 'downloads'), current = 'grok-1.3.0-macos-aarch64';
+  const fsCjs = createRequire(import.meta.url)('node:fs');
+  const original = { read: fsCjs.readFileSync, list: fsCjs.readdirSync };
+  /** @type {string[]} */ const reads = [];
+  let listed = false;
+  // 固定作業系統列目錄的輸入，避免考題靠檔案系統剛好把舊版列在前面而假綠。
+  fsCjs.readdirSync = (/** @type {string} */ path, /** @type {unknown[]} */ ...rest) => {
+    if (path === dl) { listed = true; return [unrelated, current, preferred]; }
+    return original.list(path, ...rest);
+  };
+  fsCjs.readFileSync = (/** @type {string} */ path, /** @type {unknown[]} */ ...rest) => {
+    if (listed && typeof path === 'string' && dirname(path) === dl) reads.push(path);
+    return original.read(path, ...rest);
+  };
+  syncBuiltinESMExports();
+  try {
+    const r = await bump({ grokHome: home, repo });
+    assert.equal(r.code, 1, r.lines.join('\n'));
+    assert.match(r.lines.join('\n'), /舊版執行檔＝grok-1\.2\.3-macos-aarch64/);
+  } finally {
+    fsCjs.readFileSync = original.read; fsCjs.readdirSync = original.list; syncBuiltinESMExports();
+  }
+  assert.equal(listed, true, '受測流程必須取得候選清單');
+  assert.deepEqual(reads, [join(dl, preferred)], '取得清單後優先讀舊版，雜湊命中就停止');
+  assert.deepEqual(snapshot(repo), before, '乾跑保存兩份來源');
+});
+
+test('bump｜版本名候選讀不了仍回退，用雜湊找到無版本名舊檔', async () => {
+  const oldB = body({ filler: 'OLD' });
+  const repo = fakeRepo({ version: '1.2.3', sha256: sha(oldB) });
+  const home = fakeGrokHome({ version: '1.3.0', body: body({ filler: 'NEWER' }), alsoKeep: [
+    { name: 'no-version-in-the-name', body: oldB },
+  ] });
+  symlinkSync('missing-synthetic-target', join(home, 'downloads', 'grok-1.2.3-unreadable'));
+  const r = await bump({ grokHome: home, repo });
+  assert.equal(r.code, 1, r.lines.join('\n'));
+  assert.match(r.lines.join('\n'), /舊版執行檔＝no-version-in-the-name/);
+});
+
 test('bump｜必要字串的**次數**變了 → 標 ⚠️ 但不擋（判定是「在不在」，不是「幾次」）', async () => {
   const oldB = body({ filler: 'OLD' }), newB = body({ filler: 'NEWER', dup: '--always-approve' });
   const repo = fakeRepo({ version: '1.2.3', sha256: sha(oldB) });

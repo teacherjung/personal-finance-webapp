@@ -390,7 +390,10 @@ async function run(args, lines) {
   /** @type {Buffer|null} */ let oldBuf = null;
   const dl = join(grokHome, 'downloads');
   if (existsSync(dl)) {
-    for (const n of readdirSync(dl)) {   // 用**雜湊**認舊版，不靠檔名
+    // 先找版本名可避免逐一讀取歷代大型執行檔；檔名只排順序，身分仍由完整雜湊核對。
+    const prefix = `grok-${pinnedVersion}-`;
+    const candidates = readdirSync(dl).sort((a, b) => Number(b.startsWith(prefix)) - Number(a.startsWith(prefix)));
+    for (const n of candidates) {
       const p = join(dl, n);
       try { const b = readFileSync(p); if (createHash('sha256').update(b).digest('hex') === pinnedSha) { oldBuf = b; say(`  （舊版執行檔＝${n}，用雜湊認出來的，可以做新舊對照）`); break; } } catch { /* 讀不了就當沒有 */ }
     }
