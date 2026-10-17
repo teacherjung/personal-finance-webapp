@@ -28,9 +28,36 @@ let flowFilter = 'all';   // 金流篩選：all / income / expense / transfer
 let renderGeneration = 0;
 let editRevision = 0;
 let unconfirmedRevision = 0;
+let importRevision = 0;
+let readRevision = 0;
 const listSort = { key: 'date', dir: 'desc' };
-/** @type {{month: string, flow: string, sort: {key: string, dir: string}, nav: number, revision: number, error: string} | null} */
+/** @typedef {{hash: string, nav: number, host: HTMLElement}} CashflowVisit */
+/** @typedef {{month: string, flow: string, sort: {key: string, dir: string}, nav: number, revision: number, error: string, node: HTMLElement, visit: CashflowVisit, route: number, success: boolean}} CashflowWorkspace */
+/** @type {CashflowVisit|null} */ let cashflowVisit = null;
+/** @type {CashflowWorkspace|null} */
 let renderedState = null;
+/** @type {CashflowWorkspace|null} */ let failedState = null;
+/** @type {{visit: CashflowVisit, generation: number, seq: number}|null} */ let cashflowRead = null;
+
+// oldURL 能辨識「離開又立即返回」；當下 hash 相同並不代表仍是原次進頁。
+window.addEventListener('hashchange', event => {
+  if (cashflowVisit && new URL(event.oldURL).hash === cashflowVisit.hash && event.oldURL !== event.newURL) {
+    cashflowVisit = null;
+    renderedState = null;
+    failedState = null;
+  }
+});
+
+function visitIsCurrent(/** @type {CashflowVisit} */ visit) {
+  return cashflowVisit === visit && visit.nav === currentNavSeq() && visit.hash === location.hash
+    && visit.host === view() && visit.host.isConnected;
+}
+
+function currentWorkspace() {
+  const state = renderedState || failedState;
+  return state && visitIsCurrent(state.visit) && state.node.parentNode === state.visit.host
+    && state.visit.host.querySelector('.cashflow-workspace') === state.node ? state : null;
+}
 const FLOW_INFO = [
   ['income', '收入', `<p>這裡的收入，是所選月份在銀行收支中列為「收入」的紀錄，例如薪資、股息或利息。</p>
     <p>自己的帳戶互相轉入的錢屬於「內轉」，不算收入。</p>`],
@@ -48,30 +75,35 @@ function flowOf(t) {
   return { label: '支出', cls: 'neg', sign: '−' };
 }
 
-/** @param {string} message @param {number} nav @param {number} generation */
-function showCashflowReadError(message, nav, generation) {
-  let notice = byId('cashflowReadError');
+/** @param {string} message @param {CashflowWorkspace} state @param {number} generation */
+function showCashflowReadError(message, state, generation) {
+  let notice = state.node.querySelector('#cashflowReadError');
   if (!notice) {
     notice = document.createElement('div');
     notice.id = 'cashflowReadError';
     notice.className = 'hint cashflow-desktop-only';
     notice.setAttribute('role', 'alert');
-    const workspace = view().querySelector('.cashflow-workspace');
-    workspace.insertBefore(notice, workspace.querySelector('.cashflow-summary'));
+    state.node.insertBefore(notice, state.node.querySelector('.cashflow-summary'));
   }
   notice.innerHTML = `<span>${esc(message)}</span> <button type="button" class="btn-ghost" id="retryCashflowRead">重新讀取</button>`;
-  byId('retryCashflowRead').onclick = () => {
-    if (nav !== currentNavSeq() || generation !== renderGeneration || !notice.isConnected) return;
-    byId('retryCashflowRead').disabled = true;
+  const button = /** @type {HTMLButtonElement} */ (notice.querySelector('#retryCashflowRead'));
+  button.disabled = !!cashflowRead;
+  button.onclick = () => {
+    if (currentWorkspace() !== state || generation !== renderGeneration || !notice.isConnected
+      || notice.parentNode !== state.node || state.node.querySelector('#cashflowReadError') !== notice
+      || notice.querySelector('#retryCashflowRead') !== button || cashflowRead || button.disabled) return;
+    button.disabled = true;
     // 寫入回應不代表每個欄位均成功；恢復只讀取，不保存表單送出 callback。
     renderCashflow();
   };
 }
 
-function pendingCashflowMessage() {
-  if (!renderedState || renderedState.revision === editRevision) return '';
-  return renderedState.revision < unconfirmedRevision
+function pendingCashflowMessage(/** @type {CashflowWorkspace} */ state) {
+  if (state.revision === editRevision) return '';
+  return state.revision < unconfirmedRevision
     ? '部分欄位尚未確認儲存，請重新讀取後確認資料'
+    : !state.success && state.revision < importRevision
+      ? '資料已匯入，暫時無法載入列表'
     : '資料已儲存，畫面尚未更新';
 }
 
@@ -85,40 +117,67 @@ function registerCashflowWrite(result, expected) {
 }
 
 function showPendingCashflowWrite() {
-  const nav = currentNavSeq();
-  if (renderedState?.nav !== nav || !view().querySelector('.cashflow-workspace') || renderedState.revision === editRevision) return;
-  const detail = renderedState.error ? `。載入失敗：${renderedState.error}` : '';
-  showCashflowReadError(`${pendingCashflowMessage()}${detail}`, nav, renderGeneration);
+  const state = currentWorkspace();
+  if (!state || state.revision === editRevision) return;
+  const detail = state.error ? `。載入失敗：${state.error}` : '';
+  showCashflowReadError(`${pendingCashflowMessage(state)}${detail}`, state, renderGeneration);
 }
 
 export async function renderCashflow() {
+  const host = view(), hash = location.hash, nav = currentNavSeq();
+  if (hash.replace(/^#/, '').split('?')[0] !== 'cashflow') return;
+  if (!cashflowVisit || !visitIsCurrent(cashflowVisit)) {
+    cashflowVisit = { host, hash, nav };
+    renderedState = null;
+    failedState = null;
+  }
+  const visit = cashflowVisit;
   const dataRevision = editRevision;
   const seq = currentRouteSeq();
   const generation = ++renderGeneration;
-  const nav = currentNavSeq();
+  const flight = { visit, generation, seq };
+  cashflowRead = flight;
+  const current = () => visitIsCurrent(visit) && seq === currentRouteSeq() && generation === renderGeneration;
+  const saved = renderedState;
+  const loading = host.querySelector('.loading');
+  const detachedByRouter = saved && saved.route !== seq && saved.node.parentNode === null
+    && loading && loading.parentNode === host && host.childNodes.length === 1;
   let responses;
   try {
     responses = await Promise.all([
       api('/transactions'), api('/accounts'), api('/categories'), api('/income-categories'), api('/transfer-subcategories')]);
   } catch (e) {
-    if (seq === currentRouteSeq() && generation === renderGeneration) {
-      if (view().querySelector('.cashflow-workspace') && renderedState) {
-        renderedState.error = e.message;
+    if (cashflowRead === flight) cashflowRead = null;
+    if (current()) {
+      const restore = saved === renderedState && saved?.visit === visit && (currentWorkspace() === saved
+        || (detachedByRouter && saved.node.parentNode === null && host.childNodes.length === 1 && host.firstChild === loading));
+      if (restore) {
+        if (saved.node.parentNode === null) host.replaceChildren(saved.node);
+        saved.route = seq;
+        saved.error = e.message;
         // 原生選單先改值才發出請求；失敗時，控制項與狀態須回到仍在畫面上的那份資料。
-        monthFilter = renderedState.month;
-        flowFilter = renderedState.flow;
-        Object.assign(listSort, renderedState.sort);
+        monthFilter = saved.month;
+        flowFilter = saved.flow;
+        Object.assign(listSort, saved.sort);
         for (const id of ['yearSel', 'yearSelDesktop']) byId(id).value = monthFilter.slice(0, 4);
         for (const id of ['monthSel', 'monthSelDesktop']) byId(id).value = monthFilter.slice(5, 7);
-        const pending = pendingCashflowMessage();
-        const message = `${pending ? pending + '。' : ''}載入失敗：${e.message}`;
-        showCashflowReadError(message, nav, generation);
+        const pending = pendingCashflowMessage(saved);
+        const message = `${pending || '畫面暫時無法更新，以下是上次成功載入的內容'}。載入失敗：${e.message}`;
+        showCashflowReadError(message, saved, generation);
         toast(message, true);
-      } else view().innerHTML = `<div class="hint" role="alert">載入失敗：${esc(e.message)}</div>`;
+      } else {
+        renderedState = null;
+        host.innerHTML = '<div class="cashflow-workspace"><div class="page-head cashflow-head"><h1>銀行收支</h1></div></div>';
+        failedState = { month: monthFilter, flow: flowFilter, sort: { ...listSort }, nav, revision: readRevision,
+          error: e.message, node: host.querySelector('.cashflow-workspace'), visit, route: seq, success: false };
+        const pending = pendingCashflowMessage(failedState);
+        showCashflowReadError(`${pending || '暫時無法載入銀行收支'}。載入失敗：${e.message}`, failedState, generation);
+      }
     }
     return;
   }
-  if (seq !== currentRouteSeq() || generation !== renderGeneration) return;
+  if (cashflowRead === flight) cashflowRead = null;
+  if (!current()) return;
   const [allRaw, accounts, expTreeRes, incTreeRes, transferRes] = responses;
   expTree = expTreeRes && typeof expTreeRes === 'object' ? expTreeRes : {};
   incTree = incTreeRes && typeof incTreeRes === 'object' ? incTreeRes : {};
@@ -252,7 +311,10 @@ export async function renderCashflow() {
       : [...view().querySelectorAll(selector)].find(el => /** @type {HTMLElement} */ (el).dataset.flow === focusedControl.dataset.flow);
     replacement?.focus({ preventScroll: true });
   }
-  renderedState = { month: monthFilter, flow: flowFilter, sort: { ...listSort }, nav, revision: dataRevision, error: '' };
+  renderedState = { month: monthFilter, flow: flowFilter, sort: { ...listSort }, nav, revision: dataRevision, error: '',
+    node: host.querySelector('.cashflow-workspace'), visit, route: seq, success: true };
+  failedState = null;
+  readRevision = dataRevision;
   // 讀取開始後才確認的寫入，可能尚未包含在這份回覆裡。
   showPendingCashflowWrite();
 }
@@ -519,42 +581,59 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
   openInfo('銀行對帳單預覽', body, { size: 'xl',
     actionsHtml: `${bankSkipSimilarOptionHtml(c.similar)}<button class="btn" id="bankApply">${icon('check', 16)}${esc(bankApplyLabel(!!r.blocked, !rows.some((/** @type {any} */ x) => ['update', 'create', 'mature-zero'].includes(x.action))))}</button>` });
 
+  const root = byId('modal-root');
+  const dialog = root.querySelector('.modal');
+  const previewVisit = cashflowVisit;
+  const onPreviewPage = () => onPage() && previewVisit && visitIsCurrent(previewVisit);
+  const unchanged = watchModalRoot();
+  const owns = () => onPreviewPage() && unchanged() && root === byId('modal-root') && dialog.isConnected
+    && root.querySelector('.modal') === dialog;
+  const btn = /** @type {HTMLButtonElement|null} */ (dialog.querySelector('#bankApply'));
+  const skipChk = /** @type {HTMLInputElement|null} */ (dialog.querySelector('#skipSimilarChk'));
+  const footnote = dialog.querySelector('#bankPreviewFootnote');
+  const close = /** @type {HTMLButtonElement} */ (dialog.querySelector('[data-close]'));
   setTimeout(() => {
-    const btn = /** @type {HTMLButtonElement|null} */ (byId('bankApply'));
+    if (!owns()) return;
     // 勾選一動＝腳註跟著改口（r4：勾著時「以上 N 筆都會匯入」是假話——57 標示、實匯 9）。
     // 重算用同一支純函式，不手拼第二句。
-    const skipChk = /** @type {HTMLInputElement|null} */ (byId('skipSimilarChk'));
     if (skipChk) skipChk.onchange = () => {
-      const fn = byId('bankPreviewFootnote');
-      if (fn) fn.textContent = bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate,
+      if (!owns()) return;
+      if (footnote) footnote.textContent = bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate,
         foreign: c.foreign, similar: c.similar, skipSimilarChecked: skipChk.checked === true });
     };
     if (btn) btn.onclick = async () => {
       // 防重入（P1b-2）：AI 路線的票是**一次性**，按第二次必得 ai_ticket_invalid——而第一次其實已經寫進去了，
       // 使用者會看到「失敗」卻以為沒匯入。模板路線一樣受惠（不會送兩次）。
-      if (btn.disabled) return;
+      if (!owns() || btn.disabled) return;
       btn.disabled = true;
       // AI 路線＝憑票寫入（不重送檔案與密碼）；模板路線＝照舊送 data+password。判準住 ai-consent.js
       // 勾選＝這次跳過「疑似重複」（沒有勾選框＝similar 為 0＝照舊）。
       // ⚠️ 語意講準（r1 待辦）：跳過集合是 apply 當下用 fresh db **重算**的（判準同預覽）——
       //    預覽到按下確認之間若又匯了別批銀行交易，集合會跟著變；**手動記的帳不參與判準**
       //    （similarTxIndex 只索引 source:'bank' 的既有交易，手動帳沒有機構＋帳號可比）。
-      const skipSimilar = /** @type {HTMLInputElement|null} */ (document.getElementById('skipSimilarChk'))?.checked === true;
+      const skipSimilar = skipChk?.checked === true;
       const payload = applyBody(r, { data: b64, password: pw, skipSimilar });
-      if (!payload) { if (onPage()) toast(AI_PREVIEW_LOST_TEXT, true); return; }   // 票不見＝不解鎖，引導重新預覽
+      if (!payload) { if (owns()) toast(AI_PREVIEW_LOST_TEXT, true); return; }   // 票不見＝不解鎖，引導重新預覽
+      let res;
       try {
-        const res = await api('/bank-statement/apply', { method: 'POST', body: payload });
-        if (!onPage()) return;   // r5#1：套用（含寫入）完成後切頁＝不清 modal、不重繪舊頁、不報舊 toast（資料已存，下次進頁自見）
-        const t = res.transactions || {};
-        toast(bankApplyDoneText(res, t, /** @type {any} */ (res).recipe));   // ⚠️ 餘額沒更新一定要講；P2-3 配方生成結果也講一句
-        document.querySelector('#modal-root')?.replaceChildren();
-        renderCashflow();
+        res = await api('/bank-statement/apply', { method: 'POST', body: payload });
       } catch (e) {
-        if (!onPage()) return;   // r5#2：切頁後不報過期錯誤
+        if (!owns()) return;
         const code = /** @type {any} */ (e).code;
         toast(aiErrorText(code, /** @type {any} */ (e).message) || '更新失敗', true);
         if (!isAiTicketDeadCode(code)) btn.disabled = false;   // 票類錯誤＝這份沒救了，解鎖只會讓使用者再撞一次
+        return;
       }
+      // 確認事實不隨換頁或換窗消失；讀取例外也不能變成可重送同張匯入的失敗。
+      importRevision = ++editRevision;
+      showPendingCashflowWrite();
+      if (!onPreviewPage()) return;
+      if (owns()) {
+        const t = res.transactions || {};
+        toast(bankApplyDoneText(res, t, /** @type {any} */ (res).recipe));
+        close.click();
+      }
+      await renderCashflow();
     };
   }, 0);
 }
