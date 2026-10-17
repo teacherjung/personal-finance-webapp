@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
-import { writeFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync, realpathSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync, realpathSync, existsSync, chmodSync, linkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { browserClient } from '../scripts/gemini-browser-client.js';
@@ -86,7 +87,7 @@ test('中止與晚到回覆不被採用；盒外專屬假值與新機密形狀�
 });
 
 test('根發射器在匯入前核固定設定、node、提示及執行來源；缺集合或自改釘值不能追認', () => {
-  for (const target of ['runner', 'cua']) for (const variant of ['good', 'source', 'node', 'prompt', 'config', 'duplicate', 'missing-source', ...(target === 'runner' ? ['flags', 'loader'] : [])]) {
+  for (const target of ['runner', 'cua']) for (const variant of ['good', 'source', 'node', 'node-mode', 'node-links', 'node-size', 'prompt', 'config', 'duplicate', 'missing-source', ...(target === 'runner' ? ['flags', 'loader', 'node-path'] : [])]) {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'browser-bootstrap-test-')));
     try {
       const providerRoot = join(dir, 'provider'), promptFile = join(dir, 'prompt.txt'), marker = join(dir, 'IMPORTED');
@@ -99,9 +100,16 @@ test('根發射器在匯入前核固定設定、node、提示及執行來源；�
         return { path, mode: '100644', sha256: sha256(bytes), bytes: Buffer.byteLength(bytes) };
       });
       writeFileSync(promptFile, 'synthetic prompt', { mode: 0o600 });
+      // 這是身分資料夾具，不是啟動子程序的 Node；真執行映像由完整 Mac 資格驗收。
+      // 只替子程序設定身分與 argv，生成的 launcher、檔案核對及雜湊函式原樣執行。
+      const nodeIdentity = join(dir, 'node-identity'), harness = join(dir, 'harness.mjs');
+      const nodeBytes = variant === 'node-size' ? Buffer.alloc(16 * 1024 * 1024 + 1) : Buffer.from('synthetic node identity');
+      writeFileSync(nodeIdentity, nodeBytes, { mode: 0o600 });
+      if (variant === 'node-mode') chmodSync(nodeIdentity, 0o620);
+      if (variant === 'node-links') linkSync(nodeIdentity, join(dir, 'node-identity-link'));
       const d = { purpose: 'qualification', providerRoot, providerHead: 'a'.repeat(40), providerFiles,
         repo: dir, base: 'b'.repeat(40), head: 'c'.repeat(40), promptFile, promptSha256: sha256('synthetic prompt'),
-        node: realpathSync(process.execPath), nodeSha256: sha256(readFileSync(process.execPath)), qualification: null };
+        node: nodeIdentity, nodeSha256: sha256(nodeBytes), qualification: null };
       if (variant === 'node') d.nodeSha256 = '0'.repeat(64);
       if (variant === 'missing-source') d.providerFiles = d.providerFiles.slice(1);
       let config = JSON.stringify(d) + '\n';
@@ -114,8 +122,25 @@ test('根發射器在匯入前核固定設定、node、提示及執行來源；�
       if (variant === 'source') writeFileSync(join(providerRoot, 'scripts/gemini-browser-client.js'), 'throw Error("unverified import");');
       if (variant === 'prompt') writeFileSync(promptFile, 'changed');
       if (variant === 'config') writeFileSync(configFile, JSON.stringify({ ...d, nodeSha256: '0'.repeat(64) }) + '\n');
-      const r = spawnSync(process.execPath, [target === 'runner' ? launcher : loader, ...(variant === 'flags' ? ['--force'] : [])], { encoding: 'utf8', timeout: 5000, env: { PATH: '/usr/bin:/bin' } });
+      const execIdentity = variant === 'node-path' ? join(dir, 'other-node-identity') : nodeIdentity;
+      if (variant === 'node-path') writeFileSync(execIdentity, nodeBytes, { mode: 0o600 });
+      const entry = target === 'runner' ? launcher : loader, args = [execIdentity, entry, ...(variant === 'flags' ? ['--force'] : [])];
+      writeFileSync(harness, `
+        import assert from 'node:assert/strict';
+        Object.defineProperty(process, 'execPath', { value: ${JSON.stringify(execIdentity)} });
+        process.argv = ${JSON.stringify(args)};
+        assert.equal(process.execPath, ${JSON.stringify(execIdentity)});
+        assert.deepEqual(process.argv, ${JSON.stringify(args)});
+        try { await import(${JSON.stringify(pathToFileURL(entry).href)}); process.stdout.write('BOOTSTRAP_ACCEPTED\\n'); }
+        catch (error) {
+          if (error.message !== 'GEMINI_BROWSER_BOOTSTRAP_REJECTED') throw error;
+          process.stderr.write('BOOTSTRAP_REJECTED\\n'); process.exitCode = 1;
+        }
+      `);
+      const r = spawnSync(process.execPath, [harness], { encoding: 'utf8', timeout: 5000, env: { PATH: '/usr/bin:/bin' } });
       assert.equal(r.status, variant === 'good' ? 0 : 1, `${target}/${variant}: ${r.stderr}`);
+      assert.equal(r.stderr, variant === 'good' ? '' : 'BOOTSTRAP_REJECTED\n', `${target}/${variant}`);
+      assert.equal(r.stdout.endsWith('BOOTSTRAP_ACCEPTED\n'), variant === 'good', `${target}/${variant}`);
       assert.equal(existsSync(marker), variant === 'good', `${target}/${variant}`);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
