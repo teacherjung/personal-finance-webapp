@@ -8,7 +8,7 @@ import { readMail, writeOnce } from '../scripts/gemini-browser-files.js';
 import { jobFixture, browserFixture } from './helpers/gemini-browser-fixture.js';
 
 test('固定 CUA 完整路徑只建自有分頁、送一次、存原文及官方明細後關閉', async () => {
-  const j = jobFixture(), b = browserFixture(j); j.serve();
+  const j = jobFixture(), b = browserFixture(j, { detailsLoading: true }); j.serve();
   try {
     await beginBrowserScan(b.browser, j.runId);
     assert.equal(b.state.sent, 1); assert.equal(b.state.responses, 1);

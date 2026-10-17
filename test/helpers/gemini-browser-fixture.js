@@ -37,7 +37,7 @@ export function jobFixture() {
 }
 
 export function browserFixture(job, options = {}) {
-  const calls = [], state = { temporary: false, text: '', selected: 'Open mode picker, currently Flash', responses: 0, sent: 0, menu: '', dialog: false, closed: false, pending: false, ...options };
+  const calls = [], state = { temporary: false, text: '', selected: 'Open mode picker, currently Flash', responses: 0, sent: 0, menu: '', dialog: false, detailsLoaded: true, closed: false, pending: false, ...options };
   const raw = answer(job.packet);
   const locator = key => ({
     getByRole: (role, opt = {}) => locator(`${key}/${role}:${String(opt.name ?? '')}`),
@@ -47,7 +47,7 @@ export function browserFixture(job, options = {}) {
     async count() { assertKey(key.endsWith('model-response-content')); return state.responses; },
     async textContent() { assertKey(key.includes('textbox:Enter a prompt for Gemini')); return state.text; },
     async fill(text) { calls.push(['fill', text]); state.text = options.truncate ? text.slice(0, -1) : text; },
-    async innerText() { if (key.endsWith('model-response-content')) return state.raw ?? raw; if (key === 'dialog:') return state.details ?? DETAILS; throw Error(`unexpected read ${key}`); },
+    async innerText() { if (key.endsWith('model-response-content')) return state.raw ?? raw; if (key === 'dialog:') return state.detailsLoaded ? state.details ?? DETAILS : 'Response details'; throw Error(`unexpected read ${key}`); },
     async isVisible() {
       if (key === 'dialog:') return state.dialog;
       if (key.includes('Temporary chat')) return true;
@@ -57,6 +57,11 @@ export function browserFixture(job, options = {}) {
       if (key.includes('Show more options')) return state.sent > 0 && !state.pending;
       if (key.includes('menuitem:')) return !!state.menu;
       throw Error(`unexpected visibility ${key}`);
+    },
+    async waitFor(options) {
+      if (key === 'dialog:') { assertKey(options.state === 'hidden' && !state.dialog); return; }
+      if (key === 'dialog:/text:/^Used /') { assertKey(options.state === 'visible' && state.dialog); state.detailsLoaded = true; return; }
+      assertKey(key.endsWith('menuitem:See response details') && options.state === 'visible' && !!state.menu);
     },
     async click() {
       calls.push(['click', key]);
@@ -69,7 +74,7 @@ export function browserFixture(job, options = {}) {
         const consumed = readMail(job.dir, 'consumed.json'); assertKey(consumed.stage === 'submit-once');
         state.sent++; state.responses++; state.text = ''; if (options.afterSubmit) options.afterSubmit(state);
       } else if (key.endsWith('button:Show more options')) state.menu = 'response';
-      else if (key.endsWith('menuitem:See response details')) { state.dialog = true; state.menu = ''; }
+      else if (key.endsWith('menuitem:See response details')) { state.dialog = true; state.detailsLoaded = !options.detailsLoading; state.menu = ''; }
       else if (key.endsWith('button:Close sidebar')) { state.dialog = false; if (options.afterDetails) options.afterDetails(state); }
       else throw Error(`unexpected click ${key}`);
     },

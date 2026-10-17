@@ -53,7 +53,7 @@ async function cleanup(s, failed) {
   s.state = 'CLOSED';
 }
 async function failed(s) {
-  if (!mailExists(s.dir, 'adapter-failed.json')) writeOnce(s.dir, 'adapter-failed.json', { instance: s.instance });
+  if (!mailExists(s.dir, 'adapter-failed.json')) writeOnce(s.dir, 'adapter-failed.json', { instance: s.instance, phase: s.phase ?? s.state });
   await cleanup(s, true);
 }
 
@@ -112,6 +112,7 @@ export async function captureBrowserScan(runId) {
   // 先鎖記憶體狀態，阻止兩個同時的 capture 操作同一明細對話框。
   s.state = 'CAPTURING';
   try {
+    s.phase = 'response';
     await origin(s);
     const count = await step(s, () => responses(s.tab).count());
     if (count > 1) browserError('MULTIPLE_RESPONSES');
@@ -125,16 +126,21 @@ export async function captureBrowserScan(runId) {
     if (typeof response !== 'string' || !/** @type {string & {isWellFormed(): boolean}} */ (response).isWellFormed()) browserError('REPLY_ENCODING');
     const raw = Buffer.from(response);
     if (!raw.length || raw.length > REPLY_CAP) browserError('REPLY_SIZE');
+    s.phase = 'details-menu';
     await step(s, () => button(s.tab, 'Show more options').click());
-    await until(s, () => s.tab.playwright.getByRole('menuitem', { name: 'See response details', exact: true }).isVisible());
-    await step(s, () => s.tab.playwright.getByRole('menuitem', { name: 'See response details', exact: true }).click());
+    const detailsItem = s.tab.playwright.getByRole('menuitem', { name: 'See response details', exact: true });
+    await step(s, () => detailsItem.waitFor({ state: 'visible', timeoutMs: 10000 }));
+    s.phase = 'details-content';
+    await step(s, () => detailsItem.click());
     const dialog = s.tab.playwright.getByRole('dialog');
-    await until(s, () => dialog.isVisible());
+    await step(s, () => dialog.getByText(/^Used /).waitFor({ state: 'visible', timeoutMs: 10000 }));
     const details = await step(s, () => dialog.innerText());
     if (details !== DETAILS) browserError('ACTUAL_MODEL');
     writeOnce(s.dir, 'proof.jpg', Buffer.from(await step(s, () => s.tab.screenshot({ fullPage: false }))));
+    s.phase = 'details-close';
     await step(s, () => dialog.getByRole('button', { name: 'Close sidebar', exact: true }).click());
-    await until(s, async () => !await dialog.isVisible());
+    await step(s, () => dialog.waitFor({ state: 'hidden', timeoutMs: 10000 }));
+    s.phase = 'final-observation';
     if (await step(s, () => responses(s.tab).count()) !== 1 || sha256(await step(s, () => responses(s.tab).innerText())) !== sha256(raw)
       || await step(s, () => selected(s.tab)) !== SELECTED || await step(s, () => button(s.tab, 'Stop response').isVisible())) browserError('REPLY_CHANGED');
     const observation = { schema: 'browser-ui/v1', scanId: s.d.scanId, tabId: s.tab.id, origin: ORIGIN,
