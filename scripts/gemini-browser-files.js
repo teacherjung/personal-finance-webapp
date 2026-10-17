@@ -9,7 +9,13 @@ import { isMainModule } from '../lib/is-main.js';
 
 export const browserError = code => { throw Error(`GEMINI_BROWSER_${code}`); };
 export const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-export const JOB_ROOT = `/private/tmp/gemini-browser-jobs-${process.getuid?.()}`;
+let expectedOwner = -1;
+export let JOB_ROOT = '';
+// 固定 loader 或普通 Node runner 提供部署擁有者；瀏覽器宿主不必取得 process 能力。
+export function configureBrowserOwner(uid) {
+  if (!Number.isSafeInteger(uid) || uid < 0 || (expectedOwner !== -1 && expectedOwner !== uid)) browserError('OWNER');
+  expectedOwner = uid; JOB_ROOT = `/private/tmp/gemini-browser-jobs-${uid}`;
+}
 export const SOURCE_FILES = [
   'scripts/gemini-browser-files.js', 'scripts/gemini-browser-protocol.js', 'scripts/gemini-browser-client.js',
   'scripts/gemini-browser-runner.js', 'scripts/gemini-browser-cua.js', 'scripts/gemini-browser-canary.js',
@@ -24,7 +30,7 @@ const identity = s => [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs, s.mode, s.nli
 export function privateDirectory(path) {
   if (typeof path !== 'string' || !path.startsWith('/') || resolve(path) !== path || realpathSync(path) !== path) browserError('DIRECTORY');
   const s = lstatSync(path);
-  if (!s.isDirectory() || s.uid !== process.getuid?.() || (s.mode & 0o077)) browserError('DIRECTORY');
+  if (!s.isDirectory() || s.uid !== expectedOwner || (s.mode & 0o077)) browserError('DIRECTORY');
   return path;
 }
 
@@ -33,7 +39,7 @@ export function readBoundedFile(path, cap = 256 * 1024) {
   try {
     if (resolve(path) !== path || realpathSync(path) !== path) browserError('FILE_PATH');
     const before = lstatSync(path, { bigint: true });
-    if (!before.isFile() || before.nlink !== 1n || before.uid !== BigInt(process.getuid?.() ?? -1)
+    if (!before.isFile() || before.nlink !== 1n || before.uid !== BigInt(expectedOwner)
       || (before.mode & 0o022n) || before.size > BigInt(cap)) browserError('FILE');
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     const opened = fstatSync(fd, { bigint: true });
@@ -87,4 +93,4 @@ export function sourceDigest(root, paths) {
   return { rows, sha256: sha256(JSON.stringify(rows)) };
 }
 
-if (isMainModule(import.meta.url)) { process.stderr.write('GEMINI_BROWSER_LIBRARY_ONLY\n'); process.exitCode = 78; }
+if (typeof process !== 'undefined' && isMainModule(import.meta.url)) { process.stderr.write('GEMINI_BROWSER_LIBRARY_ONLY\n'); process.exitCode = 78; }

@@ -64,7 +64,9 @@ test('根發射器在匯入前核固定設定、node、提示及執行來源；�
       const providerRoot = join(dir, 'provider'), promptFile = join(dir, 'prompt.txt'), marker = join(dir, 'IMPORTED');
       const script = `import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(marker)},'yes'); export async function runBrowserScan(d) { if(d.pins.length!==5)throw Error('pins'); return {status:'SYNTHETIC',runId:'fake',receipt:'fake'}; }`;
       const providerFiles = SOURCE_FILES.map(path => {
-        const bytes = ['scripts/gemini-browser-runner.js', 'scripts/gemini-browser-cua.js'].includes(path) ? script : path === 'package.json' ? '{"type":"module"}' : '';
+        const bytes = ['scripts/gemini-browser-runner.js', 'scripts/gemini-browser-cua.js'].includes(path) ? script
+          : path === 'scripts/gemini-browser-files.js' ? 'export function configureBrowserOwner(uid) { if(!Number.isSafeInteger(uid))throw Error("uid"); }'
+          : path === 'package.json' ? '{"type":"module"}' : '';
         mkdirSync(dirname(join(providerRoot, path)), { recursive: true }); writeFileSync(join(providerRoot, path), bytes, { mode: 0o600 });
         return { path, mode: '100644', sha256: sha256(bytes), bytes: Buffer.byteLength(bytes) };
       });

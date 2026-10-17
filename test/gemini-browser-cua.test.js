@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, chmodSync, symlinkSync, rmSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { beginBrowserScan, captureBrowserScan, cancelBrowserScan } from '../scripts/gemini-browser-cua.js';
 import { readMail, writeOnce } from '../scripts/gemini-browser-files.js';
@@ -108,4 +108,48 @@ test('送出許可前取消、原文編碼壞掉及模型夾帶命令都不能�
       assert.equal(fake.state.sent, 1); assert.equal(fake.calls.filter(c => c[0] === 'goto').length, 1);
     } finally { k.cleanup(); }
   }
+});
+
+test('沒有 process 的受限宿主用固定 owner 與活 runner 握手走完整 CUA 配方', () => {
+  const fixture = new URL('./helpers/gemini-browser-fixture.js', import.meta.url).href;
+  const files = new URL('../scripts/gemini-browser-files.js', import.meta.url).href;
+  const adapter = new URL('../scripts/gemini-browser-cua.js', import.meta.url).href;
+  const script = `
+    import assert from 'node:assert/strict';
+    import vm from 'node:vm';
+    import {readFileSync} from 'node:fs';
+    import {jobFixture,browserFixture} from ${JSON.stringify(fixture)};
+    const context=vm.createContext({Buffer,TextDecoder,setTimeout,clearTimeout});
+    assert.equal(vm.runInContext('typeof process',context),'undefined');
+    const allowed=new Set(['node:fs','node:path','node:url','node:crypto','node:perf_hooks','node:util']);
+    const cache=new Map();
+    async function load(id){
+      if(cache.has(id))return cache.get(id);
+      let module;
+      if(id.startsWith('node:')){
+        assert.ok(allowed.has(id),'unsupported host module '+id);
+        const value=await import(id);
+        module=new vm.SyntheticModule(Object.keys(value),function(){for(const key of Object.keys(value))this.setExport(key,value[key]);},{context,identifier:id});
+      }else{
+        module=new vm.SourceTextModule(readFileSync(new URL(id),'utf8'),{context,identifier:id,initializeImportMeta(meta,m){meta.url=m.identifier;}});
+      }
+      cache.set(id,module);
+      await module.link((specifier,ref)=>load(specifier.startsWith('node:')?specifier:new URL(specifier,ref.identifier).href));
+      return module;
+    }
+    const f=await load(${JSON.stringify(files)});await f.evaluate();
+    f.namespace.configureBrowserOwner(process.getuid());
+    assert.throws(()=>f.namespace.configureBrowserOwner(process.getuid()+1));
+    const a=await load(${JSON.stringify(adapter)});await a.evaluate();
+    const j=jobFixture(),b=browserFixture(j);j.serve();
+    try{
+      assert.equal((await a.namespace.beginBrowserScan(b.browser,j.runId)).state,'SUBMITTED');
+      assert.equal((await a.namespace.captureBrowserScan(j.runId)).state,'CAPTURED');
+      assert.equal(b.state.sent,1);assert.equal(b.state.closed,true);
+    }finally{j.cleanup();}
+    process.stdout.write('RESTRICTED-HOST-OK');
+  `;
+  const result = spawnSync(process.execPath, ['--experimental-vm-modules', '--input-type=module', '-e', script],
+    { encoding: 'utf8', timeout: 15000, env: { PATH: '/usr/bin:/bin' } });
+  assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, 'RESTRICTED-HOST-OK');
 });

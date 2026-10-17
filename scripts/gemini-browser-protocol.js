@@ -77,4 +77,4 @@ export function validateBrowserReply(raw, observation, packet) {
   return { answer, responseSha256: sha256(raw), responseBytes: raw.length, sourceKind: 'browser-ui/v1', receiverConsumptionVerified: false };
 }
 
-if (isMainModule(import.meta.url)) { process.stderr.write('GEMINI_BROWSER_LIBRARY_ONLY\n'); process.exitCode = 78; }
+if (typeof process !== 'undefined' && isMainModule(import.meta.url)) { process.stderr.write('GEMINI_BROWSER_LIBRARY_ONLY\n'); process.exitCode = 78; }

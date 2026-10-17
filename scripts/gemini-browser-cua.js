@@ -21,7 +21,6 @@ const selected = tab => main(tab).getByRole('button', { name: /^Open mode picker
 function alive(s) {
   if (Date.now() >= s.d.expiresAt || performance.now() - s.started > s.remaining
     || mailExists(s.dir, 'aborted.json') || mailExists(s.dir, 'cancel.json')) browserError('ABORTED');
-  process.kill(s.d.pid, 0);
   if (sourceDigest(SOURCE_ROOT, SOURCE_FILES).sha256 !== s.d.sourceSha256
     || sha256(readBoundedFile(join(s.dir, 'prompt.txt'))) !== s.d.requestSha256
     || !equal(readMail(s.dir, 'descriptor.json'), s.d)) browserError('SOURCE_CHANGED');
@@ -160,4 +159,4 @@ export async function cancelBrowserScan(runId) {
   return { runId, state: 'CLOSED' };
 }
 
-if (isMainModule(import.meta.url)) { process.stderr.write('GEMINI_BROWSER_CUA_REPL_REQUIRED\n'); process.exitCode = 78; }
+if (typeof process !== 'undefined' && isMainModule(import.meta.url)) { process.stderr.write('GEMINI_BROWSER_CUA_REPL_REQUIRED\n'); process.exitCode = 78; }

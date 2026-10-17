@@ -6,7 +6,7 @@ import { join, dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
-import { SOURCE_ROOT, SOURCE_FILES, JOB_ROOT, privateDirectory, readMail, readBoundedFile, writeOnce, mailExists, sourceDigest, browserError } from './gemini-browser-files.js';
+import { SOURCE_ROOT, SOURCE_FILES, JOB_ROOT, configureBrowserOwner, privateDirectory, readMail, readBoundedFile, writeOnce, mailExists, sourceDigest, browserError } from './gemini-browser-files.js';
 import { prepareBrowserPacket, validateBrowserReply, validateLease, fields, PROMPT_CAP, REPLY_CAP, MODEL, EFFORT, sha256, SELECTED } from './gemini-browser-protocol.js';
 import { parseUniqueJson } from './gemini-native-protocol.js';
 import { snapshotPinnedSources, verifyPinnedSourcesUnchanged } from './gemini-native-runner.js';
@@ -21,12 +21,13 @@ const random = n => randomBytes(n).toString('hex');
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 export const WORKER_FILES = ['scripts/gemini-browser-client.js', 'scripts/gemini-browser-protocol.js', 'scripts/gemini-native-protocol.js', 'lib/is-main.js'];
 const WALL_MS = 15 * 60000;
+configureBrowserOwner(process.getuid?.());
 
 // 產生器本身不是信任根：操作者另存並核對產物與 node 的預期指紋，才可執行該絕對路徑。
 function bootstrapSource(configPath, configSha256, providerRoot, host, cuaLoader) {
   if (typeof configPath !== 'string' || !configPath.startsWith('/') || !/^[a-f0-9]{64}$/.test(configSha256)
     || typeof providerRoot !== 'string' || realpathSync(providerRoot) !== providerRoot) browserError('LAUNCHER_CONFIG');
-  return `await (${pinnedBootstrap.toString()})(${JSON.stringify(configPath)}, ${JSON.stringify(configSha256)}, ${JSON.stringify(SOURCE_FILES)}, ${JSON.stringify(providerRoot)}, ${JSON.stringify(host)}, ${JSON.stringify(cuaLoader)})`;
+  return `await (${pinnedBootstrap.toString()})(${JSON.stringify(configPath)}, ${JSON.stringify(configSha256)}, ${JSON.stringify(SOURCE_FILES)}, ${JSON.stringify(providerRoot)}, ${JSON.stringify(host)}, ${JSON.stringify(cuaLoader)}, ${JSON.stringify(process.getuid?.())})`;
 }
 export function renderBrowserLauncher(configPath, configSha256, providerRoot, cuaLoader) {
   fields(cuaLoader, ['path', 'sha256']);
@@ -39,13 +40,15 @@ export function renderBrowserLauncher(configPath, configSha256, providerRoot, cu
 }
 export function renderBrowserCuaLoader(configPath, configSha256, providerRoot) {
   const entry = pathToFileURL(join(providerRoot, 'scripts/gemini-browser-cua.js')).href;
+  const files = pathToFileURL(join(providerRoot, 'scripts/gemini-browser-files.js')).href;
   return `${bootstrapSource(configPath, configSha256, providerRoot, 'cua', null)};\n`
+    + `const files = await import(${JSON.stringify(files)}); files.configureBrowserOwner(${JSON.stringify(process.getuid?.())});\n`
     + `const adapter = await import(${JSON.stringify(entry)});\n`
     + 'export const beginBrowserScan = adapter.beginBrowserScan, captureBrowserScan = adapter.captureBrowserScan, cancelBrowserScan = adapter.cancelBrowserScan;\n';
 }
 
 // 此函式序列化成獨立 root launcher；核對執行來源前只載入 Node 內建模組。
-async function pinnedBootstrap(configPath, configSha256, requiredSources, providerRoot, host, cuaLoader) {
+async function pinnedBootstrap(configPath, configSha256, requiredSources, providerRoot, host, cuaLoader, ownerUid) {
   const fs = await import('node:fs'), path = await import('node:path'), crypto = await import('node:crypto'), url = await import('node:url');
   const fail = () => { throw Error('GEMINI_BROWSER_BOOTSTRAP_REJECTED'); };
   const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -53,7 +56,7 @@ async function pinnedBootstrap(configPath, configSha256, requiredSources, provid
   const read = (p, expected = undefined) => {
     if (typeof p !== 'string' || path.resolve(p) !== p || fs.realpathSync(p) !== p) fail();
     const before = fs.lstatSync(p, { bigint: true });
-    if (!before.isFile() || before.nlink !== 1n || before.uid !== BigInt(process.getuid?.() ?? -1)
+    if (!before.isFile() || before.nlink !== 1n || before.uid !== BigInt(ownerUid)
       || (before.mode & 0o022n) || before.size > 16n * 1024n * 1024n) fail();
     const fd = fs.openSync(p, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     try {
