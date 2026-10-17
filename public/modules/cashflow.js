@@ -164,7 +164,7 @@ export async function renderCashflow() {
         const pending = pendingCashflowMessage(saved);
         const message = `${pending || '畫面暫時無法更新，以下是上次成功載入的內容'}。載入失敗：${e.message}`;
         showCashflowReadError(message, saved, generation);
-        toast(message, true);
+        if (!detachedByRouter) toast(message, true);
       } else {
         renderedState = null;
         host.innerHTML = '<div class="cashflow-workspace"><div class="page-head cashflow-head"><h1>銀行收支</h1></div></div>';
@@ -590,7 +590,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
     && root.querySelector('.modal') === dialog;
   const btn = /** @type {HTMLButtonElement|null} */ (dialog.querySelector('#bankApply'));
   const skipChk = /** @type {HTMLInputElement|null} */ (dialog.querySelector('#skipSimilarChk'));
-  const footnote = dialog.querySelector('#bankPreviewFootnote');
+  const fn = dialog.querySelector('#bankPreviewFootnote');
   const close = /** @type {HTMLButtonElement} */ (dialog.querySelector('[data-close]'));
   setTimeout(() => {
     if (!owns()) return;
@@ -598,7 +598,7 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
     // 重算用同一支純函式，不手拼第二句。
     if (skipChk) skipChk.onchange = () => {
       if (!owns()) return;
-      if (footnote) footnote.textContent = bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate,
+      if (fn) fn.textContent = bankPreviewFootnote({ shown: previewTx.length, duplicate: c.duplicate,
         foreign: c.foreign, similar: c.similar, skipSimilarChecked: skipChk.checked === true });
     };
     if (btn) btn.onclick = async () => {

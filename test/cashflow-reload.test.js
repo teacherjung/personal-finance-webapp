@@ -11,6 +11,8 @@ let rows = [];
 let calls = [];
 let readQueue = [];
 let endpointQueue = new Map();
+let previewSimilar = 1;
+let applyFlags = [];
 let failReads = false;
 let failWrites = false;
 let legacyText = false;
@@ -54,11 +56,12 @@ async function boot() {
     if (path === '/api/bank-statement/preview') {
       const body = JSON.parse(init.body);
       assert.equal(body.data, 'c3ludGhldGljLXBkZg==');
-      return new Response(JSON.stringify({ t: 'done', r: { rows: [], transactions: { rows: [{ ...fixture()[0], similar: true }], counts: { expense: 1, similar: 1 } } } }) + '\n', { headers: { 'Content-Type': 'application/x-ndjson' } });
+      return new Response(JSON.stringify({ t: 'done', r: { rows: [], transactions: { rows: [{ ...fixture()[0], similar: !!previewSimilar }], counts: { expense: 1, similar: previewSimilar } } } }) + '\n', { headers: { 'Content-Type': 'application/x-ndjson' } });
     }
     if (path === '/api/bank-statement/apply') {
       const body = JSON.parse(init.body);
       assert.equal(body.data, 'c3ludGhldGljLXBkZg==');
+      applyFlags.push({ hasSkip: Object.hasOwn(body, 'skipSimilar'), skip: body.skipSimilar });
       if (holdBeforeWrite) await holdBeforeWrite.promise;
       if (failWrites) return json({ error: '本題匯入失敗' }, 503);
       rows.push({ ...fixture()[0], id: `${serial}-import`, amount: 42000, source: 'bank', batchId: `${serial}-batch` });
@@ -91,7 +94,7 @@ async function boot() {
 }
 beforeEach(async () => {
   windowErrors = [];
-  serial++; rows = fixture(); calls = []; readQueue = []; endpointQueue = new Map(); failReads = false; failWrites = false; legacyText = false; holdWrite = null; holdBeforeWrite = null;
+  serial++; rows = fixture(); calls = []; readQueue = []; endpointQueue = new Map(); previewSimilar = 1; applyFlags = []; failReads = false; failWrites = false; legacyText = false; holdWrite = null; holdBeforeWrite = null;
   await boot();
   document.getElementById('modal-root').replaceChildren();
   await navigate('#cards'); await navigate('#cashflow');
@@ -534,6 +537,7 @@ test('第二階段｜真正 router 先清空工作區，失敗後恢復同次成
   assert.deepEqual(snapshot(), before);
   assert.match(text('#cashflowReadError'), /畫面暫時無法更新，以下是上次成功載入的內容/);
   assert.equal(el('#cashflowReadError img'), null);
+  assert.equal(text('#toast-root'), '', 'router 脫離後恢復只用持續提示');
   await click('#retryCashflowRead');
   assert.equal(reads(), 2); assert.equal(writes().length, 0);
   assert.equal(el('#cashflowReadError'), null);
@@ -555,6 +559,18 @@ test('第二階段｜正式匯入確認後 GET 失敗保留舊列表，重讀不
   assert.equal(el('#cashflowReadError'), null);
   assert.ok(snapshot().ids.includes(`${serial}-import`));
   assert.match(el(`tbody [data-edit="${serial}-import"]`).closest('tr').textContent, /42,000/);
+});
+
+test('第二階段｜原工作區仍在頁內的讀取失敗保留原通知', async () => {
+  const node = el('.cashflow-workspace'), before = snapshot();
+  failReads = true;
+  await renderCashflow(); await settle();
+  assert.equal(el('.cashflow-workspace'), node);
+  assert.deepEqual(snapshot(), before);
+  assert.equal(reads(), 1); assert.equal(writes().length, 0);
+  assert.match(text('#cashflowReadError'), /載入失敗：合成錯誤 <img/);
+  assert.match(text('#toast-root'), /載入失敗：合成錯誤 <img/);
+  assert.equal(el('#toast-root img'), null);
 });
 
 for (const path of ['/api/transactions', '/api/accounts', '/api/categories', '/api/income-categories', '/api/transfer-subcategories']) test(`第二階段｜${path} 失敗不提交局部結果，唯讀重試連點只讀一次`, async () => {
@@ -745,9 +761,11 @@ test('第二階段｜同頁換新預覽，舊成功不能清同名新鈕或挪�
   await bankPreview(); const original = el('#bankApply'), oldApply = original.onclick, oldSkip = el('#skipSimilarChk'), oldChange = oldSkip.onchange;
   const wait = deferred(); holdBeforeWrite = wait;
   try {
+    oldSkip.checked = true;
     await click('#bankApply'); await click('#modal-root [data-close]'); await bankPreview();
     const fresh = el('#bankApply'), freshDialog = el('#modal-root .modal'), newSkip = el('#skipSimilarChk');
     assert.notEqual(fresh, original); newSkip.checked = false; newSkip.dispatchEvent(new Event('change', { bubbles: true }));
+    assert.deepEqual(applyFlags, [{ hasSkip: true, skip: true }], '已送出的 body 保留按下原窗時的值');
     const footnote = text('#bankPreviewFootnote'); oldSkip.checked = true; oldChange();
     assert.equal(text('#bankPreviewFootnote'), footnote); assert.equal(newSkip.checked, false);
     const active = document.activeElement; wait.resolve(); await settle();
@@ -755,6 +773,7 @@ test('第二階段｜同頁換新預覽，舊成功不能清同名新鈕或挪�
     assert.equal(el('#modal-root .modal'), freshDialog); assert.equal(el('#bankApply'), fresh); assert.equal(fresh.disabled, false);
     assert.equal(text('#bankPreviewFootnote'), footnote); assert.equal(document.activeElement, active);
     oldApply(); await settle(); assert.equal(writes().filter(x => x.path.endsWith('/apply')).length, 1);
+    assert.deepEqual(applyFlags, [{ hasSkip: true, skip: true }]);
   } finally { wait.resolve(); holdBeforeWrite = null; await settle(); }
 });
 
@@ -832,4 +851,31 @@ test('第二階段｜history 路由離開返回不復活前次節點，即使沒
   failReads = true; window.history.replaceState(null, '', '#cashflow'); await app.router(); await settle();
   assert.notEqual(el('.cashflow-workspace'), original); assert.equal(original.isConnected, false);
   assert.equal(el('.cashflow-ledger'), null); assert.match(text('#cashflowReadError'), /暫時無法載入銀行收支/);
+});
+
+for (const checked of [true, false, null]) test(`第二階段｜原預覽勾選${checked === null ? '入口不存在' : checked ? '開' : '關'}：真 apply 僅嚴格 true 才帶跳過旗標`, async () => {
+  previewSimilar = checked === null ? 0 : 1;
+  await bankPreview();
+  const checkbox = el('#skipSimilarChk');
+  if (checked === null) assert.equal(checkbox, null);
+  else { checkbox.checked = checked; checkbox.dispatchEvent(new Event('change', { bubbles: true })); }
+  await click('#bankApply');
+  assert.equal(rows.find(row => row.id === `${serial}-import`).batchId, `${serial}-batch`);
+  assert.deepEqual(applyFlags, [{ hasSkip: checked === true, skip: checked === true ? true : undefined }]);
+  assert.equal(writes().filter(x => x.path.endsWith('/apply')).length, 1);
+});
+
+for (const checked of [true, false]) test(`第二階段｜原預覽外同名控制項與原勾選${checked ? '開' : '關'}相反，apply 仍讀原窗`, async () => {
+  await bankPreview();
+  const own = el('#modal-root #skipSimilarChk'); own.checked = checked;
+  // 合成身分邊界：原窗仍有效，外部同名 ID 只用來揭露全域取值的錯誤來源。
+  const outside = document.createElement('input'); outside.type = 'checkbox'; outside.id = own.id; outside.checked = !checked;
+  document.body.prepend(outside);
+  try {
+    assert.equal(document.getElementById(own.id), outside);
+    await click('#bankApply');
+    assert.equal(rows.find(row => row.id === `${serial}-import`).batchId, `${serial}-batch`);
+    assert.deepEqual(applyFlags, [{ hasSkip: checked, skip: checked ? true : undefined }]);
+    assert.equal(writes().filter(x => x.path.endsWith('/apply')).length, 1);
+  } finally { outside.remove(); }
 });
