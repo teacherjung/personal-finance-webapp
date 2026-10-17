@@ -215,7 +215,7 @@ export async function runBrowserScan(deployment) {
     if (sha256(bytes) !== q.sha256) browserError('QUALIFICATION_HASH');
     const receipt = parseUniqueJson(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
     if (receipt.purpose !== 'qualification' || receipt.status !== 'PUBLISHED' || receipt.sourceSha256 !== sources.sha256
-      || receipt.promptBytes < PROMPT_CAP || receipt.providerHead !== deployment.providerHead) browserError('QUALIFICATION');
+      || receipt.promptBytes !== PROMPT_CAP || receipt.providerHead !== deployment.providerHead) browserError('QUALIFICATION');
     if (receipt.sourcePins?.find(p => p.name === 'node')?.sha256 !== deployment.pins.find(p => p.name === 'node').sha256) browserError('QUALIFICATION_NODE');
   } else if (deployment.qualification !== null) browserError('QUALIFICATION');
   try { mkdirSync(JOB_ROOT, { mode: 0o700 }); } catch (e) { if (/** @type {NodeJS.ErrnoException} */ (e).code !== 'EEXIST') throw e; }

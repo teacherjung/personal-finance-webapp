@@ -7,9 +7,9 @@ import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { browserClient } from '../scripts/gemini-browser-client.js';
-import { leaseMessage, sha256 } from '../scripts/gemini-browser-protocol.js';
+import { leaseMessage, sha256, SELECTED } from '../scripts/gemini-browser-protocol.js';
 import { writeOnce, readMail, mailExists, SOURCE_FILES } from '../scripts/gemini-browser-files.js';
-import { checkBrowserArtifacts, renderBrowserLauncher, renderBrowserCuaLoader } from '../scripts/gemini-browser-runner.js';
+import { BrowserLease, checkBrowserArtifacts, renderBrowserLauncher, renderBrowserCuaLoader } from '../scripts/gemini-browser-runner.js';
 import { material, answer, observation, jobFixture } from './helpers/gemini-browser-fixture.js';
 
 test('信箱根採固定系統根的正規化結果，不跟環境暫存目錄走', () => {
@@ -144,4 +144,82 @@ test('根發射器在匯入前核固定設定、node、提示及執行來源；�
       assert.equal(existsSync(marker), variant === 'good', `${target}/${variant}`);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
+});
+
+
+test('ready 沿用 claim challenge 時不產生 permit；不同 challenge 才授權', () => {
+  for (const repeated of [true, false]) {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'browser-ready-test-')));
+    try {
+      const descriptor = { runId: 'a'.repeat(32), lease: 'b'.repeat(64), requestSha256: 'c'.repeat(64), expiresAt: Date.now() + 60000 };
+      const lease = new BrowserLease(dir, descriptor, () => {});
+      const claim = leaseMessage(descriptor, 'd'.repeat(32), 'e'.repeat(64), 'claim');
+      writeOnce(dir, 'claim.json', claim); lease.tick();
+      assert.equal(lease.state, 'CLAIMED');
+      assert.deepEqual(readMail(dir, 'claim-ack.json'), { ...claim, stage: 'claimed' });
+      const challenge = repeated ? claim.challenge : 'f'.repeat(64);
+      const ready = { ...leaseMessage(descriptor, claim.instance, challenge, 'ready'), tabId: 'test-owned', temporary: true, initialResponses: 0, selected: SELECTED };
+      writeOnce(dir, 'ready.json', ready);
+      if (repeated) {
+        assert.throws(() => lease.tick(), /GEMINI_BROWSER_READY/);
+        assert.equal(lease.state, 'CLAIMED'); assert.equal(mailExists(dir, 'permit.json'), false);
+      } else {
+        lease.tick(); assert.equal(lease.state, 'SUBMIT_AUTHORIZED');
+        assert.deepEqual(readMail(dir, 'permit.json'), { ...ready, stage: 'submit-once' });
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
+test('正式入口只接受數值精確等於完整容量的資格收據', () => {
+  const runner = new URL('../scripts/gemini-browser-runner.js', import.meta.url).href;
+  const protocol = new URL('../scripts/gemini-browser-protocol.js', import.meta.url).href;
+  const fixture = new URL('./helpers/gemini-browser-fixture.js', import.meta.url).href;
+  // 替身只供來源、收據與建目錄邊界；原樣 runner 的資格分支照跑，不當 OS 或網頁驗收。
+  const script = `
+    import assert from 'node:assert/strict';
+    import vm from 'node:vm';
+    import {readFileSync,realpathSync} from 'node:fs';
+    import * as protocol from ${JSON.stringify(protocol)};
+    import {material as makeMaterial} from ${JSON.stringify(fixture)};
+    const material=makeMaterial(), context=vm.createContext({Buffer,TextDecoder,process,setTimeout,clearTimeout});
+    const node=realpathSync(process.execPath), nodeSha='1'.repeat(64), sourceSha='2'.repeat(64), head='3'.repeat(40);
+    let receiptBytes, reached=0;
+    const module=new vm.SourceTextModule(readFileSync(new URL(${JSON.stringify(runner)}),'utf8'),
+      {context,identifier:${JSON.stringify(runner)},initializeImportMeta(meta,m){meta.url=m.identifier;}});
+    await module.link(async (specifier,ref)=>{
+      const id=specifier.startsWith('node:')?specifier:new URL(specifier,ref.identifier).href;
+      const value={...await import(id)};
+      if(specifier==='node:fs')value.mkdirSync=()=>{reached++;throw Error('PREFLIGHT_ACCEPTED');};
+      if(specifier==='./gemini-browser-files.js')Object.assign(value,{
+        sourceDigest:()=>({sha256:sourceSha}),
+        readBoundedFile:p=>p.endsWith('settings.json')?Buffer.from(JSON.stringify({scanner:{strongest:protocol.MODEL,maxEffort:protocol.EFFORT,tool:'gemini-browser-runner.js'}})):receiptBytes
+      });
+      if(specifier==='./gemini-native-runner.js')value.snapshotPinnedSources=()=>[];
+      if(specifier==='./gemini-scan.js')Object.assign(value,{
+        verifyProvider:()=>({digest:'4'.repeat(64)}),buildScanMaterials:()=>({text:material.text,materialSha256:material.sha256})
+      });
+      return new vm.SyntheticModule(Object.keys(value),function(){for(const k of Object.keys(value))this.setExport(k,value[k]);},{context,identifier:id});
+    });
+    await module.evaluate();
+    const cap=protocol.PROMPT_CAP;
+    for(const [label,promptBytes] of [['good',cap],['missing',undefined],['object',{}],['string',String(cap)],['below',cap-1],['above',cap+1],['fraction',cap+0.5]]){
+      receiptBytes=Buffer.from(JSON.stringify({purpose:'qualification',status:'PUBLISHED',sourceSha256:sourceSha,
+        providerHead:head,promptBytes,sourcePins:[{name:'node',sha256:nodeSha}]}));
+      reached=0;
+      const pins=['wrapper','deployment','prompt','node','cua-loader'].map(name=>({name,
+        path:name==='node'?node:name==='prompt'?'/synthetic/prompt':'/synthetic/'+name,sha256:nodeSha}));
+      let message='';
+      try{await module.namespace.runBrowserScan({purpose:'scan',providerHead:head,repo:'/synthetic/repo',
+        base:material.base,head:material.head,promptFile:'/synthetic/prompt',pins,
+        qualification:{path:'/synthetic/receipt',sha256:protocol.sha256(receiptBytes)}});}
+      catch(error){message=error.message;}
+      assert.equal(message,label==='good'?'PREFLIGHT_ACCEPTED':'GEMINI_BROWSER_QUALIFICATION',label);
+      assert.equal(reached,label==='good'?1:0,label);
+    }
+    process.stdout.write('QUALIFICATION-CAPACITY-OK');
+  `;
+  const result = spawnSync(process.execPath, ['--experimental-vm-modules', '--input-type=module', '-e', script],
+    { encoding: 'utf8', timeout: 15000, env: { PATH: '/usr/bin:/bin' } });
+  assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, 'QUALIFICATION-CAPACITY-OK');
 });

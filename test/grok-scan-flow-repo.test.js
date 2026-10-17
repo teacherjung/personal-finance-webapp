@@ -28,7 +28,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename, dirname } from 'node:path';
 import { GROK_WALL_MS, needsInstall, repoLabelFrom, runScan } from '../scripts/grok-scan.js';
@@ -551,4 +551,34 @@ test('不擋的：盒內的相對捷徑、點開頭的 @範圍、optional 同名
     assert.match(r.summary.join('\n'), /轉送器/, label);
     assert.equal(logs.some((l) => /有 1 個捷徑在盒子裡解不開/.test(l)), missingLine, `${label}：解不開那一行${missingLine ? '沒' : '不該'}記`);
   }
+});
+
+
+test('外層限制寫入時仍可載入能力夾具並執行純本地題', (t) => {
+  if (!SANDBOX_OK) return t.skip(SKIP_AFTER_CANARY);
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'grok-fixture-host-')));
+  try {
+    const fixture = new URL('./helpers/grok-scan-flow-fixtures.js', import.meta.url).href;
+    const source = new URL('../scripts/grok-scan.js', import.meta.url).href;
+    const script = `
+      import assert from 'node:assert/strict';
+      import {readdirSync} from 'node:fs';
+      import {tmpdir} from 'node:os';
+      import {SANDBOX_OK} from ${JSON.stringify(fixture)};
+      import {needsInstall} from ${JSON.stringify(source)};
+      assert.equal(typeof SANDBOX_OK,'boolean');
+      assert.equal(needsInstall({dependencies:{synthetic:'1'}}),true);
+      assert.equal(needsInstall({optionalDependencies:{synthetic:'1'}}),false);
+      assert.deepEqual(readdirSync(tmpdir()),[]);
+      process.stdout.write(JSON.stringify({loaded:true,sandbox:SANDBOX_OK}));
+    `;
+    // 此 profile 只考夾具在受限寫入位置的載入；正式隔離由 canary 與資格場另驗。
+    const profile = '(version 1)(allow default)(deny network*)(deny file-write*)(allow file-write* (subpath (param "TEST_DIR")) (literal "/dev/null"))';
+    const r = spawnSync('/usr/bin/sandbox-exec', ['-p', profile, '-D', `TEST_DIR=${dir}`, process.execPath, '--input-type=module', '-e', script],
+      { encoding: 'utf8', timeout: 15000, env: { PATH: '/usr/bin:/bin', HOME: dir, TMPDIR: dir } });
+    assert.equal(r.status, 0, r.stderr);
+    const result = JSON.parse(r.stdout); assert.equal(result.loaded, true);
+    if (!result.sandbox) assert.match(r.stderr, /跳過＝不等於通過/);
+    assert.deepEqual(readdirSync(dir), []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

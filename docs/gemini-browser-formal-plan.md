@@ -83,3 +83,9 @@ CUA 不取得、代理或探測 process；檔案擁有者用固定 loader 內釘
 - 正式 review 的模型子程序僅加入固定合成 `USER=group:everyone`，讓依 USER 設置 ACL 的基底測試在原沙箱正常收尾；不繼承操作者 USER，不改實際 UID、profile、通用環境、版本探測、一般 scan 或 Gemini worker。
 - 原 base `1b4e8a20` 單題原樣在既有 profile 驗證：缺 USER 留一個 immutable 合成檔；固定合成值時原斷言通過、無略過且 tmp 為空。兩場的測試來源雜湊相同，故障場獨立救援收尾，無模型、無網路。
 - 假 CLI 實收值、外層合成誘餌、一般 scan 與通用環境不帶該值，配合移除固定值／改成繼承／誤放通用環境的有效突變驗證。F3 與 baseline 不改；若模型另行破壞清理仍判整場無效，不清完追認。[Sol 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6234844765)。
+
+### 資格與夾具前置檢查
+
+- 資格收據的請求容量須數值嚴格等於 `PROMPT_CAP`；資格場要證明完整容量，超過容量的場次也不能成立。缺值、錯型別、小於或大於容量及小數由正式入口分支拒收。合成行為題在建目錄邊界停止，不代替固定來源的真資格場。
+- Grok flow 夾具的能力探測暫存目錄使用該測試的 `tmpdir()`，避免先被外層寫入限制擋在能力檢查之外；正式 `BOX_ROOT`、能力不足告警與原 skip 範圍保持。初始化的其他錯誤仍拋出。
+- ready 重用 claim challenge 的負控須先走完合法 claim，再確認拒收、沒有 permit、未授權送出；不同 challenge 留成功正控。這些獨立驗證及修法依 [GPT‑6.1 Sol 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6235503260)，不採計未受理的複審輸出。公開路徑檢查不新增例外，base 原樣保留，失敗場不追認。

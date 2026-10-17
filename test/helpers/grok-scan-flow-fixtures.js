@@ -26,12 +26,13 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { EXPECTED_GROK_VERSION } from '../../scripts/grok-scan.js';
-import { canApplySandbox, BOX_ROOT } from '../../scripts/grok-sandbox-canary.js';
+import { canApplySandbox } from '../../scripts/grok-sandbox-canary.js';
 import { createHash } from 'node:crypto';
 import { PINNED_ISSUER, PINNED_CLIENT_ID } from '../../scripts/grok-auth-refresh.js';
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');   // 本檔在 test/helpers/ ⇒ 要往上兩層才是 repo 根
-export const SANDBOX_OK = (() => { const d = mkdtempSync(join(BOX_ROOT, 'grok-flow-cap-')); try { return canApplySandbox(d).ok; } finally { rmSync(d, { recursive: true, force: true }); } })();
+// 能力探測前也要能在外層測試盒內建立夾具，不能借用正式掃描的盒外根。
+export const SANDBOX_OK = (() => { const d = mkdtempSync(join(tmpdir(), 'grok-flow-cap-')); try { return canApplySandbox(d).ok; } finally { rmSync(d, { recursive: true, force: true }); } })();
 // ⚠️ **探測失敗要出聲**（Grok #581 掃後 2）：`t.skip()` 在執行器裡算「通過」，所以能力探測若在高並行下
 //    偶發失敗，這一支檔的沙箱題會整批安靜跳過、畫面上看起來全綠。拆成同族五支之後探測會做五次＝
 //    偶發的機會變成五倍，所以這裡把它印到 stderr：跳過仍然發生（那是刻意的平台劃界），但不再無聲。
