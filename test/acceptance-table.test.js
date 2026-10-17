@@ -42,6 +42,7 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
     ['B', 'package-lock.json'],
     ['C', 'lib/store.js'], ['C', 'server.js'], ['C', 'start.command'], ['C', '.node-version'], ['C', 'render.yaml'], ['C', 'scripts/check-node-version.js'],
     ['C', 'scripts/gemini-native-runner.js'],
+    ['C', 'scripts/gemini-browser-runner.js'],
     ['D', 'public/app.js'], ['D', 'public-site/index.html'],
     ['P', 'prototype/forest-ui-lab/index.html'],
     ['E', 'test/x.test.js'], ['E', 'test-doubles/x.js'], ['E', 'docs/contracts/README.md'], ['E', 'AGENTS.md'], ['E', '.github/workflows/ci.yml'],
@@ -72,6 +73,11 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
     assert.deepEqual(tierOf(path), { path, tier: tierId('C'), known: true }, '原生接線準備沿未登記路徑的較重驗收級別，不因入口關閉降級');
   }
   assert.deepEqual(tierOf('scripts/gemini-native-future.js'), { path: 'scripts/gemini-native-future.js', tier: tierId('C'), known: false });
+  for (const file of ['protocol.js', 'client.js', 'runner.js', 'cua.js', 'files.js', 'canary.js', 'sandbox.sb']) {
+    const path = `scripts/gemini-browser-${file}`;
+    assert.deepEqual(tierOf(path), { path, tier: tierId('C'), known: true });
+  }
+  assert.equal(tierOf('scripts/gemini-browser-future.js').known, false);
   // 不讓已刪腳本的歷史名字成為新檔免驗收入口；舊刪除的分類須配合當時設定查核。
   // 工具安全設定保留 F，避免同名設定重建時落回一般程式的 C。
   assert.equal(tierOf('.codex/hooks.json').tier, tierId('F'), '已刪的 .codex/hooks.json 要仍歸 F（刪它的那一支才不會落到 C）');

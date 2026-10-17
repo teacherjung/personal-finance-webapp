@@ -875,6 +875,10 @@
     "tier": "C（要重啟＋走核心流程）"
    },
    {
+    "pattern": "^scripts/gemini-browser-((protocol|client|runner|cua|files|canary)\\.js|sandbox\\.sb)$",
+    "tier": "C（要重啟＋走核心流程）"
+   },
+   {
     "pattern": "^public/",
     "tier": "D（只動前端）"
    },

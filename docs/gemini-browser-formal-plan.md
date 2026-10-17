@@ -4,7 +4,7 @@
 
 沿用既有 Google 帳號與官方 Gemini 網頁，在 A 憑證分離政策下接好材料制掃描。原生準備 #693 已合併，原生 B 認證例外未獲批准，不能由本計畫開啟。網頁單次合成試驗已收到完整回覆，官方明細顯示 4 Argon／High；這只證明該次網頁回覆及 UI 來源，不能追認為 G1 或 G2。[合成試驗與界線](https://github.com/teacherjung/personal-finance-webapp/pull/693#issuecomment-6232947536)。
 
-本計畫依 2026-10-17 GPT‑6.1 Sol 的技術方案施工；技術操作化與 William 的 A 政策分開記錄。公開 Search 本身不違反 A；私人 Skills、Connected Apps、Task、本機操作與模型指揮瀏覽器均不在掃描通道內。不新增權限、不讀 cookies、tokens、Keychain 或既有私人對話，不修改全域帳號設定。
+本計畫依 2026-10-17 [GPT‑6.1 Sol 技術方案](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6233045497)施工；技術操作化與 William 的 A 政策分開記錄。公開 Search 本身不違反 A；私人 Skills、Connected Apps、Task、本機操作與模型指揮瀏覽器均不在掃描通道內。不新增權限、不擷取 cookies、tokens、Keychain 登入秘密或既有私人對話，不修改全域帳號設定。既有標準 canary 的 Keychain 服務控制只核外部命令是否能列 metadata，輸出經本機判準收斂成成功／失敗；不輸出項目、不解密密碼。
 
 ## 架構與 G2 界線
 
@@ -26,12 +26,25 @@
 ## 檔案與分工
 
 - `scripts/gemini-browser-{protocol,client,runner,cua}.js`
+- `scripts/gemini-browser-files.js`、`test/helpers/gemini-browser-fixture.js`
 - `scripts/gemini-browser-sandbox.sb`、`scripts/gemini-browser-canary.js`
+- `scripts/grok-sandbox-canary.js` 僅修正 profile 參數的呼叫端說明
 - `test/gemini-browser-{protocol,flow,cua,canary}.test.js`
+- `test/gemini-native-runner.test.js` 補 GN-02 的直接準備入口題；GN-01／GN-03 原生觸發待辦維持停放
 - 本文件、`docs/project-collaboration.md`
 - 必要的專案設定 `settings.json`、產物 `PROJECT-SETTINGS.md`、專案守表題 `test/acceptance-table.test.js`
 
 開工 D5 查以上完整路徑，均為專案自有檔。共用套件檔不修改；若實際遇到套件設定契約阻擋，依 D5 先改套件再同步。`PROJECT.md` 由 #700 預約，本支先避開；共同待辦於不衝突時補入，最遲階段收官前完成。使用本線獨立施工樹，不動別線常設工作樹與 #693 固定樹。
+
+## 固定交接與操作
+
+工作檔放在 runner 的固定私有根，每場隨機識別值、獨立 lease 與不可覆寫事件；盒內程序讀寫不到它。任何 UI 前，adapter 先發新 challenge，活 runner 回相同 challenge 才能建頁；送出前再發另一個 challenge，runner 先不可逆核准、adapter 先標記消耗，才呼叫一次 Submit。心跳或 PID 不單獨當身分證明。同 UID 可信操作者可改整個檔案域，不在此身份隔離保證內。
+
+受控操作依序由釘住的盒外 wrapper 呼叫 `runBrowserScan`，取得工作識別值後，在既有 CUA REPL 載入同一提供者的固定模組，呼叫 `beginBrowserScan(browser, runId)`；等待後呼叫 `captureBrowserScan(runId)`。回傳 PENDING 時可以再次觀測，同一工作不能再次 begin／Submit。取消呼叫 `cancelBrowserScan(runId)`；它只作用於本場持有的 tab。沒有 Node 私接 CUA、CDP 或帳號 token 的後門。這是有操作者的固定程序，不是無人值守服務。
+
+請求使用單行固定文字＋JSON，避免網頁編輯器把多行轉成段落而難以逐字核對。初始整份上限為 32 KiB；資格場必須完整填入、送出並通過同上限的全鏈，才准登記正式場。超過上限的 PR 整份拒收，不能把這個能力說成不限大小。模型必須回完整封閉 JSON，包 Markdown 或加前後文也會失敗，不人工修復。
+
+掃描停止立即使結果不可採用。檔案握手不能原子撤回已在途的瀏覽器動作，最多容許已核准的一次送出嘗試；不重試、不追認晚到結果。未確認 CUA 呼叫結束及自有分頁關閉，不能解開下一掃的鎖。清理分別記程序群組、最佳努力離群掃蕩、盒子與 CUA 靜止，不宣稱關頁取消 Google 遠端計算。
 
 ## 實作、驗證與啟用順序
 

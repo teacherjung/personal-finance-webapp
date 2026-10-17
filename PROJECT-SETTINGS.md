@@ -152,6 +152,7 @@ PR說明的「實作者」「複審者」兩欄、結論標頭與自評的角色
 | \^render\\\.yaml\$ | C（要重啟＋走核心流程） |
 | \^scripts\/check\-node\-version\\\.js\$ | C（要重啟＋走核心流程） |
 | \^scripts\/gemini\-native\-\(protocol\|transport\|runner\)\\\.js\$ | C（要重啟＋走核心流程） |
+| \^scripts\/gemini\-browser\-\(\(protocol\|client\|runner\|cua\|files\|canary\)\\\.js\|sandbox\\\.sb\)\$ | C（要重啟＋走核心流程） |
 | \^public\/ | D（只動前端） |
 | \^public\-site\/ | D（只動前端） |
 | \^prototype\/ | P（原型） |
