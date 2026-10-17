@@ -5,7 +5,7 @@ import { isMainModule } from '../lib/is-main.js';
 import { findingsSchema, parseUniqueJson, validateFindings, sha256, MAX_MATERIAL_BYTES, RESPONSE_CAP } from './gemini-native-protocol.js';
 
 export { sha256 };
-export const PROMPT_CAP = 32 * 1024;
+export const PROMPT_CAP = 2 * 1024 * 1024;
 export const REPLY_CAP = RESPONSE_CAP;
 export const MODEL = '4 Argon';
 export const EFFORT = 'High';

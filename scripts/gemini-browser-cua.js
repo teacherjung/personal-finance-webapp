@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { URL as NodeURL } from 'node:url';
 import { isMainModule } from '../lib/is-main.js';
 import { SOURCE_ROOT, SOURCE_FILES, jobDirectory, readMail, readBoundedFile, writeOnce, mailExists, sourceDigest, browserError } from './gemini-browser-files.js';
-import { URL, ORIGIN, SELECTED, DETAILS, REPLY_CAP, sha256, validateDescriptor, leaseMessage } from './gemini-browser-protocol.js';
+import { URL, ORIGIN, SELECTED, DETAILS, PROMPT_CAP, REPLY_CAP, sha256, validateDescriptor, leaseMessage } from './gemini-browser-protocol.js';
 
 const sessions = new Map();
 const pause = () => new Promise(resolve => setTimeout(resolve, 100));
@@ -22,7 +22,7 @@ function alive(s) {
   if (Date.now() >= s.d.expiresAt || performance.now() - s.started > s.remaining
     || mailExists(s.dir, 'aborted.json') || mailExists(s.dir, 'cancel.json')) browserError('ABORTED');
   if (sourceDigest(SOURCE_ROOT, SOURCE_FILES).sha256 !== s.d.sourceSha256
-    || sha256(readBoundedFile(join(s.dir, 'prompt.txt'))) !== s.d.requestSha256
+    || sha256(readBoundedFile(join(s.dir, 'prompt.txt'), PROMPT_CAP)) !== s.d.requestSha256
     || !equal(readMail(s.dir, 'descriptor.json'), s.d)) browserError('SOURCE_CHANGED');
 }
 async function step(s, action) { alive(s); return await action(); }
@@ -60,7 +60,7 @@ async function failed(s) {
 export async function beginBrowserScan(browser, runId) {
   const dir = jobDirectory(runId), d = validateDescriptor(readMail(dir, 'descriptor.json'));
   if (d.runId !== runId || sessions.has(runId)) browserError('REPLAY');
-  const prompt = new TextDecoder('utf-8', { fatal: true }).decode(readBoundedFile(join(dir, 'prompt.txt')));
+  const prompt = new TextDecoder('utf-8', { fatal: true }).decode(readBoundedFile(join(dir, 'prompt.txt'), PROMPT_CAP));
   if (Buffer.byteLength(prompt) !== d.requestBytes || sha256(prompt) !== d.requestSha256) browserError('REQUEST');
   const s = { dir, d, prompt, instance: nonce(16), started: performance.now(), remaining: Math.min(15 * 60000, d.expiresAt - Date.now()), state: 'CLAIMING', tab: /** @type {any} */ (null) };
   alive(s);

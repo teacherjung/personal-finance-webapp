@@ -19,11 +19,11 @@ export function observation(packet, raw = answer(packet)) {
     selectedBefore: SELECTED, selectedAfter: SELECTED, details: DETAILS, detailsSource: 'response-details', complete: true, regenerations: 0,
     promptSha256: packet.promptSha256, responseSha256: sha256(raw), responseBytes: Buffer.byteLength(raw) };
 }
-export function jobFixture() {
+export function jobFixture(input = material()) {
   mkdirSync(JOB_ROOT, { mode: 0o700, recursive: true });
   const runId = randomBytes(16).toString('hex'), dir = join(JOB_ROOT, runId);
   mkdirSync(dir, { mode: 0o700 });
-  const packet = prepareBrowserPacket(material());
+  const packet = prepareBrowserPacket(input);
   const descriptor = { schema: 'browser-job/v1', runId, lease: randomBytes(32).toString('hex'), sourceSha256: sourceDigest(SOURCE_ROOT, SOURCE_FILES).sha256,
     requestSha256: packet.promptSha256, requestBytes: packet.promptBytes, scanId: packet.binding.scanId, pid: process.pid, expiresAt: Date.now() + 60000 };
   writeOnce(dir, 'prompt.txt', packet.prompt); writeOnce(dir, 'descriptor.json', descriptor);

@@ -8,7 +8,7 @@
 
 ## 技術方案
 
-GPT‑6.1 Sol 於 2026-10-18 提供技術裁示：整份提示上限採 2 MiB（2,097,152 bytes），容納本次實際材料；這是本接線的容量，不是 Google 官方上限。`scripts/gemini-browser-protocol.js` 的 `PROMPT_CAP` 是容量單一來源。CUA 初始讀取、活性核對及 runner 工作核對讀提示時明確傳入該上限；一般信箱的預設限制、回覆與材料上限保持各自原契約。
+GPT‑6.1 Sol 的[技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6239811165)：整份提示上限採 2 MiB（2,097,152 bytes），容納本次實際材料；這是本接線的容量，不是 Google 官方上限。`scripts/gemini-browser-protocol.js` 的 `PROMPT_CAP` 是容量單一來源。CUA 初始讀取、活性核對及 runner 工作核對讀提示時明確傳入該上限；一般信箱的預設限制、回覆與材料上限保持各自原契約。
 
 提示與回覆仍為唯一完整資料；不截斷、不分批冒充一次掃描。固定來源、外部預期指紋、一次性許可、官方模型明細、掃前後隔離檢查與清理都依[網頁接線計畫](gemini-browser-formal-plan.md)。不放寬憑證、登入、網路或真實資料界線。
 
