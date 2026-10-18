@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { browserClient } from '../scripts/gemini-browser-client.js';
+import { escapeForms } from '../scripts/grok-scan.js';
 import { leaseMessage, sha256, SELECTED } from '../scripts/gemini-browser-protocol.js';
 import { writeOnce, readMail, mailExists, SOURCE_FILES } from '../scripts/gemini-browser-files.js';
 import { validateResponseArtifacts, checkBrowserArtifacts, renderBrowserLauncher, renderBrowserCuaLoader } from '../scripts/gemini-browser-runner.js';
@@ -94,6 +95,66 @@ test('中止與晚到回覆不被採用；盒外專屬假值與新機密形狀�
     assert.throws(() => checkBrowserArtifacts([Buffer.from('flexToken":"new-secret-123456"')], 'synthetic-secret', material().text), /SECRET_SHAPE/);
     writeFileSync(join(j.dir, 'outside-canary.txt'), 'synthetic-secret');
   } finally { j.cleanup(); }
+});
+
+test('已知材料經正式 worker 封包再編碼仍可核收，新值及專屬假值仍阻擋', async () => {
+  const supplied = material(), parsed = JSON.parse(supplied.text);
+  parsed.prompt += JSON.stringify({ flexToken: 'synthetic-material-fixture' });
+  const text = JSON.stringify(parsed), input = new PassThrough(), output = [];
+  input.write(JSON.stringify({ kind: 'start', material: { ...supplied, text, sha256: sha256(text) } }) + '\n');
+  await browserClient(input, line => {
+    output.push(Buffer.from(line));
+    const frame = JSON.parse(line);
+    if (frame.kind === 'request') input.end(JSON.stringify({ kind: 'reply', response: answer(frame.packet), observation: observation(frame.packet) }) + '\n');
+  });
+  assert.equal(output.length, 2);
+  assert.equal(JSON.parse(output[1]).kind, 'result');
+  checkBrowserArtifacts(output, 'synthetic-outside-canary', text);
+  for (const form of escapeForms(JSON.stringify({ flexToken: 'synthetic-unseen-fixture' }))) {
+    assert.throws(() => checkBrowserArtifacts([Buffer.from(form)], 'synthetic-outside-canary', text), /SECRET_SHAPE/);
+  }
+  for (const form of escapeForms(JSON.stringify({ flexToken: 'synthetic-material-fixture' }))) {
+    assert.throws(() => checkBrowserArtifacts([Buffer.from(form)], 'synthetic-material-fixture', text), /CANARY_LEAK/);
+  }
+});
+
+test('claim 尚未 ACK 就中止時只允許驗證原 claim 的清理回報，不補授權', () => {
+  for (const event of ['cancel.json', 'adapter-failed.json', 'aborted.json', 'expired']) {
+    const j = jobFixture();
+    try {
+      const claim = leaseMessage(j.descriptor, 'c'.repeat(32), 'd'.repeat(64), 'claim');
+      writeOnce(j.dir, 'claim.json', claim);
+      if (event === 'expired') j.lease.d.expiresAt = 0;
+      else writeOnce(j.dir, event, {});
+      writeOnce(j.dir, 'quiescent.json', { instance: claim.instance, tabClosed: false, failed: true });
+      assert.throws(() => j.lease.tick(), /ABORTED/);
+      assert.equal(j.lease.instance, '');
+      j.lease.requireQuiescent(true);
+      assert.throws(() => j.lease.requireQuiescent(false), /QUIESCENCE/);
+      writeFileSync(join(j.dir, 'quiescent.json'), JSON.stringify({ instance: claim.instance, tabClosed: false, failed: false }));
+      assert.throws(() => j.lease.requireQuiescent(false), /QUIESCENCE/);
+      assert.equal(j.lease.state, 'WAIT_CLAIM');
+      for (const name of ['claim-ack.json', 'upload-permit.json', 'permit.json']) assert.equal(mailExists(j.dir, name), false);
+    } finally { j.cleanup(); }
+  }
+});
+
+test('未綁 instance 的失敗清理拒絕錯 claim、缺 claim 及其他 adapter 的靜止回報', () => {
+  for (const variant of ['missing', 'lease', 'request', 'stage', 'instance', 'foreign-quiescence']) {
+    const j = jobFixture();
+    try {
+      const claim = leaseMessage(j.descriptor, 'c'.repeat(32), 'd'.repeat(64), 'claim');
+      if (variant === 'lease') claim.lease = 'e'.repeat(64);
+      if (variant === 'request') claim.requestSha256 = 'e'.repeat(64);
+      if (variant === 'stage') claim.stage = 'ready';
+      if (variant === 'instance') claim.instance = '';
+      if (variant !== 'missing') writeOnce(j.dir, 'claim.json', claim);
+      writeOnce(j.dir, 'quiescent.json', { instance: variant === 'foreign-quiescence' ? 'f'.repeat(32) : claim.instance, tabClosed: false, failed: true });
+      assert.throws(() => j.lease.requireQuiescent(true));
+      assert.equal(j.lease.state, 'WAIT_CLAIM');
+      assert.equal(mailExists(j.dir, 'claim-ack.json'), false);
+    } finally { j.cleanup(); }
+  }
 });
 
 test('根發射器在匯入前核固定設定、node、提示及執行來源；缺集合或自改釘值不能追認', () => {

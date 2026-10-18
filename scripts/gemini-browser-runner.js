@@ -174,7 +174,10 @@ export class BrowserLease {
   requireQuiescent(failureAllowed) {
     const q = readMail(this.dir, 'quiescent.json');
     fields(q, ['instance', 'tabClosed', 'failed']);
-    if (q.instance !== this.instance || typeof q.failed !== 'boolean' || (!failureAllowed && q.failed)
+    // 中止可先於 claim ACK；只為收尾核對原 claim，不補 ACK 或發出任何許可。
+    const instance = failureAllowed === true && this.instance === ''
+      ? validateLease(readMail(this.dir, 'claim.json'), this.d, 'claim').instance : this.instance;
+    if (typeof instance !== 'string' || !/^[a-f0-9]{32}$/.test(instance) || q.instance !== instance || typeof q.failed !== 'boolean' || (!failureAllowed && q.failed)
       || ((this.permit || this.uploadPermit) && q.tabClosed !== true) || typeof q.tabClosed !== 'boolean') browserError('QUIESCENCE');
   }
 }
@@ -200,7 +203,8 @@ function verifyRequestFiles(job, packet, identity) {
 }
 
 export function checkBrowserArtifacts(buffers, marker, materialText) {
-  const known = new Set(shapeHitsIn(materialText));
+  // worker 封包會再序列化材料；偵測與已知材料排除必須使用同一組有限轉義形式。
+  const known = new Set(escapeForms(materialText).flatMap(shapeHitsIn));
   for (const bytes of buffers) {
     const text = bytes.toString('utf8');
     if (escapeForms(marker).some(secret => text.includes(secret))) browserError('CANARY_LEAK');
@@ -208,13 +212,13 @@ export function checkBrowserArtifacts(buffers, marker, materialText) {
   }
 }
 
-function childFrames(child) {
-  const frames = [], chunks = [];
+export function childFrames(child) {
+  const frames = [], stdout = [], stderr = [];
   let buffer = Buffer.alloc(0), size = 0, error = null, exited = false, exitCode = null;
   const cap = FRAME_CAP;
   child.stdout.on('data', bytes => {
     try {
-      chunks.push(bytes); size += bytes.length;
+      stdout.push(bytes); size += bytes.length;
       if (size > cap) browserError('CHILD_OUTPUT');
       buffer = Buffer.concat([buffer, bytes]);
       let pos;
@@ -225,12 +229,14 @@ function childFrames(child) {
       }
     } catch (e) { error = e; child.kill('SIGKILL'); }
   });
-  child.stderr.on('data', bytes => { chunks.push(bytes); size += bytes.length; if (size > cap) { error = Error('GEMINI_BROWSER_CHILD_OUTPUT'); child.kill('SIGKILL'); } });
+  child.stderr.on('data', bytes => { stderr.push(bytes); size += bytes.length; if (size > cap) { error = Error('GEMINI_BROWSER_CHILD_OUTPUT'); child.kill('SIGKILL'); } });
   child.on('error', e => { error = e; });
   child.stdin.on('error', e => { error = e; });
   child.on('close', code => { exited = true; exitCode = code; });
   return {
-    frames, chunks,
+    frames,
+    // data 事件的分段不能決定洩漏字串是否存在；各流保留原序，不互相插入位元組。
+    artifacts() { return [Buffer.concat(stdout), Buffer.concat(stderr)]; },
     check() { if (error) throw error; },
     waiting() { if (error) throw error; if (exited) browserError('CHILD_EXIT'); },
     finished() { if (error) throw error; return exited && exitCode === 0 && buffer.length === 0 && frames.length === 2; },
@@ -344,7 +350,7 @@ export async function runBrowserScan(deployment) {
       if (Object.hasOwn(event, 'lease')) { if (event.lease !== descriptor.lease) browserError('EVENT_CHANGED'); delete event.lease; }
       return Buffer.from(JSON.stringify(event));
     });
-    const artifacts = [...attachmentArtifacts, ...wire.chunks, capture.raw, capture.rendered, Buffer.from(JSON.stringify(capture.dom)), Buffer.from(JSON.stringify(capture.observation)), Buffer.from([...sessionFiles.files.keys()].join('\n')), ...sessionFiles.files.values()];
+    const artifacts = [...attachmentArtifacts, ...wire.artifacts(), capture.raw, capture.rendered, Buffer.from(JSON.stringify(capture.dom)), Buffer.from(JSON.stringify(capture.observation)), Buffer.from([...sessionFiles.files.keys()].join('\n')), ...sessionFiles.files.values()];
     checkBrowserArtifacts(artifacts, marker, material.text);
     checkBrowserArtifacts(artifacts, descriptor.lease, material.text);
     if (verifyProvider(SOURCE_ROOT, deployment.providerHead).digest !== provider.digest

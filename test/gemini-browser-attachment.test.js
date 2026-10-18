@@ -91,6 +91,21 @@ test('上傳呼叫晚於取消才返回，零後續 UI、零送出且關頁；�
   }
 });
 
+test('送出呼叫內取消仍收尾，不寫提交成功且不能再送', async () => {
+  const j = jobFixture(); let cancellation;
+  const b = browserFixture(j, { afterSubmit: () => { cancellation = cancelBrowserScan(j.runId); } }); j.serve();
+  try {
+    await beginBrowserScan(b.browser, j.runId); await uploadBrowserScan(j.runId);
+    await assert.rejects(submitBrowserScan(j.runId), /ABORTED/);
+    assert.equal((await cancellation).state, 'CANCEL_REQUESTED');
+    assert.equal(b.state.sent, 1); assert.equal(b.state.closed, true);
+    assert.equal(mailExists(j.dir, 'submitted.json'), false);
+    assert.equal(readMail(j.dir, 'quiescent.json').failed, true);
+    await assert.rejects(submitBrowserScan(j.runId), /SUBMIT_ORDER/);
+    assert.equal(b.state.sent, 1);
+  } finally { j.cleanup(); }
+});
+
 test('上傳完成後檔名不符、仍載入或附件不唯一都不產生 Submit 許可', async () => {
   for (const changed of [{ attachmentName: 'wrong.txt' }, { loading: true }, { attachmentCount: 2 }]) {
     const j = jobFixture(), b = browserFixture(j); j.serve();
