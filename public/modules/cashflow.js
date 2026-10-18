@@ -38,6 +38,127 @@ const listSort = { key: 'date', dir: 'desc' };
 let renderedState = null;
 /** @type {CashflowWorkspace|null} */ let failedState = null;
 /** @type {{visit: CashflowVisit, generation: number, seq: number}|null} */ let cashflowRead = null;
+/** @typedef {{button:HTMLButtonElement, notice:HTMLElement, workspace:HTMLElement, host:HTMLElement,
+ * visit:CashflowVisit, seq:number, nav:number, hash:string, generation:number, flight:any,
+ * modal:HTMLElement, modalUnchanged:()=>boolean, done:boolean, terminal:boolean, selfBlur:boolean,
+ * blurScope:string, attempting:HTMLElement|null, observer:MutationObserver|null, cleanups:Array<()=>void>}} RetryFocusJob */
+/** @type {RetryFocusJob|null} */ let retryFocusJob = null;
+
+function finishRetryFocus(/** @type {RetryFocusJob|null} */ job) {
+  if (!job || job.done) return;
+  job.done = true;
+  job.observer?.disconnect();
+  job.cleanups.forEach(remove => remove());
+  if (retryFocusJob === job) retryFocusJob = null;
+}
+
+function retryFocusRemoved(/** @type {RetryFocusJob} */ job, /** @type {MutationRecord[]} */ records) {
+  const anchors = [job.button, job.notice, job.workspace, job.host, job.modal];
+  return records.some(record => [...record.removedNodes].some(node => anchors.some(anchor => node === anchor || node.contains(anchor))));
+}
+
+function drainRetryFocus(/** @type {RetryFocusJob} */ job) {
+  if (retryFocusRemoved(job, job.observer?.takeRecords() || [])) finishRetryFocus(job);
+}
+
+function retryFocusCurrent(/** @type {RetryFocusJob} */ job) {
+  return !job.done && retryFocusJob === job && visitIsCurrent(job.visit)
+    && job.host === view() && job.seq === currentRouteSeq() && job.nav === currentNavSeq()
+    && job.hash === location.hash && job.generation === renderGeneration
+    && job.modal === byId('modal-root') && job.modalUnchanged() && !job.modal.querySelector('.modal') && !document.hidden
+    && (job.terminal || (currentWorkspace()?.node === job.workspace && job.notice.parentElement === job.workspace
+      && job.workspace.querySelector('#cashflowReadError') === job.notice && job.notice.querySelector('#retryCashflowRead') === job.button))
+    && (document.activeElement === job.button || (document.activeElement === document.body && job.selfBlur)
+      || document.activeElement === job.attempting);
+}
+
+function startRetryFocus(/** @type {HTMLButtonElement} */ button, /** @type {HTMLElement} */ notice, /** @type {CashflowWorkspace} */ state) {
+  finishRetryFocus(retryFocusJob);
+  const modal = byId('modal-root');
+  if (document.activeElement !== button || !button.isConnected || !modal || modal.querySelector('.modal') || document.hidden) return null;
+  /** @type {RetryFocusJob} */
+  const job = { button, notice, workspace: state.node, host: state.visit.host, visit: state.visit,
+    seq: currentRouteSeq(), nav: currentNavSeq(), hash: location.hash, generation: renderGeneration, flight: null,
+    modal, modalUnchanged: watchModalRoot(), done: false, terminal: false, selfBlur: false,
+    blurScope: '', attempting: null, observer: null, cleanups: [] };
+  retryFocusJob = job;
+  const cancel = () => finishRetryFocus(job);
+  const listen = (target, type, handler) => {
+    target.addEventListener(type, handler, true);
+    job.cleanups.push(() => target.removeEventListener(type, handler, true));
+  };
+  for (const type of ['pointerdown', 'keydown', 'touchstart', 'wheel']) listen(document, type, cancel);
+  listen(document, 'focusin', event => { if (event.target !== button && event.target !== job.attempting) cancel(); });
+  listen(button, 'blur', event => { if (event.target !== button) return; if (job.blurScope) job.selfBlur = true; else cancel(); });
+  listen(window, 'blur', event => { if (event.target === window) cancel(); });
+  listen(window, 'hashchange', cancel);
+  listen(document, 'visibilitychange', () => { if (document.hidden) cancel(); });
+  job.observer = new MutationObserver(records => { if (retryFocusRemoved(job, records)) cancel(); });
+  job.observer.observe(document, { childList: true, subtree: true });
+  return job;
+}
+
+function beginRetryFocusCommit(/** @type {RetryFocusJob|null} */ job, flight) {
+  if (!job) return;
+  drainRetryFocus(job);
+  if (job.flight !== flight || !retryFocusCurrent(job)) return finishRetryFocus(job);
+  job.terminal = true;
+}
+
+function retryFocusMutation(/** @type {RetryFocusJob|null} */ job, /** @type {HTMLElement} */ target, mutate) {
+  if (!job || job.done || !job.terminal) { mutate(); return; }
+  drainRetryFocus(job);
+  const held = document.activeElement === job.button;
+  job.blurScope = 'commit';
+  try { mutate(); }
+  finally {
+    job.blurScope = '';
+    const records = job.observer?.takeRecords() || [];
+    // innerHTML／replaceChildren 的單次同步寫入只認指定容器；額外移除不能借它洗白。
+    const own = records.filter(record => record.target === target);
+    if (own.length > 1 || retryFocusRemoved(job, records.filter(record => record !== own[0]))) finishRetryFocus(job);
+    if (held && !job.button.isConnected && document.activeElement === document.body) job.selfBlur = true;
+  }
+}
+
+function retryFocusUsable(/** @type {HTMLElement} */ node) {
+  if (!node?.isConnected || node.matches(':disabled') || node.closest('[inert],[hidden]')) return false;
+  /** @type {HTMLElement|null} */ let parent = node;
+  for (; parent; parent = parent.parentElement) {
+    const style = getComputedStyle(parent);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+  }
+  return node.getClientRects().length > 0;
+}
+
+function completeRetryFocus(/** @type {RetryFocusJob|null} */ job, flight, /** @type {CashflowWorkspace|null} */ state) {
+  if (!job || job.done) return;
+  try {
+    drainRetryFocus(job);
+    const owns = () => job.flight === flight && retryFocusCurrent(job) && state && currentWorkspace() === state
+      && state.visit === job.visit && state.route === job.seq;
+    if (!state || !owns()) return;
+    const notices = state.node.querySelectorAll('#cashflowReadError');
+    const candidates = notices.length === 1 ? notices[0].querySelectorAll('#retryCashflowRead')
+      : notices.length === 0 && state.success ? state.node.querySelectorAll('.cashflow-head h1') : [];
+    if (candidates.length !== 1) return;
+    const target = /** @type {HTMLElement} */ (candidates[0]);
+    if (!retryFocusUsable(target)) return;
+    const added = target.matches('h1') && !target.hasAttribute('tabindex');
+    if (added) target.setAttribute('tabindex', '-1');
+    const restore = () => { if (added && target.getAttribute('tabindex') === '-1') target.removeAttribute('tabindex'); };
+    job.attempting = target;
+    try { target.focus({ preventScroll: true }); } catch { /* 拒焦不猜另一個操作。 */ }
+    // focus 事件可同步開窗／轉焦／重讀；仍持焦的暫加屬性由離焦或移除收尾。
+    if (added && target.isConnected && document.activeElement === target) {
+      const observer = new MutationObserver(() => { if (!target.isConnected) release(); });
+      const release = () => { target.removeEventListener('blur', release); observer.disconnect(); restore(); };
+      target.addEventListener('blur', release, { once: true });
+      observer.observe(document, { childList: true, subtree: true });
+    } else restore();
+    if (!owns() || document.activeElement !== target || !retryFocusUsable(target)) return;
+  } finally { finishRetryFocus(job); }
+}
 
 // oldURL 能辨識「離開又立即返回」；當下 hash 相同並不代表仍是原次進頁。
 window.addEventListener('hashchange', event => {
@@ -75,9 +196,9 @@ function flowOf(t) {
   return { label: '支出', cls: 'neg', sign: '−' };
 }
 
-/** @param {string} message @param {CashflowWorkspace} state @param {number} generation @param {boolean} [allWidths] */
-function showCashflowReadError(message, state, generation, allWidths = false) {
-  let notice = state.node.querySelector('#cashflowReadError');
+/** @param {string} message @param {CashflowWorkspace} state @param {number} generation @param {boolean} [allWidths] @param {RetryFocusJob|null} [focusJob] */
+function showCashflowReadError(message, state, generation, allWidths = false, focusJob = null) {
+  let notice = /** @type {HTMLElement|null} */ (state.node.querySelector('#cashflowReadError'));
   if (!notice) {
     notice = document.createElement('div');
     notice.id = 'cashflowReadError';
@@ -87,16 +208,33 @@ function showCashflowReadError(message, state, generation, allWidths = false) {
   }
   // 這個失敗工作區若已無其他可見退路，後續重試或晚回確認不能再藏掉提示。
   if (allWidths) notice.classList.remove('cashflow-desktop-only');
-  notice.innerHTML = `<span>${esc(message)}</span> <button type="button" class="btn-ghost" id="retryCashflowRead">重新讀取</button>`;
+  retryFocusMutation(focusJob, notice, () => {
+    notice.innerHTML = `<span>${esc(message)}</span> <button type="button" class="btn-ghost" id="retryCashflowRead">重新讀取</button>`;
+  });
   const button = /** @type {HTMLButtonElement} */ (notice.querySelector('#retryCashflowRead'));
   button.disabled = !!cashflowRead;
   button.onclick = () => {
-    if (currentWorkspace() !== state || generation !== renderGeneration || !notice.isConnected
-      || notice.parentNode !== state.node || state.node.querySelector('#cashflowReadError') !== notice
-      || notice.querySelector('#retryCashflowRead') !== button || cashflowRead || button.disabled) return;
-    button.disabled = true;
+    const seq = currentRouteSeq(), nav = currentNavSeq(), hash = location.hash;
+    const canRead = () => currentWorkspace() === state && generation === renderGeneration && notice.isConnected
+      && notice.parentNode === state.node && state.node.querySelector('#cashflowReadError') === notice
+      && notice.querySelector('#retryCashflowRead') === button && !cashflowRead && !button.disabled
+      && seq === currentRouteSeq() && nav === currentNavSeq() && hash === location.hash;
+    if (!canRead()) return;
+    const job = startRetryFocus(button, notice, state);
+    if (job) {
+      // 停用後的原生 blur 可能延後送達；先在自己的窄 scope 明確釋焦，不延長等待期豁免。
+      job.blurScope = 'release';
+      try { if (document.activeElement === button) button.blur(); }
+      catch { finishRetryFocus(job); }
+      finally { job.blurScope = ''; }
+      if (!job.selfBlur || document.activeElement !== document.body || !retryFocusCurrent(job)) finishRetryFocus(job);
+    }
+    // blur 可同步開新讀取或換掉入口；焦點被接管不等於資料讀取資格也失效。
+    if (!canRead()) { finishRetryFocus(job); return; }
+    if (job) job.blurScope = 'disable';
+    try { button.disabled = true; } finally { if (job) job.blurScope = ''; }
     // 寫入回應不代表每個欄位均成功；恢復只讀取，不保存表單送出 callback。
-    renderCashflow();
+    renderCashflowPage(job);
   };
 }
 
@@ -118,14 +256,26 @@ function registerCashflowWrite(result, expected) {
   return confirmed;
 }
 
-function showPendingCashflowWrite() {
+function showPendingCashflowWrite(/** @type {RetryFocusJob|null} */ focusJob = null) {
   const state = currentWorkspace();
   if (!state || state.revision === editRevision) return;
   const detail = state.error ? `。載入失敗：${state.error}` : '';
-  showCashflowReadError(`${pendingCashflowMessage(state)}${detail}`, state, renderGeneration);
+  // 非讀取終端的提示重建撤銷回焦，不把中途新鈕當成原入口。
+  if (retryFocusJob !== focusJob) finishRetryFocus(retryFocusJob);
+  showCashflowReadError(`${pendingCashflowMessage(state)}${detail}`, state, renderGeneration, false, focusJob);
 }
 
 export async function renderCashflow() {
+  finishRetryFocus(retryFocusJob);
+  return renderCashflowPage();
+}
+
+async function renderCashflowPage(/** @type {RetryFocusJob|null} */ focusJob = null) {
+  try { return await readCashflowPage(focusJob); }
+  finally { finishRetryFocus(focusJob); }
+}
+
+async function readCashflowPage(/** @type {RetryFocusJob|null} */ focusJob) {
   const host = view(), hash = location.hash, nav = currentNavSeq();
   if (hash.replace(/^#/, '').split('?')[0] !== 'cashflow') return;
   if (!cashflowVisit || !visitIsCurrent(cashflowVisit)) {
@@ -139,6 +289,7 @@ export async function renderCashflow() {
   const generation = ++renderGeneration;
   const flight = { visit, generation, seq };
   cashflowRead = flight;
+  if (focusJob && !focusJob.done) { focusJob.flight = flight; focusJob.generation = generation; }
   const current = () => visitIsCurrent(visit) && seq === currentRouteSeq() && generation === renderGeneration;
   const saved = renderedState;
   const loading = host.querySelector('.loading');
@@ -151,10 +302,11 @@ export async function renderCashflow() {
   } catch (e) {
     if (cashflowRead === flight) cashflowRead = null;
     if (current()) {
+      beginRetryFocusCommit(focusJob, flight);
       const restore = saved === renderedState && saved?.visit === visit && (currentWorkspace() === saved
         || (detachedByRouter && saved.node.parentNode === null && host.childNodes.length === 1 && host.firstChild === loading));
       if (restore) {
-        if (saved.node.parentNode === null) host.replaceChildren(saved.node);
+        if (saved.node.parentNode === null) retryFocusMutation(focusJob, host, () => host.replaceChildren(saved.node));
         saved.route = seq;
         saved.error = e.message;
         // 原生選單先改值才發出請求；失敗時，控制項與狀態須回到仍在畫面上的那份資料。
@@ -165,16 +317,19 @@ export async function renderCashflow() {
         for (const id of ['monthSel', 'monthSelDesktop']) byId(id).value = monthFilter.slice(5, 7);
         const pending = pendingCashflowMessage(saved);
         const message = `${pending || '畫面暫時無法更新，以下是上次成功載入的內容'}。載入失敗：${e.message}`;
-        showCashflowReadError(message, saved, generation, !!detachedByRouter);
+        showCashflowReadError(message, saved, generation, !!detachedByRouter, focusJob);
         if (!detachedByRouter) toast(message, true);
       } else {
         renderedState = null;
-        host.innerHTML = '<div class="cashflow-workspace"><div class="page-head cashflow-head"><h1>銀行收支</h1></div></div>';
+        retryFocusMutation(focusJob, host, () => {
+          host.innerHTML = '<div class="cashflow-workspace"><div class="page-head cashflow-head"><h1>銀行收支</h1></div></div>';
+        });
         failedState = { month: monthFilter, flow: flowFilter, sort: { ...listSort }, nav, revision: readRevision,
           error: e.message, node: host.querySelector('.cashflow-workspace'), visit, route: seq, success: false };
         const pending = pendingCashflowMessage(failedState);
-        showCashflowReadError(`${pending || '暫時無法載入銀行收支'}。載入失敗：${e.message}`, failedState, generation, true);
+        showCashflowReadError(`${pending || '暫時無法載入銀行收支'}。載入失敗：${e.message}`, failedState, generation, true, focusJob);
       }
+      completeRetryFocus(focusJob, flight, currentWorkspace());
     }
     return;
   }
@@ -216,6 +371,8 @@ export async function renderCashflow() {
     ? active : null;
   const infoButtons = [...view().querySelectorAll('.cashflow-flow-info')];
 
+  beginRetryFocusCommit(focusJob, flight);
+  retryFocusMutation(focusJob, host, () => {
   view().innerHTML = `
     <div class="cashflow-workspace">
       <div class="page-head cashflow-head">
@@ -271,6 +428,7 @@ export async function renderCashflow() {
       </section>
     </div>
   `;
+  });
 
   // 頁內 renderCashflow 會替換 DOM；保留節點，讓已開啟的說明窗仍持有入口。router 先清空頁面的路徑不在此保護內。
   for (const button of infoButtons) byId(button.id)?.replaceWith(button);
@@ -318,7 +476,8 @@ export async function renderCashflow() {
   failedState = null;
   readRevision = dataRevision;
   // 讀取開始後才確認的寫入，可能尚未包含在這份回覆裡。
-  showPendingCashflowWrite();
+  showPendingCashflowWrite(focusJob);
+  completeRetryFocus(focusJob, flight, renderedState);
 }
 
 function rowHtml(t) {
