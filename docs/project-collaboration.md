@@ -29,7 +29,7 @@
   | `榮祥森（投資理財）` | **跑 app、放真實資料**（`data/store.db`）、使用者的桌面捷徑指向這裡 | 永遠 `main`、永遠乾淨，只接收合併結果 |
   | `榮祥森（投資理財）-claude` | 歷史 Claude 實作目錄；現行分工不在此啟動新實作 | 功能分支（`git checkout -B <branch> main`） |
   | `榮祥森（投資理財）-codex` | **Codex 實作**（2026-08-04 轉職；原唯讀審查樹） | 功能分支（`git checkout -B codex/<分支> origin/main`） |
-  | 送審產生器建立的 `tree`／`mutation` | **審查與突變副本（拋棄式）**：Codex 備樹，Grok 透過下方正式複審入口收盒內材料，不進原樹 | **detached** 釘住受審 commit；實作者備樹、審完收樹 |
+  | 送審產生器建立的 `tree`／`mutation`（歷史命名：`/private/tmp/codex-review-pr<N>`／`/private/tmp/claude-review-pr<N>`） | **審查與突變副本（拋棄式）**：Codex 備樹，Grok 透過下方正式複審入口收盒內材料，不進原樹 | **detached** 釘住受審 commit；實作者備樹、審完收樹 |
 
   - ⚠️ **審查樹必須 detached 釘住受審 commit**（同一分支不能被兩個 worktree 同時 checkout；拋棄式樹每 PR 新建＝永遠新鮮，舊的「樹過期自檢」儀式不再需要）。備樹三步（實作者做）＝`git worktree add --detach /private/tmp/<角色>-review-pr<N> <受審commit>` → 掛 `node_modules` symlink（下一條）→ 審完 `rm <樹>/node_modules` 再 `git worktree remove <樹>`。
   - ⚠️⚠️ **`node_modules` 的 symlink：只准建、不准動**（2026-08-02 事故）。做法是 `ln -s "<主目錄>/node_modules" "<worktree>/node_modules"`（純 JS 相依，不必各裝一份），但**在任何 worktree 裡刪除、重裝、或 `rm -rf` 那個 symlink 的內容，動到的是主目錄本身**——使用者的 app 會立刻起不來（`Cannot find package 'express'`），而錯誤訊息完全指不到真因。實際踩過：清理暫存 worktree 時刪除動作順著 symlink 進去，主目錄的 `node_modules` 被清空。**移除 worktree 前先 `rm <worktree>/node_modules`（不帶斜線＝只刪 symlink 本身）**；分工統一（2026-08-04）：**純閱讀、不跑三關的分析不需要 node_modules、可不建**；正式審查要跑三關＝**由實作者備樹時建、收尾時 unlink，複審者不得自行建立／安裝／移除**。三道關與 pre-push hook 都照常運作（`core.hooksPath` 是 repo 層設定，worktree 自動繼承）。
