@@ -18,6 +18,8 @@ let failWrites = false;
 let legacyText = false;
 let holdWrite = null;
 let holdBeforeWrite = null;
+let deleteQueue = new Map();
+let deleteResponse = { ok: true };
 let serial = 0;
 let windowErrors = [];
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -68,6 +70,15 @@ async function boot() {
       if (holdWrite) await holdWrite.promise;
       return json({ updated: 0, created: 0, transactions: { imported: 1 } });
     }
+    if (path.startsWith('/api/transactions/') && method === 'DELETE') {
+      const id = path.split('/').at(-1), action = deleteQueue.get(id)?.shift();
+      if (action) return action();
+      if (holdBeforeWrite) await holdBeforeWrite.promise;
+      if (failWrites) return json({ error: '本題刪除請求失敗' }, 503);
+      rows = rows.filter(x => x.id !== id);
+      if (holdWrite) await holdWrite.promise;
+      return json(deleteResponse);
+    }
     if (path.startsWith('/api/transactions') && method !== 'GET') {
       const body = JSON.parse(init.body);
       if (holdBeforeWrite) await holdBeforeWrite.promise;
@@ -96,6 +107,7 @@ beforeEach(async () => {
   windowErrors = [];
   serial++; rows = fixture(); calls = []; readQueue = []; endpointQueue = new Map(); previewSimilar = 1; applyFlags = []; failReads = false; failWrites = false; legacyText = false; holdWrite = null; holdBeforeWrite = null;
   await boot();
+  window.confirm = () => true; deleteQueue = new Map(); deleteResponse = { ok: true };
   document.getElementById('modal-root').replaceChildren();
   await navigate('#cards'); await navigate('#cashflow');
   await select('yearSelDesktop', '2025'); await select('monthSelDesktop', '03');
@@ -1206,4 +1218,263 @@ for (const badBlur of ['throw', 'refuse', 'refocus']) test(`重試回焦｜明�
   failReads = false; button.click(); await settle();
   assert.equal(attempted, 1); assert.equal(reads(), before + 1); assert.equal(writes().length, 0);
   assert.equal(document.activeElement, document.body); assert.equal(el('.cashflow-head h1').hasAttribute('tabindex'), false);
+});
+
+const deleteCount = () => writes().filter(call => call.method === 'DELETE').length;
+const deleteButton = (suffix = 'a') => el(`tbody [data-del="${serial}-${suffix}"]`);
+const deleteRow = async (suffix = 'a') => { assert.ok(deleteButton(suffix)); deleteButton(suffix).click(); await settle(); };
+function holdDeletion(suffix = 'a', beforeCommit = false) {
+  const wait = deferred(), id = `${serial}-${suffix}`;
+  deleteQueue.set(id, [async () => {
+    if (beforeCommit) await wait.promise;
+    rows = rows.filter(row => row.id !== id);
+    if (!beforeCommit) await wait.promise;
+    return json({ ok: true });
+  }]);
+  return wait;
+}
+
+test('單筆刪除｜原確認取消零請求，後續接受仍正常', async () => {
+  let asked = ''; window.confirm = message => { asked = message; return false; };
+  const before = snapshot(); await deleteRow();
+  assert.equal(asked, '確定要刪除「支出 21,000 元」嗎？此動作無法復原。');
+  assert.equal(writes().length, 0); assert.equal(reads(), 0); assert.deepEqual(snapshot(), before);
+  window.confirm = () => true; await deleteRow();
+  assert.equal(deleteCount(), 1); assert.equal(rows.some(row => row.id === `${serial}-a`), false);
+  assert.equal(deleteButton(), null); assert.equal(el('#cashflowReadError'), null);
+});
+
+test('單筆刪除｜成功後讀取失敗保留快照，重試只讀，成功才清提示', async () => {
+  const before = snapshot(), oldButton = deleteButton(), oldCallback = oldButton.onclick;
+  failReads = true; await deleteRow();
+  assert.equal(deleteCount(), 1); assert.equal(rows.some(row => row.id === `${serial}-a`), false);
+  assert.equal(reads(), 1); assert.deepEqual(snapshot(), before);
+  assert.match(text('#cashflowReadError'), /資料已刪除，畫面尚未更新/);
+  assert.equal(el('#cashflowReadError img'), null);
+  document.getElementById('toast-root').replaceChildren();
+  oldCallback(); await settle(); assert.equal(deleteCount(), 1);
+  const start = calls.length; await click('#retryCashflowRead');
+  assert.equal(reads(), 2); assert.equal(deleteCount(), 1); assert.deepEqual(snapshot(), before);
+  assert.match(text('#cashflowReadError'), /資料已刪除，畫面尚未更新/);
+  failReads = false; await click('#retryCashflowRead');
+  assert.equal(reads(), 3); assert.equal(deleteCount(), 1); assert.equal(deleteButton(), null);
+  assert.equal(el('#cashflowReadError'), null); assert.ok(calls.slice(start).every(call => call.method === 'GET'));
+  oldCallback(); await settle(); assert.equal(deleteCount(), 1, '覆蓋讀取後清理確認紀錄，斷開舊入口仍無資格');
+  failReads = true; await renderCashflow();
+  assert.doesNotMatch(text('#cashflowReadError'), /資料已刪除/);
+});
+
+for (const failure of ['http', 'network', 'null', 'missing', 'string']) test(`單筆刪除｜${failure}未取得嚴格確認，不報成功或自動重讀`, async () => {
+  const id = `${serial}-a`, before = snapshot();
+  deleteQueue.set(id, [async () => {
+    if (failure === 'network') throw new Error('本題合成連線失敗');
+    if (failure === 'http') return json({ error: '本題合成拒絕' }, 400);
+    rows = rows.filter(row => row.id !== id);
+    return json(failure === 'null' ? null : failure === 'missing' ? {} : { ok: 'true' });
+  }]);
+  await deleteRow();
+  assert.equal(deleteCount(), 1); assert.equal(reads(), 0); assert.deepEqual(snapshot(), before);
+  assert.doesNotMatch(text('#cashflowReadError'), /資料已刪除/); assert.doesNotMatch(text('#toast-root'), /已刪除/);
+  assert.equal(rows.some(row => row.id === id), ['http', 'network'].includes(failure), '未知回音不等於資料必定未變');
+  if (['http', 'network'].includes(failure)) { await deleteRow(); assert.equal(deleteCount(), 2); assert.equal(deleteButton(), null); }
+});
+
+test('單筆刪除｜確認同步重入、在途及已確認舊列都只送一次', async () => {
+  const wait = holdDeletion(); const button = deleteButton(), callback = button.onclick;
+  let confirms = 0; window.confirm = () => { confirms++; callback(); return true; };
+  failReads = true; button.click(); await settle();
+  button.click(); callback(); await settle();
+  const inflight = deleteCount(); wait.resolve(); await settle();
+  button.click(); callback(); await settle();
+  assert.equal(rows.some(row => row.id === `${serial}-a`), false);
+  assert.equal(inflight, 1); assert.equal(deleteCount(), 1); assert.equal(confirms, 1);
+  assert.match(text('#cashflowReadError'), /資料已刪除，畫面尚未更新/);
+});
+
+for (const takeover of ['detach', 'replace', 'navigate', 'render', 'modal']) test(`單筆刪除｜原生確認返回前${takeover}使原入口失效，不發DELETE`, async () => {
+  const button = deleteButton(), before = rows.length;
+  let render;
+  window.confirm = () => {
+    if (takeover === 'detach') button.remove();
+    if (takeover === 'replace') button.replaceWith(button.cloneNode(true));
+    if (takeover === 'navigate') window.location.hash = '#cards';
+    if (takeover === 'render') render = renderCashflow();
+    if (takeover === 'modal') app.openInfo('本題新窗', '<p>合成內容</p>');
+    return true;
+  };
+  button.click(); await settle(); if (render) await render;
+  assert.equal(deleteCount(), 0); assert.equal(rows.length, before); assert.doesNotMatch(text('#toast-root'), /已刪除/);
+});
+
+for (const olderFirst of [true, false]) test(`單筆刪除｜不同id獨立接受，確認順序${olderFirst}只准最新作業續行`, async () => {
+  const a = holdDeletion('a'), b = holdDeletion('b');
+  await deleteRow('a'); await deleteRow('b');
+  assert.equal(deleteCount(), 2); assert.ok(!rows.some(row => [serial + '-a', serial + '-b'].includes(row.id)));
+  if (olderFirst) { a.resolve(); await settle(); assert.equal(reads(), 0); b.resolve(); await settle(); }
+  else {
+    b.resolve(); await settle();
+    const node = el('.cashflow-workspace'), count = reads(); document.getElementById('toast-root').replaceChildren();
+    a.resolve(); await settle();
+    assert.equal(el('.cashflow-workspace'), node); assert.equal(reads(), count); assert.doesNotMatch(text('#toast-root'), /已刪除/);
+    assert.match(text('#cashflowReadError'), /資料已刪除/);
+    await click('#retryCashflowRead');
+  }
+  assert.equal(deleteCount(), 2); assert.equal(el('#cashflowReadError'), null);
+});
+
+for (const lateFails of [false, true]) test(`單筆刪除｜確認前GET晚${lateFails ? '失敗' : '成功'}不能覆蓋確認，亦不多起GET`, async () => {
+  const read = deferred();
+  readQueue.push(async () => { await read.promise; return lateFails ? readError() : json(structuredClone(rows)); });
+  const reading = renderCashflow(); await settle();
+  await deleteRow();
+  assert.equal(rows.some(row => row.id === `${serial}-a`), false); assert.equal(deleteCount(), 1); assert.equal(reads(), 1);
+  assert.equal(el('#retryCashflowRead').disabled, true);
+  read.resolve(); await reading; await settle();
+  assert.match(text('#cashflowReadError'), /資料已刪除，畫面尚未更新/);
+  assert.equal(reads(), 1); assert.equal(el('#retryCashflowRead').disabled, false);
+  await click('#retryCashflowRead'); assert.equal(deleteCount(), 1); assert.equal(el('#cashflowReadError'), null);
+});
+
+for (const path of ['/api/transactions', '/api/accounts', '/api/categories', '/api/income-categories', '/api/transfer-subcategories']) test(`單筆刪除｜${path}失敗不可清刪除確認`, async () => {
+  endpointQueue.set(path, [() => readError()]); const before = snapshot();
+  await deleteRow(); assert.equal(rows.some(row => row.id === `${serial}-a`), false);
+  assert.deepEqual(snapshot(), before); assert.match(text('#cashflowReadError'), /資料已刪除/);
+  await click('#retryCashflowRead'); assert.equal(deleteCount(), 1); assert.equal(el('#cashflowReadError'), null);
+});
+
+for (const takeover of ['other-page', 'return', 'new-modal', 'closed-modal', 'new-render']) test(`單筆刪除｜晚確認遇${takeover}只記事實不接管呈現`, async () => {
+  const wait = holdDeletion(); await deleteRow();
+  if (takeover === 'other-page' || takeover === 'return') await navigate('#cards');
+  if (takeover === 'return') { failReads = true; await navigate('#cashflow'); }
+  if (takeover === 'new-render') await renderCashflow();
+  if (takeover === 'new-modal' || takeover === 'closed-modal') {
+    await click('#addCf'); el('#f_summary').value = '本題新輸入';
+    if (takeover === 'closed-modal') await click('#modal-root [data-cancel]');
+  }
+  const node = el('.cashflow-workspace'), seq = app.currentRouteSeq(), count = reads(), input = el('#f_summary');
+  document.getElementById('toast-root').replaceChildren(); wait.resolve(); await settle();
+  assert.equal(rows.some(row => row.id === `${serial}-a`), false); assert.equal(deleteCount(), 1);
+  assert.equal(app.currentRouteSeq(), seq); assert.equal(reads(), count); assert.equal(el('.cashflow-workspace'), node);
+  assert.doesNotMatch(text('#toast-root'), /已刪除/);
+  if (input) { assert.equal(el('#f_summary'), input); assert.equal(input.value, '本題新輸入'); }
+  if (takeover === 'return') {
+    assert.match(text('#cashflowReadError'), /資料已刪除，暫時無法載入列表/);
+    assert.equal(el('#cashflowReadError').classList.contains('cashflow-desktop-only'), false);
+    failReads = false; await click('#retryCashflowRead'); assert.equal(el('#cashflowReadError'), null);
+  }
+});
+
+for (const suffix of ['a', 'b']) test(`單筆刪除｜確認前已開${suffix}編輯窗不升級舊快照`, async () => {
+  const wait = holdDeletion(); await deleteRow(); await click(`tbody [data-edit="${serial}-${suffix}"]`);
+  el('#f_summary').value = '本題保留輸入'; wait.resolve(); await settle();
+  const submitForm = async () => { el('#modal-root form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle(); };
+  await submitForm(); assert.equal(writes().filter(call => call.method === 'PUT').length, 0);
+  assert.equal(el('#f_summary').value, '本題保留輸入'); assert.match(text('#toast-root'), /資料已更新；請關閉編輯視窗，重新讀取後再編輯。/);
+  await renderCashflow(); await submitForm(); assert.equal(writes().filter(call => call.method === 'PUT').length, 0);
+  await click('#modal-root [data-cancel]'); await click(`tbody [data-edit="${serial}-b"]`);
+  el('#f_summary').value = '本題新快照'; await submitForm();
+  assert.equal(writes().filter(call => call.method === 'PUT').length, 1);
+  assert.equal(rows.find(row => row.id === `${serial}-b`).summary, '本題新快照');
+});
+
+test('單筆刪除｜後續普通儲存不能洗掉未涵蓋的刪除確認', async () => {
+  failReads = true; await deleteRow();
+  await click('#addCf'); el('#f_date').value = '2025-03-18'; el('#f_summary').value = '本題新增'; el('#f_amount').value = '987';
+  el('#modal-root form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(rows.find(row => row.id === `${serial}-new`).amount, 987);
+  assert.match(text('#cashflowReadError'), /資料已刪除，畫面尚未更新/);
+  failReads = false; await click('#retryCashflowRead'); assert.equal(el('#cashflowReadError'), null);
+});
+
+test('單筆刪除｜未確認欄位優先，刪除不冒充完整儲存', async () => {
+  failReads = true; legacyText = true; await click(`tbody [data-edit="${serial}-a"]`);
+  el('#f_summary').value = '本題未確認的新摘要'; el('#f_amount').value = '35000';
+  el('#modal-root form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(rows.find(row => row.id === `${serial}-a`).amount, 35000);
+  await click('#modal-root [data-cancel]');
+  await deleteRow('b'); assert.equal(rows.some(row => row.id === `${serial}-b`), false);
+  assert.match(text('#cashflowReadError'), /部分欄位尚未確認儲存/); assert.doesNotMatch(text('#cashflowReadError'), /資料已刪除/);
+  failReads = false; await click('#retryCashflowRead'); assert.equal(el('#cashflowReadError'), null);
+});
+
+test('單筆刪除｜最後可見列刪除後讀取成功可呈現空列表', async () => {
+  rows = rows.filter(row => row.id === `${serial}-a`); await renderCashflow();
+  await deleteRow(); assert.equal(rows.length, 0); assert.equal(deleteCount(), 1);
+  assert.equal(el('#cashflowReadError'), null); assert.equal(document.querySelectorAll('tbody [data-del]').length, 0);
+});
+
+
+test('單筆刪除｜較新失敗讀取仍保留原工作區時，舊確認不自動再讀', async () => {
+  const wait = holdDeletion(); const node = el('.cashflow-workspace'); await deleteRow();
+  failReads = true; await renderCashflow(); assert.equal(el('.cashflow-workspace'), node);
+  const count = reads(); wait.resolve(); await settle();
+  assert.equal(rows.some(row => row.id === `${serial}-a`), false); assert.equal(reads(), count);
+  assert.match(text('#cashflowReadError'), /資料已刪除，畫面尚未更新/);
+});
+
+test('單筆刪除｜另一筆確認取消不奪走已接受刪除的呈現資格', async () => {
+  const wait = holdDeletion(); await deleteRow(); window.confirm = () => false;
+  await deleteRow('b'); wait.resolve(); await settle();
+  assert.equal(deleteCount(), 1); assert.equal(reads(), 1); assert.equal(deleteButton(), null);
+  assert.ok(deleteButton('b')); assert.equal(el('#cashflowReadError'), null);
+});
+
+test('單筆刪除｜在途換頁返回的新列仍不能重送同id', async () => {
+  const wait = holdDeletion('a', true); await deleteRow(); await navigate('#cards'); await navigate('#cashflow');
+  await select('yearSelDesktop', '2025'); await select('monthSelDesktop', '03');
+  await deleteRow(); const count = deleteCount(); wait.resolve(); await settle();
+  assert.equal(rows.some(row => row.id === `${serial}-a`), false); assert.equal(count, 1); assert.equal(deleteCount(), 1);
+  assert.match(text('#cashflowReadError'), /資料已刪除/);
+});
+
+test('單筆刪除｜確認前GET晚生同id舊列，新的控制項也不能再刪', async () => {
+  const wait = deferred(), read = deferred(); holdWrite = wait;
+  const oldRows = structuredClone(rows); readQueue.push(async () => { await read.promise; return json(oldRows); });
+  const reading = renderCashflow(); await settle(); await deleteRow();
+  wait.resolve(); await settle(); read.resolve(); await reading; await settle(); holdWrite = null;
+  assert.equal(rows.some(row => row.id === `${serial}-a`), false); assert.ok(deleteButton());
+  await deleteRow(); assert.equal(deleteCount(), 1); assert.match(text('#cashflowReadError'), /資料已刪除/);
+  await click('#retryCashflowRead'); assert.equal(deleteButton(), null);
+});
+
+test('單筆刪除｜後續匯入不能洗掉未涵蓋刪除', async () => {
+  failReads = true; await deleteRow(); await bankPreview(); await click('#bankApply');
+  assert.equal(rows.find(row => row.id === `${serial}-import`).amount, 42000);
+  assert.match(text('#cashflowReadError'), /資料已刪除，畫面尚未更新/);
+  failReads = false; await click('#retryCashflowRead'); assert.equal(el('#cashflowReadError'), null);
+});
+
+test('單筆刪除｜重試在途確認刪除取消回焦，仍完成原GET', async t => {
+  retryFocusEnvironment(t);
+  const write = holdDeletion(), read = deferred(); await deleteRow();
+  await navigate('#cards'); await navigate('#cashflow'); failReads = true; await renderCashflow();
+  const button = el('#retryCashflowRead'); button.focus(); disableBlurs(button);
+  readQueue.push(async data => { await read.promise; return json(data); });
+  const count = reads(); button.click(); await settle();
+  write.resolve(); await settle(); assert.equal(el('#retryCashflowRead').disabled, true);
+  assert.equal(reads(), count + 1); read.resolve(); await settle();
+  assert.match(text('#cashflowReadError'), /資料已刪除/); assert.equal(document.activeElement, document.body);
+  assert.equal(deleteCount(), 1); failReads = false; await click('#retryCashflowRead'); assert.equal(el('#cashflowReadError'), null);
+});
+
+
+test('單筆刪除｜其他月份同id資料不唯一時不猜要刪哪筆', async () => {
+  rows.push({ ...rows.find(row => row.id === `${serial}-a`), date: '2025-12-10' });
+  await renderCashflow(); const before = rows.length;
+  assert.equal(document.querySelectorAll(`tbody [data-del="${serial}-a"]`).length, 1);
+  await deleteRow(); assert.equal(deleteCount(), 0); assert.equal(rows.length, before);
+});
+
+test('單筆刪除｜建立pending提示同步開新窗後不啟動舊作業GET', async t => {
+  const node = el('.cashflow-workspace'), insert = node.insertBefore.bind(node);
+  let fired = false;
+  t.mock.method(node, 'insertBefore', function (child, anchor) {
+    const result = insert(child, anchor);
+    if (!fired && child.id === 'cashflowReadError') { fired = true; app.openInfo('本題接管', '<input id="delete-reentry-input" value="本題未存輸入">'); }
+    return result;
+  });
+  await deleteRow(); assert.equal(rows.some(row => row.id === `${serial}-a`), false);
+  assert.equal(fired, true); assert.equal(deleteCount(), 1); assert.equal(reads(), 0);
+  assert.equal(el('#delete-reentry-input').value, '本題未存輸入');
+  assert.match(text('#cashflowReadError'), /資料已刪除/);
 });

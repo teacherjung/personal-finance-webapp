@@ -48,7 +48,7 @@
 | 頁面 | 路由 | 主畫面 | UI6 狀態 | 手機 | 鍵盤 | 列印 | 目前結論 | 下一個驗收點 |
 |---|---|---|---|---|---|---|---|---|
 | 總覽 | `#dashboard` | 有基礎 | 有零資料與局部載入失敗退路，未做全狀態專項 | 有共用響應式規則，待實機複驗 | 待全站驗收 | 待決定 | 有基礎 | 重跑桌機／手機整頁截圖，確認動態訊息舞台、KPI、兩張圖與提醒牆層級。 |
-| 銀行收支 | `#cashflow` | 有基礎 | [#700](https://github.com/teacherjung/personal-finance-webapp/pull/700)處理同次進頁舊列表與四態唯讀重試；固定版[歷史反例](engineering-stage-evidence.md#原6後續與原24仍未修的反例)保留，不作現行未修斷言；刪除／外部寫入及完整狀態組仍待核 | 有專項窄畫面規則，待實機複驗 | 重試回焦由[#703](https://github.com/teacherjung/personal-finance-webapp/pull/703)專項處理，依[計畫](cashflow-retry-focus-plan.md)區分原生／真DOM及合併後本人驗收；其餘完整鍵盤與跨瀏覽器仍未結清 | 待決定 | 有基礎 | 驗收頁首、月份／明細篩選與表格；「日常帳本」方向尚未定案，不納入施工。 |
+| 銀行收支 | `#cashflow` | 有基礎 | [#700](https://github.com/teacherjung/personal-finance-webapp/pull/700)處理同次進頁舊列表與四態唯讀重試；固定版[歷史反例](engineering-stage-evidence.md#原6後續與原24仍未修的反例)保留，不作現行未修斷言；單筆刪除由[#704](https://github.com/teacherjung/personal-finance-webapp/pull/704)依[計畫](cashflow-delete-recovery-plan.md)補兩態提示與同id防重；批次刪除／外部寫入及完整狀態組仍待核 | 有專項窄畫面規則，待實機複驗 | 重試回焦由[#703](https://github.com/teacherjung/personal-finance-webapp/pull/703)專項處理，依[計畫](cashflow-retry-focus-plan.md)區分原生／真DOM及合併後本人驗收；其餘完整鍵盤與跨瀏覽器仍未結清 | 待決定 | 有基礎 | 驗收頁首、月份／明細篩選與表格；「日常帳本」方向尚未定案，不納入施工。 |
 | 信用卡費 | `#transactions` | 有基礎 | 有空白引導；載入、錯誤與成功尚未形成專項狀態組 | 有寬／窄桌機與長金額規則，待手機實測 | 待全站驗收 | 待決定 | 有基礎 | 與銀行收支用同一把尺驗收頁首、月份區與明細表。 |
 | 資產配置 | `#assets` | 有基礎 | 有空配置與無資產引導；讀取失敗僅有全站通用退路，未做完整專項 | 有桌機雙欄、中間寬度與手機單欄規則 | 待全站驗收 | 待決定 | 有基礎 | 驗收摘要、實際配置 vs 目標、帳戶明細及所有彈窗。 |
 | 銀行帳戶 | `#bank` | 有基礎 | 載入、成功、錯誤、空白、重試與兩種入口已有專項 | 有專項單欄與操作排列規則 | 待全站驗收 | 待決定 | 有基礎 | 做目前版本的桌機／手機視覺複驗，確認長名稱、末四碼與多幣別。 |

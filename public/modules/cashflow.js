@@ -29,6 +29,10 @@ let renderGeneration = 0;
 let editRevision = 0;
 let unconfirmedRevision = 0;
 let importRevision = 0;
+let deleteRevision = 0;
+let deleteSequence = 0;
+const cashflowDeletes = new Map();
+/** @type {Map<string, number>} */ const confirmedCashflowDeletes = new Map();
 let readRevision = 0;
 const listSort = { key: 'date', dir: 'desc' };
 /** @typedef {{hash: string, nav: number, host: HTMLElement}} CashflowVisit */
@@ -242,6 +246,8 @@ function pendingCashflowMessage(/** @type {CashflowWorkspace} */ state) {
   if (state.revision === editRevision) return '';
   return state.revision < unconfirmedRevision
     ? '部分欄位尚未確認儲存，請重新讀取後確認資料'
+    : state.revision < deleteRevision
+      ? (state.success ? '資料已刪除，畫面尚未更新' : '資料已刪除，暫時無法載入列表')
     : !state.success && state.revision < importRevision
       ? '資料已匯入，暫時無法載入列表'
     : '資料已儲存，畫面尚未更新';
@@ -263,6 +269,49 @@ function showPendingCashflowWrite(/** @type {RetryFocusJob|null} */ focusJob = n
   // 非讀取終端的提示重建撤銷回焦，不把中途新鈕當成原入口。
   if (retryFocusJob !== focusJob) finishRetryFocus(retryFocusJob);
   showCashflowReadError(`${pendingCashflowMessage(state)}${detail}`, state, renderGeneration, false, focusJob);
+}
+
+/** @param {any} tx @param {HTMLElement} button @param {Element} row @param {CashflowWorkspace} state */
+async function deleteCashflowRow(tx, button, row, state) {
+  const id = tx.id;
+  const original = () => currentWorkspace() === state && button.isConnected && row.parentElement === state.node.querySelector('tbody')
+    && button.closest('tr') === row && state.node.contains(button)
+    && [...state.node.querySelectorAll('[data-del]')].filter(node => /** @type {HTMLElement} */ (node).dataset.del === id).length === 1
+    && button.dataset.del === id;
+  if (!original() || cashflowDeletes.has(id)) return;
+  if (state.revision < (confirmedCashflowDeletes.get(id) || 0)) { showPendingCashflowWrite(); return; }
+  const generation = renderGeneration, seq = currentRouteSeq(), modal = byId('modal-root');
+  if (!modal) return;
+  const unchanged = watchModalRoot();
+  const owns = () => original() && generation === renderGeneration && seq === currentRouteSeq()
+    && modal === byId('modal-root') && unchanged() && !modal.querySelector('.modal');
+  if (!owns()) return;
+  const operation = {};
+  let accepted = 0;
+  const canContinue = () => owns() && accepted === deleteSequence && !cashflowRead;
+  // 原生確認可同步重入；鎖先於確認，但取消不淘汰別筆已接受的呈現作業。
+  cashflowDeletes.set(id, operation);
+  try {
+    const name = `${flowOf(tx).label} ${money(tx.amount)}`;
+    if (!window.confirm(`確定要刪除「${name}」嗎？此動作無法復原。`) || !owns()) return;
+    accepted = ++deleteSequence;
+    let result;
+    try { result = await api('/transactions/' + id, { method: 'DELETE' }); }
+    catch (e) { if (canContinue()) toast(e.message, true); return; }
+    if (result?.ok !== true) { if (canContinue()) toast('更新失敗', true); return; }
+    // 確認事實不依附原頁；先記修訂，才解除同 id 在途鎖。
+    deleteRevision = ++editRevision;
+    confirmedCashflowDeletes.set(id, deleteRevision);
+    if (cashflowDeletes.get(id) === operation) cashflowDeletes.delete(id);
+    showPendingCashflowWrite();
+    if (!canContinue()) return;
+    toast('已刪除');
+    if (!canContinue()) return;
+    // GET 的失敗由讀取恢復處理，不能退回 DELETE 的失敗或重送路徑。
+    await renderCashflow();
+  } finally {
+    if (cashflowDeletes.get(id) === operation) cashflowDeletes.delete(id);
+  }
 }
 
 export async function renderCashflow() {
@@ -461,10 +510,6 @@ async function readCashflowPage(/** @type {RetryFocusJob|null} */ focusJob) {
   });
   bindSortClicks(view(), listSort, renderCashflow);
   view().querySelectorAll('[data-edit]').forEach(b => /** @type {HTMLElement} */ (b).onclick = () => openCashflowForm(all.find(t => t.id === /** @type {HTMLElement} */ (b).dataset.edit), accounts, all, dataRevision));
-  view().querySelectorAll('[data-del]').forEach(b => /** @type {HTMLElement} */ (b).onclick = () => {
-    const t = all.find(x => x.id === /** @type {HTMLElement} */ (b).dataset.del);
-    confirmDelete(`${flowOf(t).label} ${money(t.amount)}`, () => api('/transactions/' + t.id, { method: 'DELETE' }));
-  });
   if (focusedControl) {
     const selector = focusedControl.classList.contains('cashflow-stat-action') ? '.cashflow-stat-action' : '.cashflow-flow-control .chip';
     const replacement = focusedControl.id ? byId(focusedControl.id)
@@ -475,6 +520,15 @@ async function readCashflowPage(/** @type {RetryFocusJob|null} */ focusJob) {
     node: host.querySelector('.cashflow-workspace'), visit, route: seq, success: true };
   failedState = null;
   readRevision = dataRevision;
+  for (const [id, revision] of confirmedCashflowDeletes) {
+    if (revision <= dataRevision) confirmedCashflowDeletes.delete(id);
+  }
+  const deleteState = renderedState;
+  deleteState.node.querySelectorAll('[data-del]').forEach(b => {
+    const button = /** @type {HTMLElement} */ (b), row = button.closest('tr');
+    const tx = all.find(item => item.id === button.dataset.del);
+    button.onclick = () => { if (tx && row && all.filter(item => item.id === tx.id).length === 1) return deleteCashflowRow(tx, button, row, deleteState); };
+  });
   // 讀取開始後才確認的寫入，可能尚未包含在這份回覆裡。
   showPendingCashflowWrite(focusJob);
   completeRetryFocus(focusJob, flight, renderedState);
