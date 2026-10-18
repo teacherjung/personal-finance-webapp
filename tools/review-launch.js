@@ -31,7 +31,7 @@ const { gitEnv } = require('./git-env.js');
 const { parseInstant } = require('./time-point.js');
 const { fieldValue, canonicalRole, rolesOf } = require('./gates/check-collab-fields.js');
 const { headerOf, evaluate: evaluateVerdicts } = require('./gates/check-review-verdicts.js');
-const { evaluate: evaluateRulings, deciderOf } = require('./pending-rulings.js');
+const { evaluate: evaluateRulings, deciderOf, rulingLink } = require('./pending-rulings.js');
 const { run: riskRun, gitIn } = require('./risk-tier.js');
 
 const UNSET = '未設定';
@@ -223,7 +223,7 @@ function launch(changeArg, reviewerArg, { settings = readSettings(), platform = 
   const used = new Set([...entry.command.matchAll(TOKEN)].map((m) => m[1]));
   if (!used.has('model') || !used.has('effort')) throw new LaunchError(`「${reviewer}」的啟動指令樣板沒帶 {model} 或 {effort}：漏帶時複審者照它自己的預設跑，從外面看不出來（F11）`);
   const decider = deciderOf(settings);
-  if (!decider) throw new LaunchError('專案設定裡的裁示者識別值或貼文帳號還沒填：算不出相關裁示');
+  if (!decider) throw new LaunchError('專案設定裡的裁示者識別值或貼文帳號未填或不唯一（也請核對 owner）；修正 settings.json 後重跑：算不出相關裁示');
   const tpl = template === null ? fs.readFileSync(TEMPLATE, 'utf8') : template;
 
   const change = askPlatform(platform, settings, 'change', { change: String(changeArg) });
@@ -236,7 +236,7 @@ function launch(changeArg, reviewerArg, { settings = readSettings(), platform = 
   const base = askPlatform(platform, settings, 'branchSha', { branch: change.baseBranch }).sha;
   const comments = askPlatform(platform, settings, 'comments', { change: id });
   const all = askPlatform(platform, settings, 'allComments', {});
-  const rulings = evaluateRulings(all, decider);
+  const rulings = evaluateRulings(all, decider, settings);
   if (rulings.unsure) throw new LaunchError(`相關裁示算不出來（${rulings.unsure}）`);
   // 先 fetch 再算風險：判「快速通道（AI）」要讀本機 git 的主幹與受審版本（F12），沒 fetch 會因為找不到版本而判成不走
   const root = git(cwd, ['rev-parse', '--show-toplevel']);
@@ -262,7 +262,8 @@ function launch(changeArg, reviewerArg, { settings = readSettings(), platform = 
     : exhausted ? '照表算的；這一支原本走快速通道（AI），這一位已經連兩輪沒「通過」，這一輪起照這一級走一般流程（F12）'
       : '照表算的；分級腳本判這一支走快速通道（AI）：第 1 輪起只核差異、不掃描（F12）';
   const commentLink = (changeId, comment) => substitute(rl.commentLink, { project, change: changeId, comment }, '留言網址樣板').text;
-  const related = rulings.ruled.filter((x) => String(x.ask.change) === String(id)).map((x) => commentLink(x.by.change, x.by.id));
+  const related = rulings.ruled.filter((x) => String(x.ask.change) === String(id)).map((x) =>
+    rulingLink(x.by, commentLink(x.by.change, x.by.id)));
 
   for (const [what, sha] of [['受審版本', head], ['基底', base]]) {
     if (!gitOk(root, ['cat-file', '-e', `${sha}^{commit}`])) throw new LaunchError(`本機倉庫沒有${what} ${sha}${fetched ? '' : '（git fetch 也沒成功）'}：開不了樹`);

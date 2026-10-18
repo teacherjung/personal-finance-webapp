@@ -29,11 +29,11 @@
 const { ask, PlatformError } = require('./platform.js');
 const { read: readSettings } = require('./settings-data.js');
 const { ruleFooter } = require('./build-rules.js');
+const { assignmentsOf, assignmentOf, identitiesOf, resolveAt, routingSummary } = require('./ruling-assignments.js');
 
 /** 開工與問裁示時印的那幾條（按需印條文；I＝整節）。 */
 const RULES_SHOWN = ['D1', 'I'];
 
-const UNSET = '未設定';
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
 const ASK = /^## ❓ 待裁（(\d{4}-\d{2}-\d{2})）：(\S.*)$/u;
 const WITHDRAW = /^## 🚫 撤回（(\d{4}-\d{2}-\d{2})）：(\S.*)$/u;
@@ -64,15 +64,8 @@ const cites = (body, id) => new RegExp(`(?<![0-9A-Za-z])${id.replace(/[.*+?^${}(
 
 const esc = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** 裁示者：角色以「裁示者」開頭的那一位；識別值與帳號都要填。順便帶回全部登記的識別值與帳號。 */
-function deciderOf(settings) {
-  const all = Array.isArray(settings.participants) ? settings.participants : [];
-  const p = all.find((x) => x && typeof x.role === 'string' && x.role.startsWith('裁示者'));
-  if (!p || !p.id || p.id === UNSET || !p.account || p.account === UNSET) return null;
-  const ids = all.map((x) => x && x.id).filter((v) => typeof v === 'string' && v && v !== UNSET);
-  const accounts = all.map((x) => x && x.account).filter((v) => typeof v === 'string' && v && v !== UNSET);
-  return { id: p.id, account: p.account, ids, accounts };
-}
+/** 相容舊參與者角色；新指派依留言建立時間走共同路由。 */
+function deciderOf(settings) { return identitiesOf(settings); }
 
 /**
  * 純判斷層。comments＝[{ id, author, body, createdAt, change }]（change＝所屬PR編號，只用來印）。
@@ -81,17 +74,23 @@ const { parseInstant } = require('./time-point.js');
 // 時間走共用契約（r3 High①）：沒帶時區的時間在不同執行機器會判出不同先後，不收
 const at = (c) => { const v = parseInstant(c.createdAt); return v === null ? NaN : v; };
 
-function evaluate(comments, decider) {
+function evaluate(comments, decider, settings = {}) {
   // 時間契約（r2 Medium④）：每一則的時間都要讀得出，先後用時間值比——字串比會讓不同時區的合法寫法排錯，
   // 一則其實比問題早的裁示會把後來的問題關掉。讀不出＝整份算不出來，由呼叫端退 2。
   if (comments.some((c) => !Number.isFinite(at(c)))) return { open: [], ruled: [], withdrawn: [], near: [], unsure: '有留言的時間讀不出來或沒帶時區' };
+  if (!decider) return { open: [], ruled: [], withdrawn: [], near: [], accepted: [], unsure: '裁示者或擁有者未填、重複，或舊預設裁示者不唯一' };
   const ids = decider.ids && decider.ids.length ? decider.ids : [decider.id];
   const accounts = new Set(decider.accounts && decider.accounts.length ? decider.accounts : [decider.account]);
   const idAlt = `(?:${ids.map(esc).join('|')})`;
-  const rulingRe = new RegExp(`^## ⚖️? ${esc(decider.id)} 裁示（(\\d{4}-\\d{2}-\\d{2})）：(\\S.*)$`, 'u');
   // 轉述者的識別值必須是登記過的、不帶任何記號（範本明說角色包粗體＝不合；r1 Medium⑨）
   const quoteRe = new RegExp(`^原話（對話中，${idAlt} 轉述）：\\*\\*「.+」\\*\\*[ \\t]*$`, 'mu');
-  const withdrawSelf = new RegExp(`^${idAlt} 撤回、${esc(decider.id)} 未回；他隨時可以要我重問[ \\t]*$`, 'mu');
+  let assignments;
+  try { assignments = assignmentsOf(settings); }
+  catch (e) { return { open: [], ruled: [], withdrawn: [], near: [], accepted: [], unsure: e.message }; }
+  const ownerId = decider.ownerId || null;
+  const ownerAccount = decider.ownerAccount || null;
+  const rulingIds = [...new Set([ownerId, decider.id, ...assignments.map((a) => a.decider)].filter(Boolean))];
+  const rulingRe = new RegExp(`^## ⚖️? (${rulingIds.map(esc).join('|')}) 裁示（(\\d{4}-\\d{2}-\\d{2})）：(\\S.*)$`, 'u');
   const asks = [];
   const rulings = [];
   const withdraws = [];
@@ -108,23 +107,34 @@ function evaluate(comments, decider) {
     const a = ASK.exec(first);
     if (a) {
       if (!realDate(a[1])) { near.push({ ...c, why: '日期不是真的日子' }); continue; }
+      if (assignmentOf(c.body).invalid) near.push({ ...c, why: '裁示指派行不合範本；請以唯一一行「裁示指派：〈id〉」補明，不當作未指定' });
       asks.push({ ...c, date: a[1], title: a[2].trim() });
       continue;
     }
+    const routing = assignmentOf(c.body);
+    const route = resolveAt(assignments, decider, c.body, c.createdAt);
     const r = rulingRe.exec(first);
     if (r) {
-      if (!realDate(r[1])) { near.push({ ...c, why: '日期不是真的日子' }); continue; }
-      if (c.author !== decider.account) { near.push({ ...c, why: `裁示不是裁示者的帳號貼的（${c.author}）` }); continue; }
+      const ownerRuling = ownerId !== null && r[1] === ownerId;
+      const expected = ownerRuling ? { id: ownerId, account: ownerAccount, routeId: 'default' } : route;
+      if (!realDate(r[2])) { near.push({ ...c, why: '日期不是真的日子' }); continue; }
+      if (!expected || r[1] !== expected.id) { near.push({ ...c, why: '指定裁示的指派或有效時間不符；核對裁示指派行及設定' }); continue; }
+      if (c.author !== expected.account) { near.push({ ...c, why: `裁示不是裁示者的帳號貼的（${c.author}）` }); continue; }
       if (!quoteRe.test(clean(c.body))) { near.push({ ...c, why: `少了「原話（對話中，〈登記的識別值〉 轉述）：**「…」**」那一行（轉述者要是登記的識別值、不帶記號）${stopNote(c.body)}` }); continue; }
-      rulings.push({ ...c, date: r[1], title: r[2].trim() });
+      if (ownerRuling && (routing.invalid || (routing.id && (!route || route.id !== ownerId)))) near.push({ ...c, why: '本人裁示依本人資格採計；附帶的指派行不作為委任依據，請勿冒用受指派者身分' });
+      rulings.push({ ...c, date: r[2], title: r[3].trim(), ownerRuling, routeId: expected.routeId,
+        ...(expected.assignment ? { ruler: r[1], assignment: expected.assignment } : {}) });
       continue;
     }
     const w = WITHDRAW.exec(first);
     if (w) {
       if (!realDate(w[1])) { near.push({ ...c, why: '日期不是真的日子' }); continue; }
       if (!WITHDRAW_REASON.test(clean(c.body))) { near.push({ ...c, why: `撤回理由不是三選一、或沒有具體依據${stopNote(c.body)}` }); continue; }
-      if (!withdrawSelf.test(clean(c.body))) { near.push({ ...c, why: `少了「〈登記的識別值〉 撤回、〈裁示者〉 未回；他隨時可以要我重問」那一行${stopNote(c.body)}` }); continue; }
-      withdraws.push({ ...c, date: w[1], title: w[2].trim() });
+      if (!route) { near.push({ ...c, why: '撤回的裁示指派或有效時間不符' }); continue; }
+      const self = new RegExp(`^${idAlt} 撤回、${esc(route.id)} 未回；他隨時可以要我重問[ \\t]*$`, 'mu');
+      if (!self.test(clean(c.body))) { near.push({ ...c, why: `少了對應裁示者的撤回自報句${stopNote(c.body)}` }); continue; }
+      withdraws.push({ ...c, date: w[1], title: w[2].trim(), routeId: route.routeId,
+        ...(route.assignment ? { assignment: route.assignment, ruler: route.id } : {}) });
       continue;
     }
     const v = ACCEPT.exec(first);
@@ -143,9 +153,19 @@ function evaluate(comments, decider) {
   const withdrawn = [];
   for (const q of asks) {
     const later = (x) => at(x) > at(q);
-    const r = rulings.find((x) => later(x) && cites(x.body, q.id));
+    const route = assignmentOf(q.body);
+    const matchesRoute = (x) => !route.invalid && (route.id === null || route.id === x.routeId);
+    const matches = (x) => later(x) && cites(x.body, q.id);
+    const owner = rulings.find((x) => x.ownerRuling && matches(x));
+    const candidates = rulings.filter((x) => matches(x) && matchesRoute(x));
+    const controls = [...candidates, ...withdraws.filter((x) => matches(x) && matchesRoute(x))];
+    if (!owner && route.id === null && !route.invalid && new Set(controls.map((x) => x.routeId)).size > 1) {
+      near.push({ ...q, why: `舊題未明列指派，出現跨路由答覆／撤回（${[...new Set(controls.map((x) => x.routeId))].join('、')}）；保留待裁，請核對本人指派後依標準格式補明，不任選答案` });
+      open.push(q); continue;
+    }
+    const r = owner || candidates[0];
     if (r) { ruled.push({ ask: q, by: r }); continue; }
-    const w = withdraws.find((x) => later(x) && cites(x.body, q.id));
+    const w = withdraws.find((x) => matches(x) && matchesRoute(x));
     if (w) { withdrawn.push({ ask: q, by: w }); continue; }
     open.push(q);
   }
@@ -163,13 +183,18 @@ function evaluate(comments, decider) {
   return { open, ruled, withdrawn, near, accepted: accepts };
 }
 
+/** 發審產生器與提供者重算要用同一種裁示身分標示。 */
+function rulingLink(by, url) {
+  return `${by.assignment ? `指定裁示者 ${by.ruler}（${by.assignment.id}；指派來源 ${by.assignment.source}）：` : ''}${url}`;
+}
+
 function render({ open, ruled, withdrawn, near, accepted = [] }) {
   const lines = [];
   const where = (c) => `變更 ${c.change}｜留言 ${c.id}`;
   lines.push(`還沒回：${open.length} 則`);
   for (const q of open) lines.push(`  ・${q.date}｜${q.title}｜${where(q)}`);
   lines.push(`已裁：${ruled.length} 則（配對是推導，錯的看得見）`);
-  for (const { ask: q, by } of ruled) lines.push(`  ・${q.title}｜問：${where(q)}｜裁：${by.date}，${where(by)}`);
+  for (const { ask: q, by } of ruled) lines.push(`  ・${q.title}｜問：${where(q)}｜裁：${by.date}，${where(by)}${by.assignment ? `｜指定裁示者：${by.ruler}｜指派：${by.assignment.id}｜來源：${by.assignment.source}` : ''}`);
   lines.push(`已撤回：${withdrawn.length} 則`);
   for (const { ask: q, by } of withdrawn) lines.push(`  ・${q.title}｜問：${where(q)}｜撤：${by.date}，${where(by)}`);
   lines.push(`驗收留痕：${accepted.length} 則（不是待裁；只認形狀，不看哪一支該貼卻沒貼）`);
@@ -215,7 +240,7 @@ function render({ open, ruled, withdrawn, near, accepted = [] }) {
 
 function run({ settings = readSettings(), platform = { ask } } = {}) {
   const decider = deciderOf(settings);
-  if (!decider) return { code: 2, lines: ['專案設定裡的裁示者識別值或貼文帳號還沒填：分不出誰的裁示算數，算不出來。'] };
+  if (!decider) return { code: 2, lines: ['專案設定裡的擁有者／裁示者未填、重複，或舊預設裁示者不唯一：分不出誰的裁示算數，算不出來。'] };
   // 掃整個專案的留言，不是只掃開著的PR（搬家驗屋 09-13：題目問在某支PR上、那一支先合併了而裁示者還沒回，
   // 只掃開著的就讓那一題從清單消失、印「還沒回：0 則」；原專案真語料 12 題裡 4 題是這個形狀）
   let comments;
@@ -225,10 +250,10 @@ function run({ settings = readSettings(), platform = { ask } } = {}) {
     if (e instanceof PlatformError || (e && e.name === 'PlatformError')) return { code: 2, lines: [`待裁清單：問不到平台（${e.message}）——算不出來。`] };
     throw e;
   }
-  const result = evaluate(comments, decider);
+  const result = evaluate(comments, decider, settings);
   if (result.unsure) return { code: 2, lines: [`待裁清單：${result.unsure}——先後判不了，算不出來（不會把任何題移出待裁）。`] };
   const changes = new Set(comments.map((c) => c.change));
-  const lines = [`待裁清單（掃了整個專案 ${changes.size} 支變更、${comments.length} 則留言；含已關的變更）`, ...render(result)];
+  const lines = [...routingSummary(settings), `待裁清單（掃了整個專案 ${changes.size} 支變更、${comments.length} 則留言；含已關的變更）`, ...render(result)];
   return { code: 0, lines };
 }
 
@@ -248,4 +273,4 @@ if (require.main === module) {
   process.exit(result.code);
 }
 
-module.exports = { run, evaluate, render, deciderOf, cites, realDate, readPart, cliArgsProblem, RULES_SHOWN };
+module.exports = { rulingLink, run, evaluate, render, deciderOf, cites, realDate, readPart, cliArgsProblem, RULES_SHOWN };

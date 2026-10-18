@@ -236,7 +236,7 @@ function run(argv, { runner = runGh, out = process.stdout, err = process.stderr,
     let data;
     try { data = settings || (opts.settings ? JSON.parse(fs.readFileSync(opts.settings, 'utf8')) : readSettings()); } catch (e) { err.write(`本週成果產生器：讀不到設定（${e.message}）\n`); return 2; }
     decider = deciderOf(data);
-    if (!decider) { err.write('本週成果產生器：設定裡的裁示者識別值或貼文帳號還沒填，判不了驗收留痕（要略過驗收帶 --no-acceptance）\n'); return 2; }
+    if (!decider) { err.write('本週成果產生器：設定裡的裁示者未填或不唯一（也請核對 owner），判不了驗收留痕（要略過驗收帶 --no-acceptance）\n'); return 2; }
   }
   const items = [];
   const counts = [];

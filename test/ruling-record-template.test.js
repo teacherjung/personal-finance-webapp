@@ -7,7 +7,7 @@
 // 樣板行**綁位置、不綁內容**（r2 Medium①：全檔找「長得對的那一行」會被別處的好範例冒充——真正那行改壞、前面留一份舊好樣板，全卷仍綠）：
 // 先切出範本的三節（## 問／## 裁示落地／## 合規撤回，各剛好一節），在節裡找指示句（「第一行逐字…：」「第一段逐字照下面這行填…：」
 // 「內文三行都要有：」，各剛好一句），抽**指示句下面那幾行**當樣板——不管它長什麼樣，照填餵解析器。這是切換前 test/pending-rulings.test.js（:182）
-// 「固定標籤＋緊接的整行」的做法。正本不是平文字（註解、圍欄、引言、原始 HTML、刪除線、縮排式程式碼）＝直接紅，不剝。
+// 「固定標籤＋緊接的整行」的做法。正本不是平文字（註解、圍欄、引言、原始 HTML、刪除線、縮排式程式碼）＝直接紅；只特許設定教學節完整可解析的 JSON 區塊。
 // ⚠️ 證不到的：原話是不是他真的說的、署名是不是本人（本專案參與者共用同一個貼文帳號）——沒有機器在看；
 //    解析器對各種藏法（圍欄、註解、引用）的判斷是套件考題的射程，這裡只留一題對照範本自己寫的那句「網址寫在開頭那一段」。
 import { test } from 'node:test';
@@ -39,20 +39,10 @@ const PH = {
 
 /**
  * 從正本抽七個樣板行——綁位置：節 → 指示句 → 指示句下面那幾行。回傳樣板文字（t）與它們的行號（at；保存題用來在正確的位置動刀）。
- * fail-closed：正本必須是平文字；三節各剛好一節；每個指示句在它那一節裡剛好一句；抽到的行佔位符剛好一個——不然直接紅。
+ * fail-closed：除完整設定 JSON 外必須是平文字；三節各剛好一節；每個指示句在它那一節裡剛好一句；抽到的行佔位符剛好一個——不然直接紅。
  */
 function bindTemplates(/** @type {string} */ text) {
   const src = text.replace(/\r\n?/g, '\n');
-  for (const [what, re] of /** @type {[string, RegExp][]} */ ([
-    ['HTML 註解', /<!--/u],
-    ['圍欄', /^[ \t]*(?:`{3,}|~{3,})/mu],
-    ['引言', /^[ \t]*>/mu],
-    ['原始 HTML', /<[A-Za-z/!?]/u],
-    ['刪除線', /~~/u],
-    ['縮排式程式碼', /^(?: {4}|\t)/mu],
-  ])) {
-    assert.doesNotMatch(src, re, `正本 ${TEMPLATE} 出現了${what}——那一段不再是平文字，抽到的樣板可能是副本或範例，這題不剝、直接紅`);
-  }
   const lines = src.split('\n');
   // 節的邊界＝二級標題，但三種留痕自己的第一行也是「## 」開頭（❓／⚖️／🚫），那些不是節
   const isBoundary = (/** @type {string} */ l) => /^## (?![❓⚖🚫])/u.test(l);
@@ -79,12 +69,37 @@ function bindTemplates(/** @type {string} */ text) {
   const askSec = sectionOf((l) => l.trim() === '## 問', '## 問');
   const ruleSec = sectionOf((l) => l.startsWith('## 裁示落地'), '## 裁示落地');
   const wdSec = sectionOf((l) => l.startsWith('## 合規撤回'), '## 合規撤回');
+  // 只特許設定節完整且可解析的 JSON，避免節外未閉容器把正式留痕藏起來。
+  const setupHeading = '## 先確認裁示者（A1）';
+  const setupLine = lines.findIndex((line) => line === setupHeading);
+  const setupStart = setupLine < 0 ? -1 : lines.slice(0, setupLine).join('\n').length;
+  const nextSetupHeading = setupLine < 0 ? -1 : lines.findIndex((line, i) => i > setupLine && isBoundary(line));
+  const setupEnd = nextSetupHeading < 0 ? src.length : lines.slice(0, nextSetupHeading).join('\n').length;
+  let jsonBlocks = 0;
+  const visibleText = src.replace(/^```json\n([\s\S]*?)^```$/gmu, (block, json, offset) => {
+    jsonBlocks++;
+    assert.ok(setupStart >= 0 && offset > setupStart && offset + block.length <= setupEnd,
+      'JSON 圍欄只准出現在設定教學節，不能包住正式留痕');
+    assert.doesNotThrow(() => JSON.parse(json), '設定教學 JSON 須完整可解析');
+    return '\n'.repeat(block.split('\n').length - 1);
+  });
+  assert.ok(jsonBlocks <= 1, '設定教學只支援一個 JSON 範例，增加範例須同步核對抽樣板邊界');
+  for (const [what, re] of /** @type {[string, RegExp][]} */ ([
+    ['HTML 註解', /<!--/u],
+    ['圍欄', /^[ \t]*(?:`{3,}|~{3,})/mu],
+    ['引言', /^[ \t]*>/mu],
+    ['原始 HTML', /<[A-Za-z/!?]/u],
+    ['刪除線', /~~/u],
+    ['縮排式程式碼', /^(?: {4}|\t)/mu],
+  ])) {
+    assert.doesNotMatch(visibleText, re, `正本 ${TEMPLATE} 出現了${what}——那一段不再是平文字，抽到的樣板可能是副本或範例，這題不剝、直接紅`);
+  }
   const anchors = {
     ask: anchorIn(askSec, firstLine, '問：第一行逐字'),
     ruling: anchorIn(ruleSec, firstLine, '裁示：第一行逐字'),
-    quote: anchorIn(ruleSec, (l) => l.startsWith('第一段逐字照下面這行填') && endsWithColon(l), '裁示：第一段逐字照下面這行填'),
+    quote: anchorIn(ruleSec, (l) => (l.startsWith('第一段逐字照下面這行填') || l.includes('接著逐字照下面這行填')) && endsWithColon(l), '裁示：第一段逐字照下面這行填'),
     withdraw: anchorIn(wdSec, firstLine, '撤回：第一行逐字'),
-    body: anchorIn(wdSec, (l) => /^內文三行都要有：[ \t]*$/u.test(l), '撤回：內文三行都要有'),
+    body: anchorIn(wdSec, (l) => l.includes('內文三行都要有：') && endsWithColon(l), '撤回：內文三行都要有'),
   };
   const body = below(anchors.body, 3, '撤回：內文三行都要有');
   const at = {
@@ -254,4 +269,55 @@ test('保存題：正本改字、或別處留好範例＋真正那行改壞→�
   const m5 = [...L];
   m5[ANCHORS.quote] = '（指示句被拿掉）';
   assert.throws(() => bindTemplates(m5.join('\n')), /命中 0 處/u, '指示句拿掉 → 紅');
+});
+
+
+test('設定教學可放完整 JSON；節外未閉圍欄或註解不能藏住正式留痕', () => {
+  const teaching = '## 先確認裁示者（A1）\n\n```json\n{"id":"synthetic"}\n```\n\n';
+  const sample = REAL.includes('## 先確認裁示者（A1）') ? REAL : teaching + REAL;
+  assert.deepEqual(bindTemplates(sample).t, T);
+  const matched = /^```json\n[\s\S]*?^```$/mu.exec(sample);
+  assert.ok(matched, '對照組須有完整 JSON 圍欄，才有未閉容器的破壞機會');
+  assert.throws(() => bindTemplates(sample.replace(matched[0], matched[0] + '\n\n' + matched[0])), /只支援一個 JSON/u);
+  const closing = matched.index + matched[0].length - 3;
+  const unclosed = sample.slice(0, closing) + sample.slice(closing + 3);
+  assert.throws(() => bindTemplates(unclosed), /圍欄/u);
+  assert.throws(() => bindTemplates('<!-- 未閉註解\n' + sample), /HTML 註解/u);
+  assert.throws(() => bindTemplates(sample.replace(matched[0], '```json\n{broken:\n```')),
+    /完整可解析/u);
+});
+
+
+test('完整設定 JSON 移到文件開頭或正式留痕節也必須拒收', () => {
+  const matched = /^```json\n[\s\S]*?^```$/mu.exec(REAL);
+  assert.ok(matched, '移動前須取得正式設定 JSON 區塊');
+  const without = REAL.replace(matched[0], '');
+  assert.throws(() => bindTemplates(matched[0] + '\n\n' + without), /只准出現在設定教學節/u);
+  assert.throws(() => bindTemplates(without.replace('## 問\n', '## 問\n\n' + matched[0] + '\n')), /只准出現在設定教學節/u);
+});
+
+test('教學好範例不能替壞掉的正式原話樣板關題', () => {
+  const matched = /^```json\n[\s\S]*?^```$/mu.exec(REAL);
+  assert.ok(matched, '須有教學區塊，才能種入本題的好範例');
+  const badLine = '錯誤前綴' + T.quote;
+  const lines = REAL.split('\n');
+  assert.equal(lines[AT.quote], T.quote);
+  lines[AT.quote] = badLine;
+  const sample = lines.join('\n').replace(matched[0], '```json\n' + JSON.stringify({ example: T.quote }) + '\n```');
+  const bound = bindTemplates(sample);
+  assert.equal(bound.t.quote, badLine);
+  const q = ask();
+  const result = evaluate([q, c(rulingBody(D.ids[0], q.id, quoteLineOf(D.ids[0], bound.t.quote)))], D);
+  assert.equal(result.open.length, 1);
+  assert.equal(result.ruled.length, 0);
+});
+
+test('設定節前未閉圍欄與正式樣板行容器都不能藏住正本', () => {
+  assert.throws(() => bindTemplates('```text\n' + REAL), /圍欄/u);
+  for (const [name, at] of Object.entries(AT)) {
+    const lines = REAL.split('\n');
+    assert.equal(lines[at], T[name], name);
+    lines[at] = '```text\n' + lines[at] + '\n```';
+    assert.throws(() => bindTemplates(lines.join('\n')), /圍欄/u, name);
+  }
 });

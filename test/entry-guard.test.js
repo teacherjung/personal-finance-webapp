@@ -32,7 +32,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync, readdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -132,14 +132,16 @@ const NO_OBSERVABLE_OUTPUT = [
  *    不穩的話就當場說清楚是「輸出不穩定」而不是「守衛壞了」——
  *    **兩種病要分開講，混在一起的訊息會把人帶去修錯的地方。**
  *
- * ⚠️ 受控 env（只給 `PATH`／`HOME`）：避免 `c6-adversarial.js` 這種吃環境變數的腳本
- *    在考題裡真的連線出去。
+ * ⚠️ 子行程 env 只給 PATH／每題自有空 HOME，避免載入登入設定或讓本機安裝檔影響輸入。
+ *    同題三次共用 HOME，讓含路徑的診斷仍能逐字比較；升版功能另由 grok-bump 專項卷守。
  */
-function runThrice(rel) {
+function runThrice(rel, sourceRoot = ROOT) {
   return withSymlinkedTemp((dir) => {
     const link = join(dir, 'probe.js');
-    symlinkSync(join(ROOT, rel), link);
-    const env = { PATH: process.env.PATH || '', HOME: process.env.HOME || '' };
+    symlinkSync(join(sourceRoot, rel), link);
+    const testHome = join(dir, 'home');
+    mkdirSync(testHome, { mode: 0o700 });
+    const env = { PATH: process.env.PATH || '', HOME: testHome };
     // timeout（2026-08-22 加）：一支無參數就開始聽的伺服器型腳本，會讓這裡**無聲卡死**（grok-relay.js 第一版實際卡了 10 分鐘）。
     // ⚠️ 光加 timeout 不夠（Codex #496 r1 實測）：被殺的腳本 status 是 null，而 shape() 原本把 null 照樣收進去、
     //    三次比對都是 {status:null,out:'READY'} → 相等 → **照樣綠**。所以 shape() 要把「被殺」變成紅：
@@ -152,12 +154,36 @@ function runThrice(rel) {
       return { status: r.status, out: `${r.stdout}${r.stderr}` };
     };
     return {
-      direct: shape(spawnSync(process.execPath, [join(ROOT, rel)], opts)),
-      again: shape(spawnSync(process.execPath, [join(ROOT, rel)], opts)),
+      testHome,
+      direct: shape(spawnSync(process.execPath, [join(sourceRoot, rel)], opts)),
+      again: shape(spawnSync(process.execPath, [join(sourceRoot, rel)], opts)),
       linked: shape(spawnSync(process.execPath, [link], opts)),
     };
   });
 }
+
+test('入口夾具｜三個真子行程使用同題私有空家目錄，下一題另建且不改父程序', () => {
+  const parentHome = process.env.HOME;
+  withSymlinkedTemp((sourceRoot) => {
+    writeFileSync(join(sourceRoot, 'environment.mjs'),
+      "import { readdirSync, statSync } from 'node:fs';\n"
+      + "import { homedir } from 'node:os';\n"
+      + "console.log(JSON.stringify({ envHome: process.env.HOME, osHome: homedir(), entries: readdirSync(homedir()), mode: statSync(homedir()).mode & 0o777 }));\n");
+    const first = runThrice('environment.mjs', sourceRoot);
+    const second = runThrice('environment.mjs', sourceRoot);
+    assert.notEqual(first.testHome, second.testHome);
+    for (const result of [first, second]) {
+      assert.notEqual(result.testHome, parentHome);
+      for (const run of [result.direct, result.again, result.linked]) {
+        assert.equal(run.status, 0);
+        assert.deepEqual(JSON.parse(run.out), {
+          envHome: result.testHome, osHome: result.testHome, entries: [], mode: 0o700,
+        });
+      }
+    }
+  });
+  assert.equal(process.env.HOME, parentHome);
+});
 
 const ALL_SCRIPTS = readdirSync(join(ROOT, SCRIPTS_DIR))
   .filter((f) => f.endsWith('.js')).map((f) => `${SCRIPTS_DIR}/${f}`).sort();

@@ -77,6 +77,14 @@ function build(data) {
     throw new Error(`擁有者「${owner}」不是上表登記的識別值`);
   }
   out.push(`擁有者（規矩 A1；快速通道（擁有者）由他當複審者，F12，結論閘認他的「通過」不要求固定小標）：${plain(owner, '擁有者識別值')}`, '');
+  const assignments = require('./ruling-assignments.js').assignmentsOf(data);
+  if (Object.hasOwn(data, 'rulingAssignments')) {
+    out.push('### 裁示者指派（A1）', '', `預設選取模式：${assignments.some((a) => a.id === 'default') ? '明確時間表' : '舊設定相容模式'}。`, '', '指定範圍內交由該裁示者判斷；本人保留事項仍依規則。範圍語意與來源真偽由實作者及複審核對，工具只核登記、留痕路由與時間。標準留痕見 templates/ruling-record.md。', '');
+    out.push('default 是全專案預設路由；其餘識別值只供明列範圍。依裁示建立時間選有效期，default 無有效期時回擁有者。未登記 default 時相容舊參與者角色的唯一裁示者；沒有則回擁有者，有多位則算不出來。換人保留舊期，不覆寫歷史。', '', '| 路由 | 裁示者 | 範圍 | 開始（含） | 結束（不含） | 指派來源 |', '|---|---|---|---|---|---|');
+    for (const a of assignments) out.push(`| ${plain(a.id, '路由')} | ${plain(a.decider, '裁示者')} | ${plain(a.scope, '範圍')} | ${plain(a.from === null ? '舊制起點未載明' : a.from, '開始')} | ${plain(a.until === null ? '未結束' : a.until, '結束')} | ${plain(a.source, '來源')} |`);
+    out.push('');
+    if (!assignments.length) out.push('無另行登記的範圍指派。', '');
+  }
   out.push('## 二、來源字串標準表（結論標頭的來源欄；寫作義務：跨輪次一字不改、不含會變的東西）', '');
   out.push('| 審查工具或工作階段 | 逐字來源字串 |', '|---|---|');
   for (const s of data.sources) {
