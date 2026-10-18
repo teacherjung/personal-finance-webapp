@@ -5,7 +5,7 @@ import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
-let app, renderSubscriptions, serial = 0, rows, calls, reads, putWait, putFail, errors;
+let app, renderSubscriptions, serial = 0, rows, calls, reads, putWait, putFail, putPlans, errors;
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status });
 const defer = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(r => setTimeout(r, 0)); };
@@ -22,12 +22,14 @@ async function boot() {
   globalThis.fetch = async (url, init) => {
     const path = String(url).split('?')[0], method = init?.method || 'GET';
     const body = init?.body ? JSON.parse(init.body) : undefined;
-    calls.push({ path, method, body });
+    const call={ path, method, body };calls.push(call);
     if (method === 'PUT' && path.startsWith('/api/subscriptions/')) {
-      if (putWait) await putWait.promise;
-      if (putFail) return json({ error: '合成寫入失敗' }, 503);
       const row = rows.find(r => r.id === path.split('/').at(-1));
-      Object.assign(row, body); return json(row);
+      const planned=putPlans.shift();
+      if(planned){const response=await planned(row,body);call.status=response.status;return response;}
+      if (putWait) await putWait.promise;
+      if (putFail) {call.status=503;return json({ error: '合成寫入失敗' }, 503);}
+      Object.assign(row, body);call.status=200;return json(row);
     }
     if (path === '/api/subscriptions') {
       const snap = structuredClone(rows), next = reads.shift();
@@ -47,7 +49,7 @@ async function boot() {
   await settle();
 }
 beforeEach(async () => {
-  serial++; calls=[]; reads=[]; putWait=null; putFail=false; errors=[];
+  serial++; calls=[]; reads=[]; putWait=null; putFail=false;putPlans=[]; errors=[];
   rows = ['a','b'].map((x,i)=>({ id:`${serial}-${x}`,name:'本題合成'+x,amount:100+i,cycle:'monthly',since:'2026-06',nextCharge:'2099-12-01',status:'active',active:true,considerCancel:false }));
   await boot();
   el('#modal-root').replaceChildren();
@@ -150,6 +152,113 @@ for(const kind of ['hash','away-back','router','blur','hidden','original-blur'])
 });
 test('第二筆標記已接管時，晚回舊操作不移動目前外部焦點',async()=>{
   const id=rows[0].id,d=defer();putWait=d;await start();putWait=null;const b=flag(rows[1].id);b.focus();b.click();await settle();assert.equal(rows[1].considerCancel,true);el('#outside').focus();d.resolve();await settle();written(id);assert.equal(document.activeElement,el('#outside'));assert.equal(puts().length,2);
+});
+for(const bad of [false,true])test(`較舊PUT晚回不換掉較新標記頁面，舊讀取${bad?'錯誤誘餌':'成功'}不搶焦`,async()=>{
+  rows[0].considerCancel=true;
+  await renderSubscriptions({showLoading:false});await settle();
+  const oldId=rows[0].id,newId=rows[1].id,d=defer();putWait=d;await start();
+  putWait=null;const second=flag(newId);second.focus();second.click();await settle();
+  written(newId);const page=el('.subscriptions-page'),focused=flag(newId),notice=el('.subscriptions-notice');
+  assert.equal(document.activeElement,focused);assert.equal(notice.textContent,'已標記為考慮停用');
+  if(bad)reads.push(()=>json({error:'本題舊讀取失敗'},503));
+  const readCount=calls.filter(c=>c.path==='/api/subscriptions').length;
+  d.resolve();await settle();
+  assert.equal(rows.find(r=>r.id===oldId).considerCancel,false);assert.equal(puts().length,2);
+  assert.equal(el('.subscriptions-page'),page);assert.equal(document.activeElement,focused);
+  assert.equal(el('.subscriptions-notice'),notice);assert.equal(notice.textContent,'已標記為考慮停用');
+  assert.equal(flag(oldId).classList.contains('flag-on'),false);
+  assert.equal(calls.filter(c=>c.path==='/api/subscriptions').length,readCount);
+  assert.equal(reads.length,bad?1:0);
+});
+test('晚確認只原地同步標記與同一物件閉包，其他欄位沿較新呈現',async()=>{
+  rows[0].considerCancel=true;await renderSubscriptions({showLoading:false});await settle();
+  const a=rows[0].id,b=rows[1].id,d=defer(),offIcon=flag(b).innerHTML,offTitle=flag(b).title;
+  putPlans.push(async(row,body)=>{await d.promise;Object.assign(row,body);return json({...row,name:'本題舊回音名稱',amount:987654});});
+  await start();rows[0].name='本題較新名稱';const second=flag(b);second.focus();second.click();await settle();
+  const page=el('.subscriptions-page'),aButton=flag(a),bButton=flag(b),notice=el('.subscriptions-notice');
+  d.resolve();await settle();
+  assert.equal(el('.subscriptions-page'),page);assert.equal(flag(a),aButton);assert.equal(document.activeElement,bButton);assert.equal(el('.subscriptions-notice'),notice);
+  assert.match(aButton.closest('tr').textContent,/本題較新名稱/);assert.doesNotMatch(aButton.closest('tr').textContent,/本題舊回音名稱|987,654/);
+  assert.equal(aButton.classList.contains('flag-on'),false);assert.equal(aButton.closest('tr').querySelector('.cancel-dot').classList.contains('on'),false);
+  assert.equal(aButton.innerHTML,offIcon);assert.equal(aButton.title,offTitle);
+  aButton.focus();aButton.click();await settle();
+  assert.equal(puts().length,3);assert.deepEqual(puts().at(-1).body,{considerCancel:true});assert.equal(rows[0].considerCancel,true);
+});
+for(const bad of [false,true])test(`真的在途舊GET${bad?'失敗':'成功'}不換掉較新標記的頁面與通知`,async()=>{
+  rows[0].considerCancel=true;await renderSubscriptions({showLoading:false});await settle();
+  const a=rows[0].id,b=rows[1].id,d=defer(),readsBefore=calls.filter(c=>c.path==='/api/subscriptions').length;let completed=false;
+  reads.push(async snap=>{await d.promise;completed=true;return bad?json({error:'本題在途舊讀取失敗'},503):json(snap);});
+  await start();assert.equal(rows[0].considerCancel,false);
+  const second=flag(b);second.focus();second.click();await settle();written(b);
+  const page=el('.subscriptions-page'),button=flag(b),notice=el('.subscriptions-notice');assert.equal(document.activeElement,button);
+  d.resolve();await settle();assert.equal(completed,true);
+  assert.equal(el('.subscriptions-page'),page);assert.equal(document.activeElement,button);assert.equal(el('.subscriptions-notice'),notice);
+  assert.equal(notice.textContent,'已標記為考慮停用');assert.equal(puts().length,2);assert.equal(calls.filter(c=>c.path==='/api/subscriptions').length-readsBefore,2);
+  assert.equal(flag(a).classList.contains('flag-on'),false);
+});
+test('新GET快照早於確認時只合併flag，下一次操作讀同一新呈現資料',async()=>{
+  rows[0].considerCancel=true;await renderSubscriptions({showLoading:false});await settle();
+  const a=rows[0].id,put=defer(),get=defer();putWait=put;await start();putWait=null;
+  reads.push(async snap=>{await get.promise;return json(snap.map((r,i)=>i?r:{...r,name:'本題權威讀取名稱',amount:321}));});
+  const reading=renderSubscriptions({showLoading:false});await settle();put.resolve();await settle();assert.equal(rows[0].considerCancel,false);
+  get.resolve();await reading;await settle();
+  const button=flag(a);assert.equal(button.classList.contains('flag-on'),false);assert.match(button.closest('tr').textContent,/本題權威讀取名稱/);assert.match(button.closest('tr').textContent,/321/);
+  button.focus();button.click();await settle();assert.deepEqual(puts().at(-1).body,{considerCancel:true});assert.equal(rows[0].considerCancel,true);
+});
+test('確認後才開始的GET採權威新值，不永久覆蓋其他來源的flag',async()=>{
+  const a=rows[0].id;await start();written(a);rows[0].considerCancel=false;rows[0].name='本題後續權威讀取';
+  await renderSubscriptions({showLoading:false});await settle();assert.equal(flag(a).classList.contains('flag-on'),false);
+  flag(a).focus();flag(a).click();await settle();assert.deepEqual(puts().at(-1).body,{considerCancel:true});assert.equal(rows[0].considerCancel,true);
+});
+test('新GET含重複身分時不合併晚確認的flag或猜其中一列',async()=>{
+  const a=rows[0].id,put=defer(),get=defer();putWait=put;await start();putWait=null;
+  reads.push(async snap=>{await get.promise;return json([...snap,snap[0]]);});const reading=renderSubscriptions({showLoading:false});await settle();
+  put.resolve();await settle();written(a);get.resolve();await reading;await settle();
+  const duplicates=[...document.querySelectorAll('[data-flag]')].filter(b=>b.dataset.flag===a);
+  assert.equal(duplicates.length,2);assert.equal(duplicates.every(b=>!b.classList.contains('flag-on')),true);
+});
+for(const kind of ['id','type','target'])test(`未確認的${kind}回音不原地套值或當作成功`,async()=>{
+  const a=rows[0].id,original=flag(a);putPlans.push(async(row,body)=>{Object.assign(row,body);return json({...row,...(kind==='id'?{id:'本題其他身分'}:{considerCancel:kind==='type'?'true':false})});});
+  await start();written(a);assert.equal(flag(a),original);assert.equal(original.classList.contains('flag-on'),false);
+  assert.equal(el('.subscriptions-notice'),null);assert.equal(calls.filter(c=>c.path==='/api/subscriptions').length,0);
+});
+test('同筆接受時凍結可見值並局部序列，每筆只送一次且不等整頁GET',async()=>{
+  const a=rows[0].id,d=defer();putWait=d;const original=await start();putWait=null;original.click();await settle();
+  assert.equal(puts().length,1);assert.deepEqual(puts()[0].body,{considerCancel:true});
+  d.resolve();await settle();assert.equal(puts().length,2);assert.deepEqual(puts().map(c=>c.body),[{considerCancel:true},{considerCancel:true}]);
+  assert.deepEqual(puts().map(c=>c.status),[200,200]);assert.equal(rows[0].considerCancel,true);assert.equal(document.activeElement,flag(a));
+  const get=defer();reads.push(async snap=>{await get.promise;return json(snap);});flag(a).click();await settle();assert.equal(puts().length,3);
+  assert.deepEqual(puts().at(-1).body,{considerCancel:false});assert.equal(rows[0].considerCancel,false);
+  const heldButton=flag(a);heldButton.click();await settle();assert.equal(puts().length,4);assert.deepEqual(puts().at(-1).body,{considerCancel:true});
+  get.resolve();await settle();assert.equal(rows[0].considerCancel,true);assert.equal(puts().length,4);
+});
+test('同筆前次PUT失敗不堵住後續已接受的固定目標',async()=>{
+  const a=rows[0].id,d=defer();putPlans.push(async()=>{await d.promise;return json({error:'本題前筆失敗'},503);});
+  const original=await start();original.click();await settle();assert.equal(puts().length,1);
+  d.resolve();await settle();assert.equal(puts().length,2);assert.deepEqual(puts().map(c=>c.body),[{considerCancel:true},{considerCancel:true}]);
+  assert.deepEqual(puts().map(c=>c.status),[503,200]);assert.equal(rows[0].considerCancel,true);assert.equal(flag(a).classList.contains('flag-on'),true);
+});
+test('不同筆互不等待，較新作業仍在PUT時舊確認只同步原列',async()=>{
+  const a=rows[0].id,b=rows[1].id,first=defer(),second=defer();putWait=first;await start();putWait=second;
+  const bButton=flag(b);bButton.focus();bButton.click();await settle();assert.equal(puts().length,2);
+  const page=el('.subscriptions-page');first.resolve();await settle();written(a);
+  assert.equal(rows[1].considerCancel,false);assert.equal(el('.subscriptions-page'),page);assert.equal(document.activeElement,bButton);
+  assert.equal(flag(a).classList.contains('flag-on'),true);assert.equal(calls.filter(c=>c.path==='/api/subscriptions').length,0);
+  second.resolve();await settle();written(b);assert.equal(document.activeElement,flag(b));assert.equal(flag(a).classList.contains('flag-on'),true);
+});
+test('較新正常GET已失敗時舊PUT晚確認不復活列表或覆蓋錯誤頁',async()=>{
+  const a=rows[0].id,b=rows[1].id,d=defer();putWait=d;await start();putWait=null;reads.push(()=>json({error:'本題較新讀取失敗'},503));
+  const second=flag(b);second.focus();second.click();await settle();written(b);const page=el('.subscriptions-page');assert.ok(el('#retrySubscriptions'));
+  d.resolve();await settle();written(a);assert.equal(el('.subscriptions-page'),page);assert.ok(el('#retrySubscriptions'));assert.equal(puts().length,2);
+  assert.equal(calls.filter(c=>c.path==='/api/subscriptions').length,1);
+});
+for(const state of ['empty','missing','duplicate'])test(`外部讀取${state}後舊確認不插回或猜列`,async()=>{
+  const a=rows[0].id,d=defer();putWait=d;await start();putWait=null;
+  reads.push(snap=>json(state==='empty'?[]:state==='missing'?snap.slice(1):[...snap,snap[0]]));
+  await renderSubscriptions({showLoading:false});await settle();const page=el('.subscriptions-page'),buttons=[...document.querySelectorAll('[data-flag]')];
+  d.resolve();await settle();written(a);assert.equal(el('.subscriptions-page'),page);assert.deepEqual([...document.querySelectorAll('[data-flag]')],buttons);
+  if(state==='duplicate')assert.equal(buttons.filter(b=>b.dataset.flag===a).every(b=>!b.classList.contains('flag-on')),true);
+  else assert.equal(flag(a),undefined);
 });
 test('既有校正遞迴仍保留通知與標記回焦，校正寫入另計',async()=>{
   const id=rows[0].id;reads.push(snap=>json(snap.map((r,i)=>i? r:{...r,status:'lifetime'})));

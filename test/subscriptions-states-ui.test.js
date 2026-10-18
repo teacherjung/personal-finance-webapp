@@ -158,11 +158,11 @@ function assertStateWiring(source) {
     '自動校正後重載必須把尚未顯示的通知接回下一輪');
   assert.match(render, /view\(\)\.querySelectorAll\('th\.sortable'\)[\s\S]*?renderSubscriptions\(\{ showLoading: false \}\);\s*\}\);/,
     '表頭排序只能原地更新，不可把整頁清成載入狀態');
-  assert.match(source, /function rerenderSubscriptionsAfterAction\(seq, message, focusJob = null\) \{\s*if \(seq !== currentRouteSeq\(\)\) \{ finishFlagFocus\(focusJob\); return; \}\s*subscriptionNotice = message;\s*return renderSubscriptionsPage\(\{ showLoading: false \}, focusJob\);/);
+  assert.match(source, /function rerenderSubscriptionsAfterAction\(seq, message, focusJob = null, operation = null\) \{\s*if \(seq !== currentRouteSeq\(\)\) \{ finishFlagFocus\(focusJob\); return; \}\s*if \(operation && !flagPresentationCurrent\(operation\)\) return;\s*subscriptionNotice = message;\s*return renderSubscriptionsPage\(\{ showLoading: false \}, focusJob, null, operation\);/);
   assert.match(source, /async function deleteSubscription\(s\) \{\s*if \(!window\.confirm\(`確定要刪除「\$\{s\.name\}」嗎？此動作無法復原。`\)\) return;\s*const seq = currentRouteSeq\(\);\s*try \{\s*await api\('\/subscriptions\/' \+ s\.id, \{ method: 'DELETE' \}\);\s*rerenderSubscriptionsAfterAction\(seq, '訂閱已刪除'\);/);
   assert.match(source, /async function applyOrder\(ids, listKey\) \{\s*const seq = currentRouteSeq\(\);\s*await Promise\.all[\s\S]*?setListSort\(listKey, 'manual', 'asc'\);\s*if \(seq !== currentRouteSeq\(\)\) return;\s*renderSubscriptions\(\{ showLoading: false \}\);\s*\}/,
     '拖曳排序必須保留手動排序偏好，並且只在原路由原地更新');
-  assert.match(toggle, /const message = s\.considerCancel \? '已取消「考慮停用」標記' : '已標記為考慮停用';\s*await rerenderSubscriptionsAfterAction\(seq, message, focusJob\);/);
+  assert.match(toggle, /const message = operation\.target \? '已標記為考慮停用' : '已取消「考慮停用」標記';\s*await rerenderSubscriptionsAfterAction\(seq, message, focusJob, operation\);/);
   assert.doesNotMatch(toggle, /toast\(message\)/, '標記成功不可同時顯示 toast 與頁內通知');
   assert.match(form, /const message = sub \? '訂閱資料已更新' : '訂閱已新增';\s*rerenderSubscriptionsAfterAction\(seq, message\);/);
   assert.doesNotMatch(form, /toast\(message\)/, '儲存成功不可同時顯示 toast 與頁內通知');
@@ -212,9 +212,10 @@ test('訂閱追蹤狀態：破壞消毒、重試、空白接線、路由守衛�
   assert.ok(source.includes(catchGuard), '突變目標必須存在：失敗狀態路由守衛');
   assert.throws(() => assertStateWiring(source.replace(catchGuard, `/* ${catchGuard} */\n    view().innerHTML = subscriptionsLoadErrorHtml`)));
 
-  const saveGuard = 'if (seq !== currentRouteSeq()) { finishFlagFocus(focusJob); return; }\n  subscriptionNotice = message;';
+  const saveRouteGuard = 'if (seq !== currentRouteSeq()) { finishFlagFocus(focusJob); return; }';
+  const saveGuard = saveRouteGuard+'\n  if (operation && !flagPresentationCurrent(operation)) return;\n  subscriptionNotice = message;';
   assert.ok(source.includes(saveGuard), '突變目標必須存在：成功狀態路由守衛');
-  assert.throws(() => assertStateWiring(source.replace(saveGuard, 'subscriptionNotice = message;')));
+  assert.throws(() => assertStateWiring(source.replace(saveGuard, saveGuard.replace(saveRouteGuard, ''))));
 
   const emptyHistory = "byId('emptyAddSub').onclick = () => openSubForm(null, creditCards);\n    renderHistorySection(byId('historySection'));";
   assert.ok(source.includes(emptyHistory), '突變目標必須存在：空白狀態歷史接線');
@@ -255,7 +256,7 @@ test('訂閱追蹤狀態：破壞消毒、重試、空白接線、路由守衛�
   assert.throws(() => assertStateWiring(source.replace(orderGuard,
     "setListSort(listKey, 'manual', 'asc');")));
 
-  const toggleNoticeOnly = 'const message = s.considerCancel ? \'已取消「考慮停用」標記\' : \'已標記為考慮停用\';\n    await rerenderSubscriptionsAfterAction(seq, message, focusJob);';
+  const toggleNoticeOnly = 'const message = operation.target ? \'已標記為考慮停用\' : \'已取消「考慮停用」標記\';\n    await rerenderSubscriptionsAfterAction(seq, message, focusJob, operation);';
   assert.ok(source.includes(toggleNoticeOnly), '突變目標必須存在：標記成功單一通知');
   assert.throws(() => assertStateWiring(source.replace(toggleNoticeOnly,
     toggleNoticeOnly.replace('rerenderSubscriptionsAfterAction', 'toast(message);\n    rerenderSubscriptionsAfterAction'))));

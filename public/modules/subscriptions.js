@@ -161,11 +161,12 @@ function subscriptionsEmptyHtml(notice) {
   </div>`;
 }
 
-/** @param {number} seq @param {string} message @param {FlagFocusJob|null} [focusJob] */
-function rerenderSubscriptionsAfterAction(seq, message, focusJob = null) {
+/** @param {number} seq @param {string} message @param {FlagFocusJob|null} [focusJob] @param {any} [operation] */
+function rerenderSubscriptionsAfterAction(seq, message, focusJob = null, operation = null) {
   if (seq !== currentRouteSeq()) { finishFlagFocus(focusJob); return; }
+  if (operation && !flagPresentationCurrent(operation)) return;
   subscriptionNotice = message;
-  return renderSubscriptionsPage({ showLoading: false }, focusJob);
+  return renderSubscriptionsPage({ showLoading: false }, focusJob, null, operation);
 }
 
 // 排序用的「續費/停用」生效日期
@@ -231,6 +232,68 @@ async function autoExpire(subs) {
 let subscriptionsReadGeneration = 0;
 let flagOperation = 0;
 /** @type {any} */ let flagFocusJob = null;
+let subscriptionsPresentationOwner = 0;
+let flagConfirmationRevision = 0;
+/** @type {any} */ let subscriptionsPresented = null;
+/** @type {any} */ let subscriptionsReading = null;
+const flagConfirmations = new Map();
+const flagWriteTails = new Map();
+
+function flagPresentationCurrent(owner) {
+  return owner && owner.owner === subscriptionsPresentationOwner && owner.host === view()
+    && owner.host.isConnected && owner.seq === currentRouteSeq() && owner.nav === currentNavSeq()
+    && owner.hash === location.hash;
+}
+
+function subscriptionsPresentationCurrent(presentation) {
+  return presentation && presentation === subscriptionsPresented && presentation.host === view()
+    && presentation.host.isConnected && presentation.page.isConnected
+    && presentation.page.parentElement === presentation.host && presentation.seq === currentRouteSeq()
+    && presentation.nav === currentNavSeq() && presentation.hash === location.hash;
+}
+
+function syncPresentedFlag(id, value) {
+  const p = subscriptionsPresented;
+  if (!subscriptionsPresentationCurrent(p)) return;
+  const items = p.subs.filter(s => s.id === id);
+  const rows = [...p.page.querySelectorAll('.subs-table tbody tr[data-id]')].filter(row => row.dataset.id === id);
+  if (items.length !== 1 || rows.length !== 1) return;
+  const buttons = [...rows[0].querySelectorAll('[data-flag]')].filter(b => b.dataset.flag === id);
+  if (buttons.length !== 1) return;
+  // 列事件閉包仍讀這個物件；只改 DOM 會使下一次取反使用舊值。
+  items[0].considerCancel = value;
+  rows[0].querySelector('.cancel-dot')?.classList.toggle('on', value);
+  buttons[0].classList.toggle('flag-on', value);
+  buttons[0].title = value ? '已標記考慮停用' : '標記考慮停用';
+  buttons[0].innerHTML = icon(value ? 'box-x' : 'box', 15);
+}
+
+function confirmSubscriptionFlag(operation, saved) {
+  if (saved?.id !== operation.id || typeof saved.considerCancel !== 'boolean'
+    || saved.considerCancel !== operation.target) return false;
+  flagConfirmations.set(operation.id, { revision: ++flagConfirmationRevision, value: saved.considerCancel });
+  syncPresentedFlag(operation.id, saved.considerCancel);
+  // 只有仍能提交的在途讀取需要覆蓋其較早快照；後續 GET 本身已在確認之後。
+  if (!flagPresentationCurrent(subscriptionsReading)) flagConfirmations.clear();
+  return true;
+}
+
+function mergeConfirmedFlags(rows, confirmedAtStart) {
+  const counts = new Map();
+  rows.forEach(row => counts.set(row.id, (counts.get(row.id) || 0) + 1));
+  for (const row of rows) {
+    const confirmed = flagConfirmations.get(row.id);
+    if (counts.get(row.id) === 1 && confirmed && confirmed.revision > confirmedAtStart) row.considerCancel = confirmed.value;
+  }
+}
+
+function sendSubscriptionFlag(operation) {
+  const previous = flagWriteTails.get(operation.id) || Promise.resolve();
+  const sent = previous.catch(() => {}).then(() => api('/subscriptions/' + operation.id,
+    { method: 'PUT', body: { considerCancel: operation.target } }));
+  flagWriteTails.set(operation.id, sent);
+  return sent;
+}
 
 function finishFlagFocus(job) {
   if (!job || job.done) return;
@@ -249,9 +312,8 @@ function flagFocusCurrent(job) {
     && !job.modal.querySelector('.modal') && !document.hidden;
 }
 
-function startFlagFocus(id, button) {
+function startFlagFocus(id, button, operation) {
   finishFlagFocus(flagFocusJob);
-  const operation = ++flagOperation;
   const host = view(), workspace = button?.closest('.subscriptions-page');
   if (document.activeElement !== button || !button?.isConnected || workspace?.parentElement !== host) return null;
   /** @type {FlagFocusJob} */
@@ -332,17 +394,26 @@ export async function renderSubscriptions({ showLoading = true } = {}) {
 /**
  * @param {{showLoading?:boolean}} options
  * @param {FlagFocusJob|null} [focusJob]
- * @param {{generation:number,host:any,seq:number,nav:number,hash:string}|null} [chain]
+ * @param {{generation:number,owner:number,host:any,seq:number,nav:number,hash:string}|null} [chain]
+ * @param {any} [operation]
  */
-async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = null, chain = null) {
+async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = null, chain = null, operation = null) {
   if (!chain) {
+    if (operation && !flagPresentationCurrent(operation)) return;
     if (flagFocusJob !== focusJob) finishFlagFocus(flagFocusJob);
-    chain = { generation: ++subscriptionsReadGeneration, host: view(), seq: currentRouteSeq(), nav: currentNavSeq(), hash: location.hash };
+    chain = { generation: ++subscriptionsReadGeneration, owner: operation ? operation.owner : ++subscriptionsPresentationOwner,
+      host: view(), seq: currentRouteSeq(), nav: currentNavSeq(), hash: location.hash };
     if (focusJob && !focusJob.done) focusJob.generation = chain.generation;
+    subscriptionsReading = chain;
+    try { return await renderSubscriptionsPage({ showLoading }, focusJob, chain); }
+    finally {
+      if (subscriptionsReading === chain) { subscriptionsReading = null; flagConfirmations.clear(); }
+    }
   }
   const activeChain = chain;
-  const current = () => activeChain.generation === subscriptionsReadGeneration && activeChain.host === view()
-    && activeChain.host.isConnected && activeChain.seq === currentRouteSeq() && activeChain.nav === currentNavSeq() && activeChain.hash === location.hash;
+  const current = () => activeChain.generation === subscriptionsReadGeneration && flagPresentationCurrent(activeChain);
+  const confirmedAtStart = flagConfirmationRevision;
+  flagConfirmations.clear();
   const seq = currentRouteSeq();
   const notice = subscriptionNotice;
   subscriptionNotice = '';
@@ -372,6 +443,7 @@ async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = n
     return;
   }
 
+  mergeConfirmedFlags(raw, confirmedAtStart);
   const creditCards = cards.filter(c => (c.type || 'credit') === 'credit').map(c => c.name);
   const validSet = new Set(creditCards);
   freezeCompletedMonths(raw).catch(() => {});   // 月份結束後自動凍結到歷史紀錄
@@ -475,6 +547,8 @@ async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = n
 
   drawBreakdown(activeThis, curMk);
   renderHistorySection(byId('historySection'));
+  subscriptionsPresented = { host: activeChain.host, page: view().querySelector('.subscriptions-page'),
+    seq: activeChain.seq, nav: activeChain.nav, hash: activeChain.hash, subs };
   restoreFlagFocus(focusJob);
 }
 
@@ -794,13 +868,20 @@ async function recordToAccounting(s) {
 
 async function toggleCancel(s, button) {
   const seq = currentRouteSeq();
-  const focusJob = startFlagFocus(s.id, button);
+  const operation = { id: s.id, target: !s.considerCancel, operation: ++flagOperation,
+    owner: ++subscriptionsPresentationOwner, host: view(), seq, nav: currentNavSeq(), hash: location.hash };
+  const focusJob = startFlagFocus(s.id, button, operation.operation);
+  const sent = sendSubscriptionFlag(operation);
   try {
-    await api('/subscriptions/' + s.id, { method: 'PUT', body: { considerCancel: !s.considerCancel } });
-    const message = s.considerCancel ? '已取消「考慮停用」標記' : '已標記為考慮停用';
-    await rerenderSubscriptionsAfterAction(seq, message, focusJob);
+    const saved = await sent;
+    if (!confirmSubscriptionFlag(operation, saved)) return;
+    const message = operation.target ? '已標記為考慮停用' : '已取消「考慮停用」標記';
+    await rerenderSubscriptionsAfterAction(seq, message, focusJob, operation);
   } catch (e) { toast(e.message, true); }
-  finally { finishFlagFocus(focusJob); }
+  finally {
+    finishFlagFocus(focusJob);
+    if (flagWriteTails.get(operation.id) === sent) flagWriteTails.delete(operation.id);
+  }
 }
 
 function drawBreakdown(activeThis, curMk) {
