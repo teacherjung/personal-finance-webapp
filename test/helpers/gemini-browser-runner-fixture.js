@@ -11,6 +11,8 @@ import * as files from '../../scripts/gemini-browser-files.js';
 import { material, answer, observation, responseArtifacts } from './gemini-browser-fixture.js';
 
 const variant = process.argv[2];
+// Node 的測試探索也會直接載入 helpers；只有指定情境的子程序才執行夾具。
+if (variant === undefined) process.exit(0);
 assert.ok(['known', 'stderr-canary', 'stderr-lease', 'stderr-shape', 'early-cancel', 'bad-claim', 'foreign-quiescence'].includes(variant));
 const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'gemini-runner-behavior-'))), jobs = join(root, 'jobs');
 const original = material(), parsed = JSON.parse(original.text);
