@@ -397,44 +397,100 @@ test('牆上時間上限與預換門檻保留執行餘裕', () => {
 
 test('整場 timer 實際排入一小時，觸發後終止群組並拒收清場', async (t) => {
   if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
-  const repo = tinyRepo(), iso = isolated(), inst = fakeGrok();
-  const executable = join(inst, 'bin', 'grok'), source = readFileSync(executable, 'utf8');
-  const needle = "\nprintf '%s'";
-  assert.equal(source.split(needle).length, 2);
-  // 讓真實子程序有機會等到受控 timer；拿掉終止的突變也能自行結束。
-  writeFileSync(executable, source.replace(needle, '\n/bin/sleep 0.4' + needle));
-  const originalTimer = globalThis.setTimeout;
-  /** @type {number[]} */ const delays = [];
-  /** @type {{pid:number,signal?:string|number}[]} */ const timerKills = [];
-  /** @type {string[]} */ const logs = [];
-  globalThis.setTimeout = /** @type {typeof setTimeout} */ ((callback, delay, ...args) => {
-    if (typeof delay === 'number' && delay > 30 * 60_000) {
-      delays.push(delay);
-      return originalTimer(() => {
-        const originalKill = process.kill;
-        process.kill = (pid, signal) => { timerKills.push({ pid, signal }); return originalKill(pid, signal); };
-        try { callback(...args); } finally { process.kill = originalKill; }
-      }, 50);
+  for (const expire of [true, false]) await t.test(expire ? 'ready 後觸發原 callback' : '正常結束取消原 timer', async () => {
+    const repo = tinyRepo(), iso = isolated(), inst = fakeGrok();
+    const executable = join(inst, 'bin', 'grok'), source = readFileSync(executable, 'utf8');
+    const version = source.split('\n').slice(0, 2).join('\n');
+    assert.match(version, /--version.*exit 0; fi$/);
+    const quote = (/** @type {string} */ value) => "'" + value.replace(/'/g, "'\\''") + "'";
+    // 用單一有限程序隔離計時接線，避免外部等待程序的啟動階段混入受測操作。
+    const program = "process.stdout.write('SYNTHETIC-TIMER-READY\\n'); setTimeout(() => process.exit(0), 2000);";
+    writeFileSync(executable, version + '\nexec ' + quote(process.execPath) + ' -e ' + quote(program) + '\n');
+    const cp = createRequire(import.meta.url)('node:child_process');
+    const originalSpawn = cp.spawn, originalTimer = globalThis.setTimeout, originalClear = globalThis.clearTimeout;
+    /** @type {number[]} */ const delays = [];
+    /** @type {{pid:number,signal?:string|number}[]} */ const timerKills = [];
+    /** @type {string[]} */ const logs = [];
+    /** @type {ReturnType<typeof setTimeout> | undefined} */ let handle;
+    /** @type {(() => void) | undefined} */ let callback;
+    let modelPid = 0, ready = false, closed = false, fired = false, cancelled = false;
+    const fireWhenReady = () => {
+      if (!expire || !ready || !callback || closed || fired || cancelled) return;
+      fired = true;
+      const originalKill = process.kill;
+      process.kill = (pid, signal) => {
+        timerKills.push({ pid, signal });
+        // 反例可觀測錯目標，但不可真送訊號給受測程序群組以外的程序。
+        if (pid !== -modelPid || signal !== 'SIGKILL') return true;
+        return originalKill(pid, signal);
+      };
+      try { callback(); } finally { process.kill = originalKill; }
+    };
+    cp.spawn = (/** @type {string} */ command, /** @type {string[]} */ args, /** @type {any} */ options) => {
+      const child = originalSpawn(command, args, options);
+      if (command === '/bin/sh' && args.includes('grok-scan-sh')) {
+        assert.equal(modelPid, 0);
+        modelPid = child.pid ?? 0;
+        let output = '';
+        child.stdout.on('data', (/** @type {Buffer|string} */ data) => {
+          output += data.toString();
+          if (output.includes('SYNTHETIC-TIMER-READY\n')) { ready = true; fireWhenReady(); }
+        });
+        child.on('close', () => { closed = true; });
+      }
+      return child;
+    };
+    syncBuiltinESMExports();
+    globalThis.setTimeout = /** @type {typeof setTimeout} */ ((fn, delay, ...args) => {
+      const timer = originalTimer(fn, delay, ...args);
+      if (typeof delay === 'number' && delay > 30 * 60_000) {
+        delays.push(delay);
+        handle = timer;
+        callback = () => fn(...args);
+        fireWhenReady();
+      }
+      return timer;
+    });
+    globalThis.clearTimeout = /** @type {typeof clearTimeout} */ (timer => {
+      if (timer === handle) cancelled = true;
+      return originalClear(timer);
+    });
+    let result;
+    try {
+      result = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() },
+        { ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok'), log: m => logs.push(m) });
+    } finally {
+      if (handle) originalClear(handle);
+      globalThis.setTimeout = originalTimer; globalThis.clearTimeout = originalClear;
+      cp.spawn = originalSpawn; syncBuiltinESMExports();
     }
-    return originalTimer(callback, delay, ...args);
+    assert.deepEqual(delays, [60 * 60_000]);
+    assert.ok(modelPid > 0);
+    assert.ok(ready, '單一合成 Node 必須實際進入等待狀態');
+    assert.ok(closed);
+    assert.ok(cancelled, '正式 close 分支必須清除整場 timer');
+    if (expire) {
+      assert.ok(fired, '必須觸發正式 runner 排定的 callback');
+      assert.equal(result.code, 2, result.summary.join('\n'));
+      assert.match(result.summary.join('\n'), /SIGKILL/);
+      assert.equal(timerKills.length, 1);
+      assert.ok(timerKills[0].pid < 0, '整場 timer 必須終止程序群組');
+      assert.equal(timerKills[0].pid, -modelPid);
+      assert.equal(timerKills[0].signal, 'SIGKILL');
+    } else {
+      assert.equal(fired, false);
+      assert.deepEqual(timerKills, []);
+      assert.ok(logs.some(line => /grok 退出碼 0/.test(line)));
+      fireWhenReady();
+      assert.equal(fired, false, '已結束的合成場不得觸發舊 callback');
+    }
+    assert.ok(logs.some(line => line.startsWith('掃描開始：')));
+    const box = logs.find(line => line.startsWith('盒子：'))?.slice('盒子：'.length);
+    assert.ok(box);
+    assert.throws(() => lstatSync(box), { code: 'ENOENT' });
+    assert.equal(readdirSync(iso.liveRoot).length, 0);
+    assert.deepEqual(readdirSync(iso.resultsRoot), []);
   });
-  let result;
-  try {
-    result = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() },
-      { ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok'), log: m => logs.push(m) });
-  } finally { globalThis.setTimeout = originalTimer; }
-  assert.deepEqual(delays, [60 * 60_000]);
-  assert.equal(result.code, 2, result.summary.join('\n'));
-  assert.match(result.summary.join('\n'), /SIGKILL/);
-  assert.equal(timerKills.length, 1);
-  assert.ok(timerKills[0].pid < 0, '整場 timer 必須終止程序群組');
-  assert.equal(timerKills[0].signal, 'SIGKILL');
-  assert.ok(logs.some(line => line.startsWith('掃描開始：')));
-  const box = logs.find(line => line.startsWith('盒子：'))?.slice('盒子：'.length);
-  assert.ok(box);
-  assert.throws(() => lstatSync(box), { code: 'ENOENT' });
-  assert.equal(readdirSync(iso.liveRoot).length, 0);
-  assert.deepEqual(readdirSync(iso.resultsRoot), []);
 });
 
 test('node_modules 複製失敗＝退 2，訊息只寫 cp 的退出碼、不印它的錯誤輸出（裡面有本機路徑）', async (t) => {

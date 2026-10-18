@@ -32,6 +32,14 @@
 4. 有效突變至少涵蓋 Grok 留回50、timer錯值或不終止、預換留回3600／等號錯放行、零差額，以及 Gemini 預設或上限任一處再接 Grok。先核替換目標，正常基線先綠；保留受測操作，紅必是斷言，不能拿語法或fixture崩潰充數。
 5. 正常完整型別、格式與考題及當版雲端照跑。高風險，正式Grok全審、F7核對、通過後試當場合法Gemini入口並依G3留實際結果，再原官方全閘合併。候選 timer 考題與正式入口實跑分列；不宣稱整輪跑滿60分鐘。H6依正式分級執行。
 
+## 完整驗證失敗與測試接法補正
+
+第一次完整推送的型別與風格檢查通過，但新增整場 timer 題在清理初始群組 SIGKILL 收到 EPERM，runner 拒收、整場退出1。舊夾具在 shell 回覆前插入外部 sleep，並將 timer 加速至50ms；本次觀測的原因仍未確定，不把稍後程序群組查無列倒推為失敗當時已空。
+
+依[實際 GPT‑6.1 Sol 限定裁示](https://github.com/teacherjung/personal-finance-webapp/pull/705#issuecomment-6248117085)，只修本題合成執行分支：保留版本及安裝位元組核對，exec 單一有限 Node；ready 後才受控觸發正式 runner 排定的 callback。另核正常結束會取消 timer。負 PGID 真終止、拒收、盒子／live／results 清場斷言及既有 EPERM／後代清理考題保持，production 清理未改。
+
+原始證據保留為 `grok-wall60-implementation-push-20261018.log`、`grok-wall60-implementation-push-attempt1-20261018.json`、`grok-wall60-failed-test-group-observation-20261018.json`，不改列通過。觀測放置於本支 timer 題與 `scripts/grok-scan.js` 的 `killGroupAndWait`；若單一握手夾具或正式場再次出現同類拒絕、資源殘留或可獨立重現的清理反例，再依 F8 裁 production 排障範圍。測試接法綠不代表 production EPERM 成因已解決。
+
 ## 回復
 
 回復本支壓縮提交可恢復 Grok50／預換60／Gemini原接線；不重設帳號、不還原憑證或修改已開始場次的 timer。不因回復把已拒收或未完成結果改成有效。
