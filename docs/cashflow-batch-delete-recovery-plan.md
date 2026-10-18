@@ -17,7 +17,9 @@
 
 [最新原話](https://github.com/teacherjung/personal-finance-webapp/pull/705#issuecomment-6249011463)。操作化：Gemini正式登記及複審啟用確認前，使用當版合法Grok正式複審入口、跳過掃描；這取代本項技術裁示當時「等Gemini登記才能開草稿」的角色前置，不改技術契約、安全／資格檢查及正式合併閘。另一線的候選或失敗試跑不作本支正式複審。
 
-六個預約路徑：`public/modules/cashflow.js`、`test/cashflow-reload.test.js`、`docs/contracts/frontend-features.md`、本計畫、`PROJECT.md`、`docs/ui-acceptance-matrix.md`。D5核為專案自有；開工時#702實際與預計清單及其他樹的未提交修改不重疊，共用樣式仍讓給另一線。送審與合併前重查。AGENTS由#702預約，本人跨PR新原話已公開、暫存並列待回填；共同入口釋出後須另核預約與D5，不冒稱K6已完成。
+本人其後在Gemini排障線更新：「算了，這條線結束掉。目前就Codex實作Grok複審就好」（[更新留痕](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6249335559)）。現行Codex實作、Grok複審、掃描跳過；停止等待Gemini切換，不啟動Gemini，也不自行恢復Grok掃描。上段等待登記的安排僅留沿革。
+
+八個預約路徑：`public/modules/cashflow.js`、`test/cashflow-reload.test.js`、`docs/contracts/frontend-features.md`、本計畫、`PROJECT.md`、`docs/ui-acceptance-matrix.md`、`AGENTS.md`、`docs/project-collaboration.md`。產品六檔開工與#702不重疊；#702關閉、未合併後補預約兩份入口文件並重核D3／D5，均為專案自有，其他工作樹未提交修改無重疊。入口回填本人跨PR新指示，協作附則將Gemini接線標為停止；不改模型設定或接線。共用樣式仍讓給另一線，送審與合併前重查。
 
 ## 產品推薦：依本人授權代選
 
@@ -53,6 +55,6 @@
 
 ## 程序與回復
 
-高風險。正常三關及最新雲端綠後，依暫行本人分工交Grok固定最強模型／最高推理正式入口及F7；G3依本人指示記跳過，轉正式、原官方全閘合併及當版H6。若送審前新分工已正式登記並獲啟用，先核對最新指示與實際接線，不借未驗入口或把新角色掛名為已審。
+高風險。正常三關及最新雲端綠後，依暫行本人分工交Grok固定最強模型／最高推理正式入口及F7；G3依本人指示記跳過，轉正式、原官方全閘合併及當版H6。Gemini工作線已由本人結束，不等待或啟動其入口。
 
 回復本支前端提交可撤銷修法，不能且不得自動復原已確認刪除資料。合併後自動操作、代選與本人實看分開記錄，原#700／#703／#704歷史證據保持；批次之外其他頁、跨視窗／外部寫入、全UI7、手機與HOSTED不在本支。
