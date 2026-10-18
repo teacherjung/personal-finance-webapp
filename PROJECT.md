@@ -36,7 +36,7 @@
 
 - **銀行收支桌機明細伸縮**：[#710](https://github.com/teacherjung/personal-finance-webapp/pull/710) 接續調整主頁明細，欄寬隨容器與固定比例伸縮，移除桌機最小寬度造成的橫向捲動；範圍與實際尺寸證據見[計畫](docs/credit-description-layout-plan.md)。匯入預覽及手機排列不在此項。
 - **銀行收支與信用卡九位數金額**：[#710](https://github.com/teacherjung/personal-finance-webapp/pull/710) 的桌機金額欄改為 22% 並保持完整數字一行；有限 IAB 尺寸、長文字、跨月及操作欄證據見[計畫](docs/credit-description-layout-plan.md)，不擴為任意位數或所有瀏覽器已驗。
-- **銀行收支連續切換年月**：`public/modules/cashflow.js` 的年／月選單在前次讀取尚未完成時，仍會讀到舊的 `selectedYear`／`selectedMonth`，切換順序不同可能停在非預期月份；下一次修改年月互動時，比照信用卡費頁改讀選單即時值，並補兩種切換順序的回歸題。
+- **銀行收支連續切換年月**：[#711](https://github.com/teacherjung/personal-finance-webapp/pull/711) 接續修正前次讀取未完成時的舊閉包配對，年月事件讀同組當下值，保留原月份回退、失敗恢復與晚回覆保護；兩順序與有限接線／回退證據見[計畫](docs/cashflow-period-selection-plan.md)。正式核收以該支紀錄為準，不把另一組接線對照算成手機版面驗收。
 - **信用卡費讀取失敗的回復考題**：[#710](https://github.com/teacherjung/personal-finance-webapp/pull/710) 在 `test/ledger-split-behavior.test.js` 補上切年失敗後再排序、新月份成功後失敗再成功、較新失敗後舊失敗不插提示的獨立行為題；承接 #676 複審 M1／M2／M9，正式突變及審查見該支紀錄。手機 M10 維持下列停止線。
 - **信用卡費手機隱藏狀態考題**：`test/ledger-split-behavior.test.js` 與 `public/styles.css` 的手機月份選單回退及基礎隱藏規則仍缺回歸保護（#676 複審突變 M10 存活）；桌機版面定案、開始處理手機版面或修改這些規則時再補，不提前改手機畫面。
 - **信用卡費桌機現金流說明**：`public/modules/transactions.js` 的桌機副標依指定文案不再就地說明信用卡費不計入現金流；若 William 後續要求此頁保留概念說明，再設計獨立說明入口。

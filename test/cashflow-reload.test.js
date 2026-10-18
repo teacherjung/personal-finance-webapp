@@ -1887,3 +1887,69 @@ test('批次刪除｜批次GET開始修訂不足時，主列表先完成也不�
     await clickBatch(id); assert.equal(batchBodies.length, 2);
   } finally { first.resolve(); second.resolve(); batchRead.resolve(json([])); await settle(); }
 });
+
+for (const suffix of ['Desktop', '']) for (const order of ['年後月', '月後年']) {
+  test(`年月連選｜${suffix || '另一組'} ${order}讀同組現值，舊回覆不蓋新期間`, async () => {
+    const targetId = `${serial}-period-target`;
+    rows.push({ ...rows[0], id: `${serial}-period-march`, date: '2026-03-03', amount: 333 },
+      { ...rows[0], id: targetId, date: '2026-12-04', amount: 444, summary: '本題新期間內容' });
+    await renderCashflow();
+    await select('yearSelDesktop', '2025'); await select('monthSelDesktop', '03');
+    const yearId = `yearSel${suffix}`, monthId = `monthSel${suffix}`;
+    assert.ok([...document.getElementById(yearId).options].some(option => option.value === '2026'));
+    assert.ok([...document.getElementById(monthId).options].some(option => option.value === '12'));
+    calls = [];
+    const pending = deferred(), completed = [];
+    readQueue.push(async result => {
+      await pending.promise;
+      completed.push('舊');
+      return json(result.map(row => row.id === targetId ? { ...row, summary: '本題舊回覆', amount: 999 } : row));
+    }, result => { completed.push('新'); return json(result); });
+    try {
+      if (order === '年後月') { await select(yearId, '2026'); await select(monthId, '12'); }
+      else { await select(monthId, '12'); await select(yearId, '2026'); }
+      assert.equal(reads(), 2);
+      assert.deepEqual(completed, ['新']);
+      assert.deepEqual(snapshot().period, ['2026', '12', '2026', '12']);
+      assert.deepEqual(snapshot().ids, [targetId]);
+      assert.equal(el('.cashflow-summary').getAttribute('aria-label'), '2026 年 12 月銀行收支摘要');
+      assert.match(el(`tbody [data-edit="${targetId}"]`).closest('tr').textContent, /本題新期間內容/);
+      assert.match(el(`tbody [data-edit="${targetId}"]`).closest('tr').textContent, /444/);
+      const accepted = snapshot();
+      pending.resolve(); await settle();
+      assert.deepEqual(completed, ['新', '舊']);
+      assert.deepEqual(snapshot(), accepted);
+      assert.match(el(`tbody [data-edit="${targetId}"]`).closest('tr').textContent, /本題新期間內容/);
+      assert.doesNotMatch(text('#view'), /本題舊回覆/);
+      assert.equal(reads(), 2); assert.equal(writes().length, 0);
+    } finally { pending.resolve(); await settle(); }
+  });
+}
+
+test('年月連選｜單次換年缺原月份時回退該年最新月', async () => {
+  assert.deepEqual(snapshot().period, ['2025', '03', '2025', '03']);
+  await select('yearSelDesktop', '2026');
+  assert.deepEqual(snapshot().period, ['2026', '08', '2026', '08']);
+  assert.deepEqual(snapshot().ids, [`${serial}-e`]);
+  assert.equal(reads(), 1);
+  await select('yearSelDesktop', '2025');
+  assert.deepEqual(snapshot().period, ['2025', '12', '2025', '12']);
+  assert.equal(el('.cashflow-summary').getAttribute('aria-label'), '2025 年 12 月銀行收支摘要');
+  assert.equal(reads(), 2); assert.equal(writes().length, 0);
+});
+
+test('年月連選｜空資料只提供目前期間，既有選擇仍唯讀', async () => {
+  const before = snapshot().period;
+  rows = []; await renderCashflow(); calls = [];
+  assert.deepEqual(snapshot().period, before);
+  for (const id of ['yearSelDesktop', 'monthSelDesktop', 'yearSel', 'monthSel']) {
+    const control = document.getElementById(id);
+    assert.equal(control.options.length, 1);
+    assert.equal(control.options[0].value, control.value);
+  }
+  await select('yearSelDesktop', before[0]); await select('monthSelDesktop', before[1]);
+  assert.equal(reads(), 2); assert.equal(writes().length, 0);
+  assert.deepEqual(snapshot().period, before); assert.deepEqual(snapshot().ids, []);
+  assert.match(text('.cashflow-empty-state'), /尚無銀行收支/);
+  assert.equal(el('#cashflowReadError'), null);
+});
