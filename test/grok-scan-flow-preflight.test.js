@@ -17,6 +17,38 @@ import { PEM_BEGIN, SANDBOX_OK, SKIP_AFTER_CANARY, cleanupTempRoots, fakeAuth, f
 
 after(cleanupTempRoots);
 
+test('預換預設門檻：剩65分鐘與70分鐘等號要換，超過70分鐘不換', async (t) => {
+  const { refreshSandboxAuth } = await import('../scripts/grok-auth-refresh.js');
+  const now = Date.parse('2026-10-18T00:00:00.000Z');
+  for (const [remaining, expected] of [[65 * 60_000, true], [70 * 60_000, true], [70 * 60_000 + 1, false]]) {
+    await t.test(String(remaining), async () => {
+      const iso = isolated(); mkdirSync(iso.authDir, { recursive: true });
+      const before = fakeAuth({ extra: { expires_at: new Date(now + Number(remaining)).toISOString() } });
+      const file = join(iso.authDir, 'auth.json'); writeFileSync(file, before);
+      let calls = 0;
+      const fetchImpl = /** @type {typeof fetch} */ (async (url, init) => {
+        calls++;
+        assert.equal(String(url), `${PINNED_ISSUER}/oauth2/token`);
+        assert.match(String(init?.body), /grant_type=refresh_token/);
+        assert.ok(String(init?.body).includes(`client_id=${PINNED_CLIENT_ID}`));
+        return new Response(JSON.stringify({ access_token: 'NEW-ACCESS-0123456789abcdef', refresh_token: 'NEW-REFRESH-0123456789abcdef', expires_in: 21600 }), { status: 200 });
+      });
+      const result = await refreshSandboxAuth(iso.authDir, { now: () => now, fetchImpl, log: () => {} });
+      assert.equal(calls, expected ? 1 : 0);
+      assert.equal(result.refreshed, expected);
+      const saved = readFileSync(file, 'utf8');
+      if (expected) {
+        assert.match(saved, /NEW-ACCESS-0123456789abcdef/);
+        assert.match(saved, /NEW-REFRESH-0123456789abcdef/);
+        assert.notEqual(saved, before);
+      } else assert.equal(saved, before);
+      const box = JSON.stringify(result.forBox);
+      assert.ok(box.includes(DUMMY_BEARER_PREFIX));
+      assert.doesNotMatch(box, /NEW-ACCESS|NEW-REFRESH|refresh_token|ACCESS-TOKEN-VALUE/);
+    });
+  }
+});
+
 test('runScan｜base／head 不是寫死 SHA → 2（條款：不可用會移動的名稱）', async () => {
   const r = await runScan({ base: 'origin/main', head: 'HEAD', promptFile: promptFile() }, { ...quiet, ...isolated(), ...withGrok(fakeGrok()) });
   assert.equal(r.code, 2);
