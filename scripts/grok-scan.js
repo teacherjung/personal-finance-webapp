@@ -88,11 +88,10 @@ export { RELAY_PORT };
 /** macOS 的 cp -c＝APFS copy-on-write clone（node_modules 1.4 秒、不占空間）；GNU cp 沒有 -c——CI 的 Linux 只跑金絲雀之前的 fail-closed 路徑，普通 cp 就好 */
 const CP_CLONE = process.platform === 'darwin' ? ['-c'] : [];
 /**
- * grok 整群最多跑多久就 SIGKILL。原本 30 分鐘；明確指定最高推理（xhigh）之後一輪會比預設的 high 慢
- * （之前的正式掃描在預設推理下跑 15〜26 分鐘），所以放到 50 分鐘。上限不超過盒內憑證提早 refresh 的 60 分鐘餘裕
- * （scripts/grok-auth-refresh.js），免得掃到一半憑證過期。
+ * grok 整群的牆鐘上限；預換門檻須比此值更早，避免執行時長吃掉原有的預換餘裕。
+ * 憑證續期由 scripts/grok-auth-refresh.js 的父程序處理，盒內不增加 refresh 權限。
  */
-export const GROK_WALL_MS = 50 * 60_000;
+export const GROK_WALL_MS = 60 * 60_000;
 
 /** sessions 單趟讀取的上限（r6 #3）：超過任何一項＝退 2、不保存 */
 export const SESSION_CAPS = Object.freeze({ files: 4000, depth: 12, fileBytes: 16 * 1024 * 1024, totalBytes: 64 * 1024 * 1024 });

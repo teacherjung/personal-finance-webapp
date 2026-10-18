@@ -79,6 +79,36 @@ function fixture(t) {
   return { root, provider, repo, liveRoot, boxRoot, providerEntries, state, git, args, deps };
 }
 
+test('Gemini原生 runner 預設與明給上限皆實排50分鐘，不借Grok時限', async (t) => {
+  for (const value of [undefined, 50 * 60_000]) {
+    const f = fixture(t);
+    if (value === undefined) delete f.deps.wallMs; else f.deps.wallMs = value;
+    const originalTimer = globalThis.setTimeout, delays = [];
+    globalThis.setTimeout = (callback, delay, ...args) => {
+      if (typeof delay === 'number' && delay > 30 * 60_000) delays.push(delay);
+      return originalTimer(callback, delay, ...args);
+    };
+    let result;
+    try { result = await runGeminiScan(f.args, f.deps); }
+    finally { globalThis.setTimeout = originalTimer; }
+    assert.equal(f.state.childCount, 1);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    assert.deepEqual(delays, [50 * 60_000]);
+    assert.equal(readdirSync(f.boxRoot).length, 0);
+  }
+});
+
+test('Gemini原生 runner 超50分鐘一毫秒即拒收並清理，不能借Grok60分鐘', async (t) => {
+  const f = fixture(t); f.deps.wallMs = 50 * 60_000 + 1;
+  const result = await runGeminiScan(f.args, f.deps);
+  assert.equal(f.state.childCount, 1);
+  assert.equal(result.code, 2);
+  assert.ok(f.state.killed > 0);
+  assert.equal(readdirSync(f.boxRoot).length, 0);
+  assert.equal(readdirSync(f.liveRoot).length, 0);
+  assert.equal(existsSync(f.args.outFile), false);
+});
+
 test('固定材料使用完整 diff 及 changed path 前後 Git blob，不讀工作檔', (t) => {
   const f = fixture(t); writeFileSync(join(f.repo, 'a.js'), 'UNCOMMITTED-DO-NOT-SEND');
   const m = buildScanMaterials(f.args, { git: f.git });
