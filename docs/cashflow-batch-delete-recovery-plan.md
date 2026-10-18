@@ -19,7 +19,9 @@
 
 本人其後在Gemini排障線更新：「算了，這條線結束掉。目前就Codex實作Grok複審就好」（[更新留痕](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6249335559)）。現行Codex實作、Grok複審、掃描跳過；停止等待Gemini切換，不啟動Gemini，也不自行恢復Grok掃描。上段等待登記的安排僅留沿革。
 
-八個預約路徑：`public/modules/cashflow.js`、`test/cashflow-reload.test.js`、`docs/contracts/frontend-features.md`、本計畫、`PROJECT.md`、`docs/ui-acceptance-matrix.md`、`AGENTS.md`、`docs/project-collaboration.md`。產品六檔開工與#702不重疊；#702關閉、未合併後補預約兩份入口文件並重核D3／D5，均為專案自有，其他工作樹未提交修改無重疊。入口回填本人跨PR新指示，協作附則將Gemini接線標為停止；不改模型設定或接線。共用樣式仍讓給另一線，送審與合併前重查。
+產品六個路徑：`public/modules/cashflow.js`、`test/cashflow-reload.test.js`、`docs/contracts/frontend-features.md`、本計畫、`PROJECT.md`、`docs/ui-acceptance-matrix.md`；完整三關發現舊確認接線形狀題後，另預約`test/debit-card-ledger.test.js`，D3／D5均核對無重疊且為專案自有。
+
+共同入口原先補預約兩檔；本人後續另指派另一工作線統一規則與設定，本支已釋出`AGENTS.md`、`docs/project-collaboration.md`，完整自身差異已保存供整合，不再改兩檔。本人新原話仍依本計畫及公開留痕執行，不因尚未合併的舊設定啟動Gemini。共用樣式仍讓給另一線，送審與合併前重查。
 
 ## 產品推薦：依本人授權代選
 
@@ -52,6 +54,8 @@
 正式行為題保留既有重讀／單筆刪除／回焦斷言，補取消零POST、ok嚴格布林、零與正數及異常筆數、HTTP／網路／未知結果、兩域成功失敗交叉、各自GET-only重試、同batch防重／不同批次ACK反序、舊控制項、初開晚回、新窗開後關閉、換頁返回、舊編輯及單筆繞過。沿既有批次服務契約核銀行列、連帶卡片列、撞號手動列及餘額不變，不改後端範圍。
 
 外置突變先正常綠、核替換目標，再各自破壞修訂、雙域清除、防重、原窗／頁面／讀取代次、重開／重送與舊單筆／表單保護；保存型保留POST／GET，不能以fixture崩潰充數。原生驗證只用獨立外置STORE_FILE的合成資料，實走確認、兩域失敗／恢復、新窗及關窗，全部正式頁面重載與console觀測另記；未做射程據實保留。
+
+完整三關遇到兩本帳既有題綁定舊確認函式外形，依[實際Sol補充裁示](https://github.com/teacherjung/personal-finance-webapp/pull/706#issuecomment-6249515265)對齊：擷取正式原函式並注入唯一formatter回音，核同一批次參數、完整原生確認引數、取消零POST及鎖釋出；保留整模組真DOM的獨立真文案與原兩本帳純函式／筆數格斷言。固定文字旁路、呼叫卻丟回傳、外層警語改壞及取消仍送POST各做有效變異，不以fixture故障充數；抽函式接線題不冒稱整模組或原生瀏覽器證據。
 
 ## 程序與回復
 

@@ -28,9 +28,9 @@
 
 本人已結束Gemini工作線（[原話](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6249335559)）；下列GN候選與後文Gemini專屬啟用／遷移待辦保留沿革，不再排施工、登記或等待切換。現行Codex實作、Grok複審、掃描跳過；共用隔離與資料保護仍適用Grok正式複審。
 
-- **GN-01｜Gemini 原生事件容許契約**（#693 r1 待辦 1）：核定並驗證初始化工具宣告、permission mode 與 checkpoint 的容許契約；宣告清單不等於工具已執行。落點：`scripts/gemini-native-protocol.js` 的初始化與步驟驗證。值得做：正式接上原生 CLI 之前，依當場官方介面與核准政策補行為題及有效突變。— **Gemini線已由本人停止，保留未啟用沿革**
+- **GN-01｜Gemini 原生事件容許契約**（#693 r1 待辦 1）：核定並驗證初始化工具宣告、permission mode 與 checkpoint 的容許契約；宣告清單不等於工具已執行。落點：`scripts/gemini-native-protocol.js` 的初始化與步驟驗證。原定觸發為正式接上原生CLI；本人取消後停止，不排自動續作。— **Gemini線已由本人停止，保留未啟用沿革**
 - **GN-02｜Gemini 準備入口直接自動考題**（#693 r1 待辦 2）：#701 補 `prepareNativeScan` 的直接行為題，覆蓋來源重核、提供者乾淨狀態及文字 diff 拒收；三項對應防線突變均使本題失敗。落點：`test/gemini-native-runner.test.js` 的 GN-02 題；候選證據與核收以 [#701](https://github.com/teacherjung/personal-finance-webapp/pull/701) 的正式複審及合併紀錄為準，不以合成收據代替自動題。— **直接回歸保護已補，最終核收見 #701**
-- **GN-03｜Gemini 正式入口錯誤分類**（#693 r1 待辦 3）：讓正式入口依錯誤種類回報，避免把其他失敗印成認證政策未准。落點：`scripts/gemini-native-runner.js` 的命令列 catch。值得做：`runGeminiNativeScan` 開始可能拋出認證拒絕以外的錯誤時。— **Gemini線已由本人停止，保留未啟用沿革**
+- **GN-03｜Gemini 正式入口錯誤分類**（#693 r1 待辦 3）：讓正式入口依錯誤種類回報，避免把其他失敗印成認證政策未准。落點：`scripts/gemini-native-runner.js` 的命令列 catch。原定觸發為正式入口開始可執行；本人取消後停止，不排自動續作。— **Gemini線已由本人停止，保留未啟用沿革**
 
 - **網站小圖示請求回 404**：瀏覽器會讀取 `/favicon.ico`，主幹尚未提供；放在 `public/index.html` 的圖示宣告或靜態資產路由處理。值得做：下次整理網站資產，或需要完成無 console error 的瀏覽器驗證時；不能只過濾錯誤後宣稱全零。
 
@@ -123,6 +123,8 @@
 - （交接原第 23 項）根目錄驗收 E 級腳本名單的八個已刪名稱清理、守表題及產物同步見[本項PR](https://github.com/teacherjung/personal-finance-webapp/pull/697)；原刪除祖先、當版不存在與歷史分級前置按[技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/695#issuecomment-6223320263)及[原收官補核](https://github.com/teacherjung/personal-finance-webapp/pull/695#issuecomment-6223320933)對帳，不追認歷史未做操作。保留整支 F 分級，沒有新增安裝差異的判定須核當版禁區投影、固定輸入與接線來源；#692 Claude 待補驗收另留。本項限定清理（S023）已[真正收官](https://github.com/teacherjung/personal-finance-webapp/pull/697#issuecomment-6225245094)：合併後F＋E、沒有新增安裝差異；不結清Claude原待補或平台直接量測。
 
 ## 重要決定（已拍板，勿重議）
+
+- **模型工作線（2026-10-18）**：本人說「算了，這條線結束掉。目前就Codex實作Grok複審就好」（[原話留痕](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6249335559)）；Codex實作、Grok正式複審，Gemini線停止且掃描跳過。共同規則與設定統一由本人另指派的工作線處理，本支批次修正不自行改接線或等待Gemini切換。
 
 - **本次待辦觸發裁示（2026-10-16）**：實際 GPT‑6.1 Sol／xhigh 的[技術代裁](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6208198145)依 #692 整支差異核條件，非 William 本人新增指示、非正式放行。48／51／55／56／57／78／79 與原22同支最小補正；58同支只補誠實射程，54舊 scan archive、55舊 scan直接覆蓋、58完整來源記帳及原18公開模型投影另排。原23已到另支時機，先核原前置；49／53／85及原19未因本支達後續條件，59外部屬性仍缺完整證據，當版材料若被遮蔽須先修正。各項實作、驗證與正式複審狀態分開記，不以此裁示結清安裝、驗收或全部待辦。
 
