@@ -1,7 +1,7 @@
 // 真 DOM＋合成 fetch：驗證儲存、重讀與切頁的結果；不讀本機資料、不連外。
 // 每題重種資料並明確選年月、金流與排序；共享 import 僅為載入 app 的循環模組圖。
 // node --test 的檔案行程隔離承擔全域 DOM 清理；本檔不驗瀏覽器的版面尺寸。
-/* global document, window */
+/* global document, window, HTMLElement, Element */
 import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -955,4 +955,255 @@ for (const kind of ['import', 'partial']) test(`可見性｜提升後重試在�
     failReads = false; await click('#retryCashflowRead');
     assert.equal(el('#cashflowReadError'), null); assert.equal(writes().length, 1);
   } finally { writeWait.resolve(); readWait.resolve(); holdWrite = null; await settle(); }
+});
+
+// jsdom 沒有排版引擎；可見性以樣式及候選自己的矩形覆寫分開驗，原生停用失焦另有瀏覽器證據。
+function retryFocusEnvironment(t) {
+  const ownHidden = Object.getOwnPropertyDescriptor(document, 'hidden');
+  Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+  t.after(() => { if (ownHidden) Object.defineProperty(document, 'hidden', ownHidden); else delete document.hidden; });
+  t.mock.method(HTMLElement.prototype, 'getClientRects', function () { return this.isConnected ? [{ width: 10, height: 10 }] : []; });
+}
+async function retryFocusFailure(t, withoutSnapshot = false) {
+  retryFocusEnvironment(t);
+  if (withoutSnapshot) { await navigate('#cards'); failReads = true; await navigate('#cashflow'); }
+  else { failReads = true; await renderCashflow(); }
+  const button = el('#retryCashflowRead'); button.focus(); assert.equal(document.activeElement, button);
+  return button;
+}
+function disableBlurs(button) {
+  const descriptor = Object.getOwnPropertyDescriptor(window.HTMLButtonElement.prototype, 'disabled');
+  assert.equal(typeof descriptor?.set, 'function');
+  Object.defineProperty(button, 'disabled', { configurable: true, get() { return descriptor.get.call(this); },
+    // jsdom 停用後的 blur() 被它略過；在同一 setter scope 先發真 blur，原生順序由瀏覽器另核。
+    set(value) { if (value && document.activeElement === this) this.blur(); descriptor.set.call(this, value); } });
+}
+for (const withoutSnapshot of [false, true]) for (const outcome of ['success', 'failure', 'empty']) {
+  test(`重試回焦｜${withoutSnapshot ? '無舊列表' : '有舊列表'}／${outcome}：實際讀取後回核定候選`, async t => {
+    const button = await retryFocusFailure(t, withoutSnapshot), before = reads(), callStart = calls.length; disableBlurs(button);
+    if (outcome === 'empty') rows = [];
+    failReads = outcome === 'failure'; button.click(); await settle();
+    assert.equal(reads(), before + 1); assert.equal(writes().length, 0);
+    assert.equal(button.isConnected, false);
+    assert.deepEqual(calls.slice(callStart).map(call => `${call.method} ${call.path}`).sort(), ['/api/transactions', '/api/accounts', '/api/categories', '/api/income-categories', '/api/transfer-subcategories'].map(path => `GET ${path}`).sort());
+    const target = outcome === 'failure' ? el('#retryCashflowRead') : el('.cashflow-head h1');
+    assert.equal(document.activeElement, target);
+    if (outcome === 'failure') assert.equal(target.disabled, false);
+    else {
+      assert.equal(el('#cashflowReadError'), null); assert.equal(target.getAttribute('tabindex'), '-1');
+      target.blur(); assert.equal(target.hasAttribute('tabindex'), false);
+    }
+  });
+}
+for (const failure of [false, true]) test(`重試回焦｜原鈕未持焦不建立工作／${failure}`, async t => {
+  await retryFocusFailure(t); el('#fixture-outside')?.remove();
+  const outside = document.createElement('button'); outside.id = 'fixture-outside'; document.body.append(outside);
+  try { outside.focus(); const before = reads(); failReads = failure; el('#retryCashflowRead').click(); await settle();
+    assert.equal(reads(), before + 1); assert.equal(writes().length, 0); assert.equal(document.activeElement, outside);
+  } finally { outside.remove(); }
+});
+for (const kind of ['pointerdown', 'keydown', 'touchstart', 'wheel', 'blur', 'window-blur', 'hidden', 'modal', 'modal-closed', 'focus-returned']) {
+  test(`重試回焦｜等待期間${kind}撤銷，不取消讀取或搶回`, async t => {
+    const button = await retryFocusFailure(t), wait = deferred(), before = reads(); disableBlurs(button);
+    readQueue.push(async data => { await wait.promise; return json(data); }); button.click(); await settle();
+    const outside = document.createElement('button'); document.body.append(outside);
+    try {
+      assert.equal(reads(), before + 1); assert.equal(button.disabled, true);
+      if (kind === 'blur') button.dispatchEvent(new Event('blur'));
+      else if (kind === 'window-blur') window.dispatchEvent(new Event('blur'));
+      else if (kind === 'hidden') { Object.defineProperty(document, 'hidden', { configurable: true, value: true }); document.dispatchEvent(new Event('visibilitychange')); Object.defineProperty(document, 'hidden', { configurable: true, value: false }); }
+      else if (kind.startsWith('modal')) { app.openInfo('本題新窗', '<input id="retry-new-input" value="本題未儲存內容">'); await settle(); if (kind === 'modal-closed') { await click('#modal-root [data-close]'); outside.focus(); outside.blur(); } else el('#retry-new-input').focus(); }
+      else if (kind === 'focus-returned') { outside.focus(); outside.blur(); }
+      else document.dispatchEvent(new Event(kind, { bubbles: true }));
+      const current = document.activeElement; wait.resolve(); await settle();
+      assert.equal(reads(), before + 1); assert.equal(writes().length, 0); assert.equal(el('#cashflowReadError'), null);
+      assert.equal(document.activeElement, current.isConnected ? current : document.body); assert.notEqual(document.activeElement, el('.cashflow-head h1'));
+      if (kind === 'modal') assert.equal(el('#retry-new-input').value, '本題未儲存內容');
+    } finally { wait.resolve(); outside.remove(); el('#modal-root').replaceChildren(); await settle(); }
+  });
+}
+for (const oldFails of [false, true]) test(`重試回焦｜舊${oldFails ? '失敗' : '成功'}晚回不接管較新讀取`, async t => {
+  const button = await retryFocusFailure(t), wait = deferred(); disableBlurs(button);
+  readQueue.push(async data => { await wait.promise; return oldFails ? readError() : json(data); }); button.click(); await settle();
+  failReads = false; rows.find(row => row.id === `${serial}-a`).summary = '本題較新列表'; await renderCashflow();
+  const page = el('.cashflow-workspace'); const input = document.createElement('input'); page.append(input); input.value = '較新輸入'; input.focus();
+  try { wait.resolve(); await settle(); assert.equal(el('.cashflow-workspace'), page); assert.equal(document.activeElement, input); assert.equal(input.value, '較新輸入'); assert.match(page.textContent, /本題較新列表/); assert.equal(writes().length, 0); }
+  finally { wait.resolve(); await settle(); }
+});
+for (const historyOnly of [false, true]) test(`重試回焦｜離開返回${historyOnly ? '無hashchange' : '正常導航'}不復活工作`, async t => {
+  const button = await retryFocusFailure(t), wait = deferred(); disableBlurs(button);
+  readQueue.push(async data => { await wait.promise; return json(data); }); button.click(); await settle();
+  if (historyOnly) { window.history.replaceState(null, '', '#cards'); await app.router(); window.history.replaceState(null, '', '#cashflow'); failReads = false; await app.router(); }
+  else { await navigate('#cards'); failReads = false; await navigate('#cashflow'); }
+  const page = el('.cashflow-workspace'), current = document.activeElement;
+  wait.resolve(); await settle(); assert.equal(el('.cashflow-workspace'), page); assert.equal(document.activeElement, current); assert.equal(writes().length, 0);
+});
+for (const moved of ['button', 'notice', 'workspace']) test(`重試回焦｜等待期間${moved}移除再放回不得復活`, async t => {
+  const button = await retryFocusFailure(t), wait = deferred(), before = reads(); disableBlurs(button);
+  readQueue.push(async data => { await wait.promise; return json(data); }); button.click(); await settle();
+  const node = moved === 'button' ? button : moved === 'notice' ? el('#cashflowReadError') : el('.cashflow-workspace');
+  const parent = node.parentNode, next = node.nextSibling; node.remove(); parent.insertBefore(node, next);
+  wait.resolve(); await settle(); assert.equal(reads(), before + 1); assert.equal(writes().length, 0); assert.equal(document.activeElement, document.body);
+});
+
+function onRetryWorkspaceReplacement(t, adjust) {
+  const host = el('#view'), original = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+  assert.equal(typeof original?.set, 'function');
+  Object.defineProperty(host, 'innerHTML', { configurable: true, get() { return original.get.call(this); },
+    set(value) { original.set.call(this, value); const node = this.querySelector('.cashflow-workspace'); if (node) adjust(node); } });
+  t.after(() => { delete host.innerHTML; });
+}
+for (const invalid of ['hidden', 'inert', 'display', 'ancestor', 'zero', 'duplicate', 'throw', 'refuse']) {
+  test(`重試回焦｜成功標題${invalid}不可用就停止，不猜導航`, async t => {
+    const button = await retryFocusFailure(t), before = reads(); disableBlurs(button);
+    onRetryWorkspaceReplacement(t, node => {
+      const target = node.querySelector('.cashflow-head h1');
+      if (invalid === 'hidden') target.hidden = true;
+      else if (invalid === 'inert') target.setAttribute('inert', '');
+      else if (invalid === 'display') target.style.display = 'none';
+      else if (invalid === 'ancestor') target.parentElement.style.visibility = 'hidden';
+      else if (invalid === 'zero') target.getClientRects = () => [];
+      else if (invalid === 'duplicate') target.after(target.cloneNode(true));
+      else if (invalid === 'throw') target.focus = () => { throw Error('合成拒焦'); };
+      else target.focus = () => {};
+    });
+    failReads = false; button.click(); await settle(); assert.equal(reads(), before + 1); assert.equal(writes().length, 0);
+    assert.equal(document.activeElement, document.body); assert.equal(el('.cashflow-head h1').hasAttribute('tabindex'), false);
+  });
+}
+for (const reentry of ['modal', 'external', 'render']) test(`重試回焦｜候選focus期間${reentry}接管不追焦`, async t => {
+  const button = await retryFocusFailure(t), before = reads(); disableBlurs(button);
+  const outside = document.createElement('input'); outside.value = '本題外部未送出'; document.body.append(outside);
+  let fired = 0;
+  onRetryWorkspaceReplacement(t, node => node.querySelector('.cashflow-head h1').addEventListener('focus', () => {
+    fired++;
+    if (reentry === 'modal') app.openInfo('本題接管新窗', '<input id="retry-reentry-input" value="新窗未送出">');
+    else if (reentry === 'external') outside.focus();
+    else renderCashflow();
+  }, { once: true }));
+  try {
+    failReads = false; button.click(); await settle(); assert.equal(fired, 1);
+    assert.equal(reads(), before + (reentry === 'render' ? 2 : 1)); assert.equal(writes().length, 0);
+    assert.equal(el('.cashflow-head h1').hasAttribute('tabindex'), false);
+    if (reentry === 'modal') { assert.equal(el('#retry-reentry-input').value, '新窗未送出'); assert.ok(el('#modal-root').contains(document.activeElement)); }
+    else if (reentry === 'external') { assert.equal(document.activeElement, outside); assert.equal(outside.value, '本題外部未送出'); }
+  } finally { outside.remove(); el('#modal-root').replaceChildren(); await settle(); }
+});
+for (const existing of [null, '0', '-1', '3']) test(`重試回焦｜標題tabindex原值${existing}在離焦與外改後保留`, async t => {
+  const button = await retryFocusFailure(t); disableBlurs(button);
+  onRetryWorkspaceReplacement(t, node => { if (existing !== null) node.querySelector('h1').setAttribute('tabindex', existing); });
+  failReads = false; button.click(); await settle(); const heading = el('.cashflow-head h1');
+  assert.equal(document.activeElement, heading); assert.equal(heading.getAttribute('tabindex'), existing ?? '-1');
+  if (existing === null) heading.setAttribute('tabindex', '4');
+  heading.blur(); assert.equal(heading.getAttribute('tabindex'), existing ?? '4'); assert.equal(writes().length, 0);
+});
+
+for (const kind of ['complete', 'partial', 'import']) test(`重試回焦｜等待中${kind}確認更新提示即取消，讀取仍完成`, async t => {
+  retryFocusEnvironment(t); const writeWait = deferred(), readWait = deferred(); holdWrite = writeWait;
+  try {
+    if (kind === 'import') { await bankPreview(); await click('#bankApply'); assert.equal(rows.find(row => row.id === `${serial}-import`).amount, 42000); await click('#modal-root [data-close]'); }
+    else { legacyText = kind === 'partial'; await click(`tbody [data-edit="${serial}-a"]`); el('#f_amount').value = '35000'; el('#f_summary').value = '本題待確認的新摘要'; el('#modal-root form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle(); assert.equal(rows.find(row => row.id === `${serial}-a`).amount, 35000); await click('#modal-root [data-cancel]'); }
+    // 讓原寫入的舊頁續行停止；確認本身仍須更新目前頁的必要提示。
+    await navigate('#cards'); await navigate('#cashflow');
+    failReads = true; await renderCashflow(); const old = el('#retryCashflowRead'); old.focus(); disableBlurs(old);
+    const count = reads(), written = writes().length;
+    readQueue.push(async data => { await readWait.promise; return json(data); }); old.click(); await settle();
+    writeWait.resolve(); await settle(); const replacement = el('#retryCashflowRead'); assert.notEqual(replacement, old);
+    assert.equal(replacement.disabled, true); replacement.click(); old.onclick(); await settle(); assert.equal(reads(), count + 1);
+    assert.match(text('#cashflowReadError'), kind === 'partial' ? /部分欄位尚未確認/ : /畫面尚未更新/);
+    failReads = false; readWait.resolve(); await settle();
+    assert.equal(reads(), count + 1); assert.equal(writes().length, written); assert.ok(el('#cashflowReadError'));
+    assert.equal(el('#retryCashflowRead').disabled, false); assert.equal(document.activeElement, document.body);
+    await click('#retryCashflowRead'); assert.equal(el('#cashflowReadError'), null); assert.equal(writes().length, written);
+  } finally { writeWait.resolve(); readWait.resolve(); holdWrite = null; await settle(); }
+});
+for (const invalid of ['disabled', 'hidden', 'inert', 'duplicate', 'duplicate-notice']) test(`重試回焦｜失敗重試候選${invalid}時不改選標題`, async t => {
+  const button = await retryFocusFailure(t), notice = el('#cashflowReadError'), before = reads(); disableBlurs(button);
+  const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+  Object.defineProperty(notice, 'innerHTML', { configurable: true, get() { return descriptor.get.call(this); }, set(value) {
+    descriptor.set.call(this, value); const replacement = this.querySelector('#retryCashflowRead');
+    if (invalid === 'disabled') Object.defineProperty(replacement, 'disabled', { configurable: true, get: () => true, set() {} });
+    else if (invalid === 'hidden') replacement.hidden = true;
+    else if (invalid === 'inert') replacement.setAttribute('inert', '');
+    else if (invalid === 'duplicate') replacement.after(replacement.cloneNode(true));
+    else this.after(this.cloneNode(true));
+  } });
+  t.after(() => { delete notice.innerHTML; });
+  button.click(); await settle(); assert.equal(reads(), before + 1); assert.equal(writes().length, 0);
+  assert.equal(document.activeElement, document.body); assert.equal(el('.cashflow-head h1').hasAttribute('tabindex'), false);
+});
+for (const cancel of [false, true]) test(`重試回焦｜${cancel ? '取消' : '完成'}後移除自己的全域與原鈕監聽`, async t => {
+  const button = await retryFocusFailure(t), added = [], removed = [], proto = window.EventTarget.prototype;
+  const add = proto.addEventListener, remove = proto.removeEventListener;
+  t.mock.method(proto, 'addEventListener', function (type, handler, options) { if ([window, document, button].includes(this)) added.push([this, type, handler, options]); return add.call(this, type, handler, options); });
+  t.mock.method(proto, 'removeEventListener', function (type, handler, options) { if ([window, document, button].includes(this)) removed.push([this, type, handler, options]); return remove.call(this, type, handler, options); });
+  disableBlurs(button); const wait = deferred(), before = reads(); readQueue.push(async data => { await wait.promise; return json(data); });
+  button.click(); await settle(); if (cancel) document.dispatchEvent(new Event('keydown')); wait.resolve(); await settle();
+  assert.equal(reads(), before + 1); assert.equal(writes().length, 0); assert.ok(added.some(item => item[1] === 'wheel'));
+  for (const [target, type, handler, options] of added) assert.ok(removed.some(item => item[0] === target && item[1] === type && item[2] === handler && item[3] === options), `cashflow重試工作須收掉${type}監聽；修正該模組後重跑本題`);
+  if (!cancel) assert.equal(document.activeElement, el('.cashflow-head h1'));
+});
+
+test('重試回焦｜新窗世代即使未移焦且已撤銷仍不得復活', async t => {
+  const button = await retryFocusFailure(t), wait = deferred(), before = reads(); disableBlurs(button);
+  readQueue.push(async data => { await wait.promise; return json(data); }); button.click(); await settle();
+  assert.equal(document.activeElement, document.body);
+  const owns = app.claimModalRoot(); owns.release();
+  wait.resolve(); await settle(); assert.equal(reads(), before + 1); assert.equal(writes().length, 0);
+  assert.equal(document.activeElement, document.body); assert.equal(el('#modal-root').childNodes.length, 0);
+});
+
+test('重試回焦｜在途連點及舊callback不能增加讀取或重新取得資格', async t => {
+  const button = await retryFocusFailure(t), wait = deferred(), before = reads(), old = button.onclick; disableBlurs(button);
+  readQueue.push(async data => { await wait.promise; return json(data); }); button.click(); await settle();
+  button.click(); old(); await settle(); assert.equal(reads(), before + 1);
+  document.dispatchEvent(new Event('keydown')); wait.resolve(); await settle();
+  assert.equal(document.activeElement, document.body); old(); await settle();
+  assert.equal(reads(), before + 1); assert.equal(writes().length, 0);
+});
+
+// 受控延後事件只在 setter 進入時仍持焦才排送；原生事件時序另由隔離瀏覽器核實。
+for (const failure of [false, true]) test(`重試回焦｜停用仍持焦才排延後blur／${failure}：明確釋焦後回本次候選`, async t => {
+  const button = await retryFocusFailure(t), wait = deferred(), before = reads();
+  const descriptor = Object.getOwnPropertyDescriptor(window.HTMLButtonElement.prototype, 'disabled');
+  let queued = 0;
+  Object.defineProperty(button, 'disabled', { configurable: true, get() { return descriptor.get.call(this); }, set(value) {
+    const held = value && document.activeElement === this; descriptor.set.call(this, value);
+    if (held) { queued++; queueMicrotask(() => this.dispatchEvent(new Event('blur'))); }
+  } });
+  readQueue.push(async data => { await wait.promise; return failure ? readError() : json(data); });
+  button.click(); await settle();
+  try {
+    assert.equal(reads(), before + 1); assert.equal(button.disabled, true);
+    wait.resolve(); await settle();
+    assert.equal(document.activeElement, failure ? el('#retryCashflowRead') : el('.cashflow-head h1'));
+    assert.equal(queued, 0); assert.equal(writes().length, 0);
+  } finally { wait.resolve(); await settle(); }
+});
+for (const takeover of ['render', 'replace', 'hash', 'modal', 'external']) test(`重試回焦｜明確blur期間${takeover}接管：重核讀取資格且不搶焦`, async t => {
+  const button = await retryFocusFailure(t), before = reads(), outside = document.createElement('input');
+  outside.value = '本題未送出的外部輸入'; document.body.append(outside);
+  let fired = 0;
+  button.addEventListener('blur', () => {
+    fired++; if (fired !== 1) return;
+    if (takeover === 'render') renderCashflow();
+    else if (takeover === 'replace') button.replaceWith(button.cloneNode(true));
+    else if (takeover === 'hash') window.history.replaceState(null, '', '#cards');
+    else if (takeover === 'modal') app.openInfo('本題釋焦新窗', '<input id="retry-preblur-modal" value="本題新窗內容">');
+    else outside.focus();
+  });
+  try {
+    failReads = false; button.click(); await settle(); assert.equal(fired, 1);
+    assert.equal(reads(), before + (['replace', 'hash'].includes(takeover) ? 0 : 1)); assert.equal(writes().length, 0);
+    if (takeover === 'external') { assert.equal(document.activeElement, outside); assert.equal(outside.value, '本題未送出的外部輸入'); }
+    else if (takeover === 'modal') { assert.ok(el('#modal-root').contains(document.activeElement)); assert.equal(el('#retry-preblur-modal').value, '本題新窗內容'); }
+    else assert.notEqual(document.activeElement, el('.cashflow-head h1'));
+  } finally { outside.remove(); el('#modal-root').replaceChildren(); await settle(); }
+});
+for (const badBlur of ['throw', 'refuse', 'refocus']) test(`重試回焦｜明確blur${badBlur}不假造釋焦資格，合法GET仍完成`, async t => {
+  const button = await retryFocusFailure(t), before = reads(), original = button.blur.bind(button); let attempted = 0;
+  button.blur = () => { attempted++; if (badBlur === 'throw') throw Error('本題拒絕釋焦'); if (badBlur === 'refocus') { original(); button.focus(); } };
+  failReads = false; button.click(); await settle();
+  assert.equal(attempted, 1); assert.equal(reads(), before + 1); assert.equal(writes().length, 0);
+  assert.equal(document.activeElement, document.body); assert.equal(el('.cashflow-head h1').hasAttribute('tabindex'), false);
 });
