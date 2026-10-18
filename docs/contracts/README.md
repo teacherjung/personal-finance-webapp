@@ -118,7 +118,7 @@
 - `test/server.test.js`（契約點名的考題——**弱化考題也要先讀契約**）
 - `test/snapshot-safety.test.js`〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
 - `test/subscriptions-model.test.js`（契約點名的考題——**弱化考題也要先讀契約**）
-- `test/subscriptions-row-focus.test.js`（標記鈕真DOM回焦與接管競態）
+- `test/subscriptions-row-focus.test.js`（標記與刪除真DOM回焦、確認合併及接管競態）
 
 ### 收支記帳與匯入
 

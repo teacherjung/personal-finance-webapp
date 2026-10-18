@@ -5,7 +5,7 @@ import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
-let app, renderSubscriptions, serial = 0, rows, calls, reads, putWait, putFail, putPlans, errors;
+let app, renderSubscriptions, serial = 0, rows, calls, reads, putWait, putFail, putPlans, errors, deletePlans, chartDraws;
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status });
 const defer = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(r => setTimeout(r, 0)); };
@@ -16,13 +16,20 @@ async function boot() {
   if (app) return;
   const win = new JSDOM('<!doctype html><nav id="nav"></nav><button id="snapshotBtn"></button><button id="outside">外部</button><main id="view"></main><div id="modal-root"></div><div id="toast-root"></div>', { url: 'http://localhost/#subscriptions', pretendToBeVisual: true }).window;
   for (const k of ['window','document','location','localStorage','HTMLElement','Element','Node','Event','CustomEvent','KeyboardEvent','MouseEvent','MutationObserver','requestAnimationFrame','getComputedStyle']) Object.defineProperty(globalThis, k, { value: win[k], configurable: true, writable: true });
-  Object.defineProperty(globalThis, 'Chart', { configurable: true, value: class { destroy() {} } });
+  Object.defineProperty(globalThis, 'Chart', { configurable: true, value: class { constructor(canvas, config) { chartDraws.push({ id:canvas?.id, config }); } destroy() {} } });
   win.HTMLElement.prototype.getClientRects = function () { return this.isConnected ? [{ width: 100, height: 20 }] : []; };
   win.addEventListener('error', e => { errors.push(e.error?.message || e.message); e.preventDefault(); });
   globalThis.fetch = async (url, init) => {
     const path = String(url).split('?')[0], method = init?.method || 'GET';
     const body = init?.body ? JSON.parse(init.body) : undefined;
     const call={ path, method, body };calls.push(call);
+    if (method === 'DELETE' && path.startsWith('/api/subscriptions/')) {
+      const id = path.split('/').at(-1);
+      const remove = () => { const index = rows.findIndex(row => row.id === id); assert.ok(index >= 0); rows.splice(index, 1); };
+      const plan = deletePlans.shift();
+      const response = plan ? await plan(remove) : (remove(), json({ ok:true }));
+      call.status = response.status; return response;
+    }
     if (method === 'PUT' && path.startsWith('/api/subscriptions/')) {
       const row = rows.find(r => r.id === path.split('/').at(-1));
       const planned=putPlans.shift();
@@ -49,9 +56,10 @@ async function boot() {
   await settle();
 }
 beforeEach(async () => {
-  serial++; calls=[]; reads=[]; putWait=null; putFail=false;putPlans=[]; errors=[];
+  serial++; deletePlans=[];chartDraws=[]; calls=[]; reads=[]; putWait=null; putFail=false;putPlans=[]; errors=[];
   rows = ['a','b'].map((x,i)=>({ id:`${serial}-${x}`,name:'本題合成'+x,amount:100+i,cycle:'monthly',since:'2026-06',nextCharge:'2099-12-01',status:'active',active:true,considerCancel:false }));
   await boot();
+  window.confirm=()=>true;
   el('#modal-root').replaceChildren();
   window.location.hash='#cards'; await settle();
   window.location.hash='#subscriptions'; await settle();
@@ -293,4 +301,185 @@ for(const state of ['ending','ended'])test(`${state}列表同筆標記也只回�
 // Chromium 移除持焦節點會同步發出 blur，且會經 window 的 capture listener。
 test('自身同步DOM替換的原鈕blur不誤當視窗失焦',async()=>{
   const id=rows[0].id;alterCommit(()=>{},()=>{const b=flag(id);assert.equal(document.activeElement,b);b.blur();});await start();written(id);assert.equal(document.activeElement,flag(id));
+});
+
+const deleteButton = id => [...document.querySelectorAll('[data-del]')].find(b => b.dataset.del === id);
+const deletes = () => calls.filter(c => c.method === 'DELETE');
+const subscriptionReads = () => calls.filter(c => c.method === 'GET' && c.path === '/api/subscriptions');
+async function startDelete(id = rows[0].id) {
+  const button=deleteButton(id); assert.ok(button);button.focus();assert.equal(document.activeElement,button);button.click();await settle();return button;
+}
+function deleted(id) {
+  assert.equal(rows.some(row => row.id === id),false);
+  assert.equal(deletes().filter(call=>call.path==='/api/subscriptions/'+id&&call.status===200).length,1);
+}
+for(const empty of [false,true])test(`刪除回焦：成功${empty?'全空':'仍有資料'}只回指定標題`,async()=>{
+  if(empty){rows.splice(1);await renderSubscriptions({showLoading:false});await settle();}
+  const id=rows[0].id;await startDelete(id);deleted(id);assert.equal(deletes().length,1);
+  const heading=el(empty?'.subscriptions-page-head h1':'.subscriptions-workspace h2');
+  assert.equal(document.activeElement,heading);assert.equal(heading.getAttribute('tabindex'),'-1');
+  assert.equal(el('.subscriptions-notice').textContent,'訂閱已刪除');
+  el('#outside').focus();assert.equal(heading.hasAttribute('tabindex'),false);
+  await renderSubscriptions({showLoading:false});await settle();assert.equal(document.activeElement,el('#outside'));
+});
+test('刪除回焦：取消確認沒有DELETE或額外讀取',async()=>{
+  window.confirm=()=>false;const count=subscriptionReads().length,id=rows[0].id,button=await startDelete(id);
+  assert.equal(deletes().length,0);assert.equal(subscriptionReads().length,count);assert.ok(rows.some(row=>row.id===id));assert.equal(document.activeElement,button);
+});
+for(const failure of ['DELETE','GET'])test(`刪除回焦：${failure}失敗不補目的地、不重送刪除`,async()=>{
+  if(failure==='DELETE')deletePlans.push(()=>json({error:'本題刪除失敗'},503));else reads.push(()=>json({error:'本題讀取失敗'},503));
+  const id=rows[0].id,button=await startDelete(id);assert.equal(deletes().length,1);
+  if(failure==='DELETE'){assert.ok(rows.some(row=>row.id===id));assert.equal(document.activeElement,button);assert.ok(deleteButton(id));}
+  else{deleted(id);assert.ok(el('#retrySubscriptions'));assert.equal(document.activeElement,document.body);el('#retrySubscriptions').click();await settle();assert.equal(deletes().length,1);assert.equal(document.activeElement,document.body);}
+});
+for(const stage of ['DELETE','GET'])for(const action of ['outside','keydown','pointerdown','touchstart','wheel','blur','hidden','original-blur','modal','modal-close','hash','router','render'])test(`刪除回焦：${stage}等待時${action}撤銷`,async()=>{
+  const wait=defer(),id=rows[0].id;
+  if(stage==='DELETE')deletePlans.push(async remove=>{remove();await wait.promise;return json({ok:true});});
+  else reads.push(async snap=>{await wait.promise;return json(snap);});
+  await startDelete(id);
+  if(action==='outside')el('#outside').focus();
+  if(['keydown','pointerdown','touchstart','wheel'].includes(action))document.dispatchEvent(new Event(action,{bubbles:true}));
+  if(action==='blur')window.dispatchEvent(new Event('blur'));
+  if(action==='hidden'){Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'));}
+  if(action==='original-blur')document.activeElement.blur();
+  if(action.startsWith('modal')){app.openInfo('本題接管','<input id="deleteModal" data-modal-initial value="本題未存">');await settle();if(action==='modal-close'){el('#modal-root .x-close').click();await new Promise(r=>setTimeout(r,60));await settle();}}
+  if(action==='hash'){window.location.hash='#cards';await settle();}
+  if(action==='router')await app.router();
+  if(action==='render')await renderSubscriptions({showLoading:false});
+  wait.resolve();await settle();deleted(id);assert.equal(deletes().length,1);
+  assert.notEqual(document.activeElement,el('.subscriptions-workspace h2'));
+  // 關窗的回焦補償歸 app.js；刪除工作不能把它接回列表標題。
+  if(action==='modal-close')assert.equal(document.activeElement,el('.subscriptions-page-head h1'));
+  else assert.notEqual(document.activeElement,el('.subscriptions-page-head h1'));
+  if(action==='outside')assert.equal(document.activeElement,el('#outside'));
+  if(action==='modal'){assert.equal(document.activeElement,el('#deleteModal'));assert.equal(el('#deleteModal').value,'本題未存');}
+  if(action==='hidden')delete document.hidden;
+});
+test('刪除回焦：未持焦程式點擊只做刪除',async()=>{const id=rows[0].id;el('#outside').focus();deleteButton(id).click();await settle();deleted(id);assert.equal(document.activeElement,el('#outside'));});
+for(const kind of ['hidden','inert','display','duplicate','missing','throw','redirect','existing-tabindex','changed-tabindex'])test(`刪除回焦：候選${kind}不猜其他目的地且保留屬性所有權`,async()=>{
+  const id=rows[0].id;let target;
+  alterCommit(host=>{target=host.querySelector('.subscriptions-workspace h2');
+    if(kind==='hidden')target.hidden=true;if(kind==='inert')target.setAttribute('inert','');if(kind==='display')target.style.display='none';
+    if(kind==='duplicate')target.after(target.cloneNode(true));if(kind==='missing')target.remove();
+    if(kind==='throw')target.focus=()=>{throw new Error('本題焦點失敗');};
+    if(kind==='redirect')target.addEventListener('focus',()=>app.openInfo('本題轉焦','<input id="deleteRedirect" data-modal-initial>'),{once:true});
+    if(kind==='existing-tabindex')target.setAttribute('tabindex','0');
+  });
+  await startDelete(id);deleted(id);
+  if(kind==='redirect'){assert.equal(document.activeElement,el('#deleteRedirect'));assert.equal(target.hasAttribute('tabindex'),false);}
+  else if(kind.endsWith('tabindex')){assert.equal(document.activeElement,target);if(kind==='changed-tabindex')target.setAttribute('tabindex','3');el('#outside').focus();assert.equal(target.getAttribute('tabindex'),kind==='existing-tabindex'?'0':'3');}
+  else{assert.equal(document.activeElement,document.body);assert.equal(target.hasAttribute('tabindex'),false);}
+});
+test('刪除順序：晚ACK保存較新頁面、列、按鈕、通知與標記焦點且不另讀',async()=>{
+  const a=rows[0].id,b=rows[1].id,wait=defer();deletePlans.push(async remove=>{remove();await wait.promise;return json({ok:true});});await startDelete(a);
+  const button=flag(b);button.focus();button.click();await settle();written(b);
+  const page=el('.subscriptions-page'),row=flag(b).closest('tr'),focus=flag(b),notice=el('.subscriptions-notice'),text=notice.textContent,readsBefore=subscriptionReads().length;
+  wait.resolve();await settle();deleted(a);assert.equal(deletes().length,1);assert.equal(puts().length,1);assert.equal(subscriptionReads().length,readsBefore);
+  assert.equal(el('.subscriptions-page'),page);assert.equal(flag(b).closest('tr'),row);assert.equal(flag(b),focus);assert.equal(document.activeElement,focus);assert.equal(el('.subscriptions-notice'),notice);assert.equal(notice.textContent,text);
+  await renderSubscriptions({showLoading:false});await settle();assert.equal(el('.subscriptions-notice'),null);
+  flag(b).click();await settle();assert.equal(rows.find(r=>r.id===b).considerCancel,false);assert.equal(puts().length,2);
+});
+for(const timing of ['during-read','after-present'])test(`刪除順序：${timing}確認消化B的舊快照並保留衍生與閉包`,async()=>{
+  const a=rows[0].id,b=rows[1].id,del=defer(),read=defer();
+  rows[0].card='本題失效卡';rows[0].category='工具';rows[1].category='健康';rows[0].nextCharge=app.todayStr();
+  await renderSubscriptions({showLoading:false});await settle();
+  deletePlans.push(async remove=>{await del.promise;remove();return json({ok:true});});await startDelete(a);
+  reads.push(async snap=>{await read.promise;return json(snap);});const button=flag(b);button.focus();button.click();await settle();written(b);
+  let page,row,focus,notice,calc,history;
+  if(timing==='after-present'){
+    read.resolve();await settle();page=el('.subscriptions-page');row=flag(b).closest('tr');focus=flag(b);notice=el('.subscriptions-notice');calc=el('[data-cost-detail]');history=el('#historySection');
+    assert.ok(deleteButton(a));assert.match(el('.timeline-card').textContent,/本題合成a/);assert.match(el('.subscriptions-attention').textContent,/本題失效卡/);
+  }
+  const count=subscriptionReads().length;del.resolve();await settle();deleted(a);
+  if(timing==='during-read'){read.resolve();await settle();}
+  assert.equal(subscriptionReads().length,count);assert.equal(deleteButton(a),undefined);assert.equal(rows.find(r=>r.id===b).considerCancel,true);assert.ok(flag(b).classList.contains('flag-on'));
+  const amounts=[...document.querySelectorAll('.subscriptions-summary-item strong')].map(n=>n.textContent);assert.deepEqual(amounts,['101 元','101 元','1,212 元','0 項']);
+  assert.doesNotMatch(el('.timeline-card').textContent,/本題合成a/);assert.equal(el('.subscriptions-attention'),null);assert.doesNotMatch(el('#cardTotalsTable').textContent,/本題失效卡/);assert.match(el('#cardTotalsTable').textContent,/101/);
+  assert.deepEqual(chartDraws.filter(d=>d.id==='catChart').at(-1).config.data.datasets[0].data,[101]);assert.deepEqual(chartDraws.filter(d=>d.id==='catChart').at(-1).config.data.labels,['健康']);
+  if(timing==='after-present'){assert.equal(el('.subscriptions-page'),page);assert.equal(flag(b).closest('tr'),row);assert.equal(flag(b),focus);assert.equal(document.activeElement,focus);assert.equal(el('.subscriptions-notice'),notice);assert.equal(el('[data-cost-detail]'),calc);assert.equal(el('#historySection'),history);}
+  el('[data-cost-detail]').click();await settle();assert.doesNotMatch(el('#modal-root').textContent,/本題合成a/);assert.match(el('#modal-root').textContent,/本題合成b/);el('#modal-root .x-close').click();await settle();
+  flag(b).click();await settle();assert.equal(rows.find(r=>r.id===b).considerCancel,false);
+});
+for(const oldFails of [false,true])test(`刪除順序：已ACK等GET時B失敗，仍消化A且舊讀取${oldFails?'失敗':'成功'}不能接管`,async()=>{
+  const a=rows[0].id,b=rows[1].id,wait=defer();reads.push(async snap=>{await wait.promise;return oldFails?json({error:'本題舊讀取失敗'},503):json(snap);});await startDelete(a);deleted(a);
+  putFail=true;const button=flag(b);button.focus();button.click();await settle();assert.equal(puts().length,1);assert.equal(puts()[0].status,503);assert.equal(rows.find(r=>r.id===b).considerCancel,false);
+  assert.equal(deleteButton(a),undefined);const page=el('.subscriptions-page'),kept=flag(b),notice=el('.subscriptions-notice');assert.equal(document.activeElement,kept);
+  wait.resolve();await settle();assert.equal(el('.subscriptions-page'),page);assert.equal(flag(b),kept);assert.equal(document.activeElement,kept);assert.equal(el('.subscriptions-notice'),notice);assert.equal(deletes().length,1);
+});
+test('刪除順序：晚標記ACK合併進刪除GET但不復活刪除列',async()=>{
+  const a=rows[0].id,b=rows[1].id,put=defer(),read=defer();putWait=put;
+  flag(b).focus();flag(b).click();await settle();reads.push(async snap=>{await read.promise;return json(snap);});await startDelete(a);deleted(a);
+  put.resolve();await settle();written(b);read.resolve();await settle();assert.equal(deleteButton(a),undefined);assert.ok(flag(b).classList.contains('flag-on'));assert.equal(document.activeElement,el('.subscriptions-workspace h2'));assert.equal(puts().length,1);
+});
+test('刪除順序：不同列逆序確認至全空，保留頁首歷史並且晚ACK不回焦',async()=>{
+  const a=rows[0].id,b=rows[1].id,wait=defer();deletePlans.push(async remove=>{await wait.promise;remove();return json({ok:true});});await startDelete(a);await startDelete(b);deleted(b);
+  const page=el('.subscriptions-page'),head=el('.subscriptions-page-head'),add=el('#addSub'),history=el('#historySection'),notice=el('.subscriptions-notice');el('#outside').focus();const count=subscriptionReads().length;
+  wait.resolve();await settle();deleted(a);assert.equal(deletes().length,2);assert.equal(subscriptionReads().length,count);assert.equal(el('.subscriptions-page'),page);assert.equal(el('.subscriptions-page-head'),head);assert.equal(el('#addSub'),add);assert.equal(el('#historySection'),history);assert.equal(el('.subscriptions-notice'),notice);assert.ok(el('#emptyAddSub'));assert.equal(el('#printSubs'),null);assert.equal(document.activeElement,el('#outside'));assert.equal(el('.subscriptions-summary'),null);
+});
+test('刪除順序：已確認後的新GET可呈現同ID，沒有永久遮罩',async()=>{
+  const saved=structuredClone(rows[0]),id=saved.id;await startDelete(id);deleted(id);rows.push({...saved,name:'本題確認後新資料'});await renderSubscriptions({showLoading:false});await settle();assert.ok(deleteButton(id));assert.match(el('.subscriptions-page').textContent,/本題確認後新資料/);assert.equal(deletes().length,1);
+});
+for(const state of ['duplicate','sync-error'])test(`刪除順序：${state}保留明確重載處置且不自動GET`,async()=>{
+  const a=rows[0].id,wait=defer();deletePlans.push(async remove=>{await wait.promise;remove();return json({ok:true});});await startDelete(a);
+  await renderSubscriptions({showLoading:false});await settle();
+  if(state==='duplicate'){const row=deleteButton(a).closest('tr');row.after(row.cloneNode(true));}else el('.timeline-card').remove();
+  const count=subscriptionReads().length;wait.resolve();await settle();deleted(a);assert.equal(subscriptionReads().length,count);const panel=el('[data-delete-reload]');assert.ok(panel);assert.match(panel.textContent,/刪除已完成/);
+  panel.querySelector('button').click();await settle();assert.equal(subscriptionReads().length,count+1);assert.equal(deleteButton(a),undefined);assert.equal(el('[data-delete-reload]'),null);assert.equal(deletes().length,1);
+});
+for(const change of ['focus','modal-generation','hash','render'])test(`刪除確認窗期間${change}變更，不從過期起點取得焦點`,async()=>{
+  const id=rows[0].id;let newer;
+  window.confirm=()=>{
+    if(change==='focus')el('#outside').focus();
+    if(change==='modal-generation'){const owned=app.claimModalRoot();owned.release();}
+    if(change==='hash')window.location.hash='#cards';
+    if(change==='render')newer=renderSubscriptions({showLoading:false});
+    return true;
+  };
+  await startDelete(id);await newer;await settle();deleted(id);assert.equal(deletes().length,1);
+  assert.notEqual(document.activeElement,el('.subscriptions-workspace h2'));
+  if(change==='focus')assert.equal(document.activeElement,el('#outside'));
+  if(change==='hash')assert.equal(window.location.hash,'#cards');
+});
+test('刪除回焦：新窗世代開後撤銷且原鈕未移焦，工作仍不可復活',async()=>{
+  const id=rows[0].id,wait=defer();deletePlans.push(async remove=>{remove();await wait.promise;return json({ok:true});});const button=await startDelete(id);
+  const owned=app.claimModalRoot();owned.release();assert.equal(document.activeElement,button);wait.resolve();await settle();deleted(id);assert.equal(document.activeElement,document.body);
+});
+for(const empty of [false,true])test(`刪除回焦：同步提交${empty?'空白':'正常'}頁造成原鈕blur可回指定標題`,async()=>{
+  if(empty){rows.splice(1);await renderSubscriptions({showLoading:false});await settle();}
+  const id=rows[0].id,host=el('#view'),native=Object.getOwnPropertyDescriptor(Element.prototype,'innerHTML');
+  Object.defineProperty(host,'innerHTML',{configurable:true,get(){return native.get.call(this);},set(value){
+    delete host.innerHTML;assert.equal(document.activeElement,deleteButton(id));document.activeElement.blur();native.set.call(this,value);
+  }});
+  await startDelete(id);deleted(id);assert.equal(document.activeElement,el(empty?'.subscriptions-page-head h1':'.subscriptions-workspace h2'));
+});
+test('刪除回焦：自動校正另讀仍沿自己的有效鏈完成一次',async()=>{
+  const a=rows[0].id,b=rows[1].id;rows[1].status='lifetime';await startDelete(a);deleted(a);
+  assert.equal(puts().length,1);assert.equal(puts()[0].path,'/api/subscriptions/'+b);assert.equal(rows[0].cycle,'lifetime');assert.equal(subscriptionReads().length,2);assert.equal(document.activeElement,el('.subscriptions-workspace h2'));assert.equal(el('.subscriptions-notice').textContent,'訂閱已刪除');
+});
+test('刪除確認：B舊快照在校正掃描前排除A，不發A校正PUT',async()=>{
+  const a=rows[0].id,b=rows[1].id,del=defer(),read=defer();deletePlans.push(async remove=>{await del.promise;remove();return json({ok:true});});await startDelete(a);
+  rows[0].expiryDate='2000-01-01';reads.push(async snap=>{await read.promise;return json(snap);});flag(b).focus();flag(b).click();await settle();written(b);
+  del.resolve();await settle();deleted(a);read.resolve();await settle();assert.equal(deleteButton(a),undefined);assert.equal(puts().length,1);assert.equal(puts()[0].path,'/api/subscriptions/'+b);assert.equal(subscriptionReads().length,1);assert.ok(flag(b).classList.contains('flag-on'));
+});
+test('刪除確認：校正await期間的新確認於下一GET邊界釋放，不遮確認後資料',async()=>{
+  const a=rows[0].id,b=rows[1].id,del=defer(),correct=defer(),saved=structuredClone(rows[0]);
+  deletePlans.push(async remove=>{await del.promise;remove();return json({ok:true});});await startDelete(a);rows[1].status='lifetime';
+  putPlans.push(async(row,body)=>{await correct.promise;Object.assign(row,body);return json(row);});const rendering=renderSubscriptions({showLoading:false});await settle();assert.equal(puts().length,1);assert.equal(puts()[0].path,'/api/subscriptions/'+b);
+  del.resolve();await settle();deleted(a);assert.equal(deleteButton(a),undefined);rows.push({...saved,name:'本題新GET資料'});correct.resolve();await rendering;await settle();
+  assert.equal(subscriptionReads().length,2);assert.ok(deleteButton(a));assert.match(el('.subscriptions-page').textContent,/本題新GET資料/);assert.equal(deletes().length,1);assert.equal(document.activeElement,document.body);
+});
+test('刪除確認：舊快照重複ID不猜刪哪列，錯誤重載不重送DELETE',async()=>{
+  const a=rows[0].id,b=rows[1].id,del=defer(),read=defer();deletePlans.push(async remove=>{await del.promise;remove();return json({ok:true});});await startDelete(a);
+  reads.push(async snap=>{await read.promise;return json([...snap,structuredClone(snap[0])]);});flag(b).focus();flag(b).click();await settle();written(b);
+  del.resolve();await settle();deleted(a);read.resolve();await settle();assert.ok(el('#retrySubscriptions'));assert.match(el('.subscriptions-error-state').textContent,/訂閱身分重複/);assert.equal(deletes().length,1);el('#retrySubscriptions').click();await settle();assert.equal(deleteButton(a),undefined);assert.equal(deletes().length,1);
+});
+for(const state of ['ending','ended'])test(`刪除確認：原地移除${state}末列，空列與摘要同模型更新`,async()=>{
+  rows[0].status=state;rows[0].active=state!=='ended';rows[0].endsOn=state==='ending'?'2099-12-01':'2026-01-01';await renderSubscriptions({showLoading:false});await settle();
+  const a=rows[0].id,b=rows[1].id,wait=defer();deletePlans.push(async remove=>{await wait.promise;remove();return json({ok:true});});await startDelete(a);flag(b).focus();flag(b).click();await settle();written(b);
+  const kept=flag(b),count=subscriptionReads().length;wait.resolve();await settle();deleted(a);assert.equal(subscriptionReads().length,count);assert.equal(flag(b),kept);assert.equal(document.activeElement,kept);assert.equal(el(`[data-list-key="${state}"] tbody`).textContent,state==='ending'?'尚無即將停用的服務':'尚無已停用的服務');assert.equal(el('.subscriptions-summary-item:last-child strong').textContent,'0 項');
+});
+for(const cancel of [false,true])test(`刪除回焦：${cancel?'取消':'成功'}後收掉document與window監聽`,async()=>{
+  const active=new Map(),restore=[];
+  for(const target of [document,window]){const add=target.addEventListener,remove=target.removeEventListener;target.addEventListener=function(type,fn,options){if(options===true)active.set(fn,(active.get(fn)||0)+1);return add.call(this,type,fn,options);};target.removeEventListener=function(type,fn,options){if(options===true&&active.has(fn)){const n=active.get(fn)-1;if(n)active.set(fn,n);else active.delete(fn);}return remove.call(this,type,fn,options);};restore.push(()=>{target.addEventListener=add;target.removeEventListener=remove;});}
+  try{const id=rows[0].id,wait=defer();deletePlans.push(async remove=>{remove();await wait.promise;return json({ok:true});});await startDelete(id);assert.ok(active.size>0);if(cancel)el('#outside').focus();wait.resolve();await settle();deleted(id);assert.equal(active.size,0);}finally{restore.forEach(r=>r());}
 });

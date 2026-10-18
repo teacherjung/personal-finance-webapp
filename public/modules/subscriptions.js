@@ -238,6 +238,88 @@ let flagConfirmationRevision = 0;
 /** @type {any} */ let subscriptionsReading = null;
 const flagConfirmations = new Map();
 const flagWriteTails = new Map();
+/** @type {any} */ let deleteFocusJob = null;
+const deleteOperations = new Set();
+
+function takeSubscriptionsPresentation() {
+  const owner = ++subscriptionsPresentationOwner;
+  finishFlagFocus(flagFocusJob);
+  finishDeleteFocus(deleteFocusJob);
+  // 已確認但仍等讀取的刪除，也要在下一個操作失敗前交給目前模型。
+  for (const operation of deleteOperations) if (operation.confirmed) syncPresentedDelete(operation.id);
+  return owner;
+}
+
+function excludeConfirmedDeletes(rows, excluded) {
+  for (const id of excluded) {
+    if (rows.filter(row => row.id === id).length > 1) throw new Error('訂閱身分重複，請重新載入確認刪除結果。');
+  }
+  return rows.filter(row => !excluded.has(row.id));
+}
+
+function markDeleteReload(p) {
+  if (!subscriptionsPresentationCurrent(p) || p.page.querySelector('[data-delete-reload]')) return;
+  const panel = document.createElement('div');
+  panel.className = 'subscriptions-attention danger';
+  panel.setAttribute('data-delete-reload', '');
+  panel.setAttribute('role', 'alert');
+  panel.innerHTML = '<div><strong>請重新載入確認</strong><p>刪除已完成，但這個畫面未能完整更新。請重新載入，避免重複操作。</p><button class="btn">重新載入</button></div>';
+  const reloadButton = panel.querySelector('button');
+  if (reloadButton) reloadButton.onclick = () => renderSubscriptions();
+  p.page.querySelector('.subscriptions-page-head').after(panel);
+}
+
+function syncPresentedDelete(id) {
+  const p = subscriptionsPresented;
+  if (!subscriptionsPresentationCurrent(p)) return;
+  const items = p.subs.filter(s => s.id === id);
+  const matches = [...p.page.querySelectorAll('.subs-table tbody tr[data-id]')].filter(row => row.dataset.id === id);
+  if (!items.length && !matches.length) return;
+  if (items.length !== 1 || matches.length !== 1) return markDeleteReload(p);
+  try {
+    // 保留陣列讓列事件、列印與計算明細閉包消化同一份刪除結果。
+    p.subs.splice(p.subs.indexOf(items[0]), 1);
+    const body = matches[0].parentElement;
+    const listKey = body.closest('[data-list-key]').dataset.listKey;
+    matches[0].remove();
+    if (!p.subs.length) {
+      destroyCharts();
+      const empty = document.createElement('div');
+      empty.innerHTML = subscriptionsEmptyHtml('');
+      p.page.querySelector('#printSubs')?.remove();
+      p.page.querySelectorAll('.subscriptions-attention:not([data-delete-reload]),.subscriptions-summary,.subscriptions-section').forEach(node => node.remove());
+      p.page.querySelector('#historySection').before(empty.querySelector('.subscriptions-empty-state'));
+      p.page.querySelector('#emptyAddSub').onclick = () => openSubForm(null, p.creditCards);
+      return;
+    }
+    if (!body.children.length) {
+      const emptyText = listKey === 'active' ? '尚無使用中的訂閱' : listKey === 'ending' ? '尚無即將停用的服務' : '尚無已停用的服務';
+      body.innerHTML = `<tr><td colspan="9" class="empty">${emptyText}</td></tr>`;
+    }
+    const totals = subscriptionTotals(p.subs, p.curMk);
+    const summary = p.page.querySelectorAll('.subscriptions-summary-item');
+    const amounts = [fmtFee(totals.thisMonth), fmtFee(totals.nextMonth), fmtFee(totals.thisMonth * 12), `${totals.endingCount} 項`];
+    summary.forEach((item, i) => { item.querySelector('strong').textContent = amounts[i]; });
+    const delta = summary[1].querySelector('small');
+    delta.className = totals.delta < 0 ? 'pos' : totals.delta > 0 ? 'neg' : '';
+    delta.textContent = subscriptionDeltaText(totals.delta);
+    summary[3].querySelector('small').textContent = totals.endingCount ? '已排入停用流程' : '目前沒有待停用服務';
+    p.page.querySelector('.subscriptions-attention:not([data-delete-reload])')?.remove();
+    p.page.querySelector('.subscriptions-summary').insertAdjacentHTML('beforebegin', staleSubscriptionsHtml(p.subs, p.validSet));
+    p.page.querySelector('.timeline-card').outerHTML = chargeTimelineHtml(p.subs);
+    destroyCharts();
+    // drawBreakdown 會在零類別時換掉 canvas；後續移列仍須有可重畫的座位。
+    if (!p.page.querySelector('#catChart')) p.page.querySelector('.cat-chart-box').innerHTML = '<canvas id="catChart"></canvas>';
+    drawBreakdown(totals.activeThis, p.curMk);
+    syncSubscriptionColumnWidths();
+  } catch { markDeleteReload(p); }
+}
+
+function confirmSubscriptionDelete(operation) {
+  operation.confirmed = true;
+  if (flagPresentationCurrent(subscriptionsReading)) subscriptionsReading.deleted.add(operation.id);
+  if (!flagPresentationCurrent(operation)) syncPresentedDelete(operation.id);
+}
 
 function flagPresentationCurrent(owner) {
   return owner && owner.owner === subscriptionsPresentationOwner && owner.host === view()
@@ -387,6 +469,91 @@ function restoreFlagFocus(job) {
   finishFlagFocus(job);
 }
 
+function finishDeleteFocus(job) {
+  if (!job || job.done) return;
+  job.done = true;
+  job.cleanups.forEach(remove => remove());
+  if (deleteFocusJob === job) deleteFocusJob = null;
+}
+
+function deleteFocusCurrent(job) {
+  return job && !job.done && deleteFocusJob === job && flagPresentationCurrent(job.operation)
+    && job.workspace.isConnected && job.workspace.parentElement === job.operation.host
+    && job.generation === subscriptionsReadGeneration && job.modal === byId('modal-root')
+    && job.modalUnchanged() && !job.modal.querySelector('.modal') && !document.hidden;
+}
+
+function startDeleteFocus(button, operation, before) {
+  if (!before.eligible || before.generation !== subscriptionsReadGeneration || !before.modalUnchanged()
+    || before.page !== button?.closest('.subscriptions-page') || document.activeElement !== button
+    || !flagFocusUsable(button) || !flagPresentationCurrent(operation) || document.hidden
+    || before.modal !== byId('modal-root') || before.modal.querySelector('.modal')) return null;
+  const job = { button, operation, workspace: before.page, generation: subscriptionsReadGeneration,
+    modal: before.modal, modalUnchanged: before.modalUnchanged, done: false, replacing: false,
+    attempting: null, cleanups: /** @type {Array<()=>void>} */ ([])};
+  deleteFocusJob = job;
+  const cancel = () => finishDeleteFocus(job);
+  const listen = (target, event, handler) => {
+    target.addEventListener(event, handler, true);
+    job.cleanups.push(() => target.removeEventListener(event, handler, true));
+  };
+  for (const event of ['pointerdown', 'keydown', 'touchstart', 'wheel']) listen(document, event, cancel);
+  listen(document, 'focusin', event => { if (event.target !== button && event.target !== job.attempting) cancel(); });
+  listen(button, 'blur', () => { if (!job.replacing) cancel(); });
+  listen(window, 'hashchange', cancel);
+  listen(window, 'blur', event => { if (event.target === window) cancel(); });
+  listen(document, 'visibilitychange', () => { if (document.hidden) cancel(); });
+  return job;
+}
+
+function beginDeleteCommit(job) {
+  if (job && (!deleteFocusCurrent(job) || document.activeElement !== job.button)) finishDeleteFocus(job);
+  if (job && !job.done) job.replacing = true;
+}
+
+function restoreDeleteFocus(job, empty) {
+  if (!job || job.done) return;
+  job.workspace = view().querySelector('.subscriptions-page');
+  job.replacing = false;
+  if (!deleteFocusCurrent(job) || (document.activeElement !== document.body && document.activeElement !== job.button)) return finishDeleteFocus(job);
+  const headings = job.workspace.querySelectorAll(empty ? '.subscriptions-page-head h1' : '.subscriptions-workspace .subscriptions-section-head h2');
+  const target = headings.length === 1 ? headings[0] : null;
+  if (!flagFocusUsable(target) || target.textContent !== (empty ? '訂閱追蹤' : '訂閱與近期扣款')) return finishDeleteFocus(job);
+  const added = !target.hasAttribute('tabindex');
+  if (added) target.setAttribute('tabindex', '-1');
+  const restore = () => { if (added && target.getAttribute('tabindex') === '-1') target.removeAttribute('tabindex'); };
+  job.attempting = target;
+  try { target.focus({ preventScroll: true }); } catch { /* Detached or disabled candidates can reject focus. */ }
+  job.attempting = null;
+  if (document.activeElement !== target || !deleteFocusCurrent(job) || !flagFocusUsable(target)) restore();
+  else if (added) {
+    const observer = new MutationObserver(() => { if (!target.isConnected) release(); });
+    const release = () => { target.removeEventListener('blur', release); observer.disconnect(); restore(); };
+    target.addEventListener('blur', release, { once: true });
+    observer.observe(document, { childList: true, subtree: true });
+  }
+  finishDeleteFocus(job);
+}
+
+function subscriptionTotals(subs, curMk) {
+  const nextMk = addMonths(curMk, 1);
+  const thisMonth = amortizedForMonth(subs, curMk), nextMonth = amortizedForMonth(subs, nextMk);
+  return { nextMk, thisMonth, nextMonth, delta: nextMonth - thisMonth,
+    activeThis: subs.filter(s => activeInMonth(s, curMk)), endingCount: subs.filter(s => subStatus(s) === 'ending').length };
+}
+
+function subscriptionDeltaText(delta) {
+  return `較本月 ${delta === 0 ? '持平' : (delta > 0 ? '+' : '−') + fmtFee(Math.abs(delta))}`;
+}
+
+function staleSubscriptionsHtml(subs, validSet) {
+  const staleSubs = subs.filter(s => s.card && !validSet.has(s.card));
+  return staleSubs.length ? `<div class="subscriptions-attention danger">
+      <span class="subscriptions-attention-mark">卡片</span>
+      <div><strong>續費卡已失效</strong><p>有 <b>${staleSubs.length}</b> 筆訂閱的續費卡已不在「卡片追蹤」中（${esc([...new Set(staleSubs.map(s => cardLabel(s.card)))].join('、'))}），可能該卡已換發或停用。請編輯這些訂閱、改用有效的卡片。</p></div>
+    </div>` : '';
+}
+
 export async function renderSubscriptions({ showLoading = true } = {}) {
   return renderSubscriptionsPage({ showLoading });
 }
@@ -394,24 +561,29 @@ export async function renderSubscriptions({ showLoading = true } = {}) {
 /**
  * @param {{showLoading?:boolean}} options
  * @param {FlagFocusJob|null} [focusJob]
- * @param {{generation:number,owner:number,host:any,seq:number,nav:number,hash:string}|null} [chain]
+ * @param {{generation:number,owner:number,host:any,seq:number,nav:number,hash:string,deleted?:Set<string>}|null} [chain]
  * @param {any} [operation]
+ * @param {any} [deleteJob]
  */
-async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = null, chain = null, operation = null) {
+async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = null, chain = null, operation = null, deleteJob = null) {
   if (!chain) {
     if (operation && !flagPresentationCurrent(operation)) return;
     if (flagFocusJob !== focusJob) finishFlagFocus(flagFocusJob);
-    chain = { generation: ++subscriptionsReadGeneration, owner: operation ? operation.owner : ++subscriptionsPresentationOwner,
+    if (deleteFocusJob !== deleteJob) finishDeleteFocus(deleteFocusJob);
+    chain = { generation: ++subscriptionsReadGeneration, owner: operation ? operation.owner : takeSubscriptionsPresentation(),
       host: view(), seq: currentRouteSeq(), nav: currentNavSeq(), hash: location.hash };
     if (focusJob && !focusJob.done) focusJob.generation = chain.generation;
+    if (deleteJob && !deleteJob.done) deleteJob.generation = chain.generation;
     subscriptionsReading = chain;
-    try { return await renderSubscriptionsPage({ showLoading }, focusJob, chain); }
+    try { return await renderSubscriptionsPage({ showLoading }, focusJob, chain, null, deleteJob); }
     finally {
       if (subscriptionsReading === chain) { subscriptionsReading = null; flagConfirmations.clear(); }
     }
   }
   const activeChain = chain;
   const current = () => activeChain.generation === subscriptionsReadGeneration && flagPresentationCurrent(activeChain);
+  const excluded = new Set();
+  chain.deleted = excluded;
   const confirmedAtStart = flagConfirmationRevision;
   flagConfirmations.clear();
   const seq = currentRouteSeq();
@@ -426,17 +598,20 @@ async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = n
     [raw, cards] = await Promise.all([api('/subscriptions'), api('/cards')]);
     if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁（Codex r10#6）
     if (!current()) return;
+    raw = excludeConfirmedDeletes(raw, excluded);
     const expired = await autoExpire(raw);
     if (seq !== currentRouteSeq()) return;   // autoExpire 的 PUT 往返期間切走了頁——含下面的遞迴分支都別再動
     if (!current()) return;
+    raw = excludeConfirmedDeletes(raw, excluded);
     if (expired) {
       subscriptionNotice = notice;
-      return renderSubscriptionsPage({ showLoading: false }, focusJob, chain);   // 沿用目前畫面／首次載入卡，不讓內部校正造成頁面高度跳動
+      return renderSubscriptionsPage({ showLoading: false }, focusJob, chain, null, deleteJob);   // 沿用目前畫面／首次載入卡，不讓內部校正造成頁面高度跳動
     }
   } catch (e) {
     if (seq !== currentRouteSeq()) return;
     if (!current()) return;
     finishFlagFocus(focusJob);
+    finishDeleteFocus(deleteJob);
     view().innerHTML = subscriptionsLoadErrorHtml(e?.message);
     const retry = byId('retrySubscriptions');
     if (retry) retry.onclick = () => renderSubscriptions();
@@ -449,41 +624,34 @@ async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = n
   freezeCompletedMonths(raw).catch(() => {});   // 月份結束後自動凍結到歷史紀錄
   if (!raw.length) {
     finishFlagFocus(focusJob);
+    beginDeleteCommit(deleteJob);
     view().innerHTML = subscriptionsEmptyHtml(notice);
     byId('addSub').onclick = () => openSubForm(null, creditCards);
     byId('emptyAddSub').onclick = () => openSubForm(null, creditCards);
     renderHistorySection(byId('historySection'));
+    restoreDeleteFocus(deleteJob, true);
     return;
   }
   const subs = raw.slice();
   const mainSubs = sortTableRows(subs.filter(s => subStatus(s) === 'active'), 'active');
   const endingSubs = sortTableRows(subs.filter(s => subStatus(s) === 'ending'), 'ending');
   const endedSubs = sortTableRows(subs.filter(s => subStatus(s) === 'ended'), 'ended');
-  const staleSubs = subs.filter(s => s.card && !validSet.has(s.card));
   const curMk = monthKey();
-  const nextMk = addMonths(curMk, 1);
-  const sumMonth = (mk) => amortizedForMonth(subs, mk);
-  const thisMonth = sumMonth(curMk);
-  const nextMonth = sumMonth(nextMk);
-  const delta = nextMonth - thisMonth;
-  const activeThis = subs.filter(s => activeInMonth(s, curMk));
-  const endingCount = subs.filter(s => subStatus(s) === 'ending').length;
+  const { nextMk, thisMonth, nextMonth, delta, activeThis, endingCount } = subscriptionTotals(subs, curMk);
 
   if (focusJob && (!flagFocusCurrent(focusJob) || document.activeElement !== focusJob.button)) finishFlagFocus(focusJob);
   if (focusJob && !focusJob.done) focusJob.replacing = true;
+  beginDeleteCommit(deleteJob);
   view().innerHTML = `
     <div class="subscriptions-page">
     ${subscriptionsPageHeadHtml()}
     ${subscriptionNoticeHtml(notice)}
 
-    ${staleSubs.length ? `<div class="subscriptions-attention danger">
-      <span class="subscriptions-attention-mark">卡片</span>
-      <div><strong>續費卡已失效</strong><p>有 <b>${staleSubs.length}</b> 筆訂閱的續費卡已不在「卡片追蹤」中（${esc([...new Set(staleSubs.map(s => cardLabel(s.card)))].join('、'))}），可能該卡已換發或停用。請編輯這些訂閱、改用有效的卡片。</p></div>
-    </div>` : ''}
+    ${staleSubscriptionsHtml(subs, validSet)}
 
     <div class="subscriptions-summary">
       <div class="subscriptions-summary-item"><span>本月費用</span><strong>${fmtFee(thisMonth)}</strong><small>${curMk}</small><button class="cost-method-btn" data-cost-detail="${curMk}">查看計算方式</button></div>
-      <div class="subscriptions-summary-item"><span>下月費用</span><strong>${fmtFee(nextMonth)}</strong><small class="${delta < 0 ? 'pos' : delta > 0 ? 'neg' : ''}">較本月 ${delta === 0 ? '持平' : (delta > 0 ? '+' : '−') + fmtFee(Math.abs(delta))}</small><button class="cost-method-btn" data-cost-detail="${nextMk}">查看 ${nextMk}</button></div>
+      <div class="subscriptions-summary-item"><span>下月費用</span><strong>${fmtFee(nextMonth)}</strong><small class="${delta < 0 ? 'pos' : delta > 0 ? 'neg' : ''}">${subscriptionDeltaText(delta)}</small><button class="cost-method-btn" data-cost-detail="${nextMk}">查看 ${nextMk}</button></div>
       <div class="subscriptions-summary-item"><span>年化固定支出</span><strong>${fmtFee(thisMonth * 12)}</strong><small>以本月費用換算</small></div>
       <div class="subscriptions-summary-item"><span>即將停用</span><strong>${endingCount} 項</strong><small>${endingCount ? '已排入停用流程' : '目前沒有待停用服務'}</small></div>
     </div>
@@ -538,7 +706,7 @@ async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = n
   view().querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openSubForm(subs.find(s => s.id === b.dataset.edit), creditCards));
   view().querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const s = subs.find(x => x.id === b.dataset.del);
-    deleteSubscription(s);
+    deleteSubscription(s, b);
   });
   view().querySelectorAll('[data-record]').forEach(b => b.onclick = () => recordToAccounting(subs.find(s => s.id === b.dataset.record)));
   view().querySelectorAll('[data-flag]').forEach(b => b.onclick = () => toggleCancel(subs.find(s => s.id === b.dataset.flag), b));
@@ -548,17 +716,32 @@ async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = n
   drawBreakdown(activeThis, curMk);
   renderHistorySection(byId('historySection'));
   subscriptionsPresented = { host: activeChain.host, page: view().querySelector('.subscriptions-page'),
-    seq: activeChain.seq, nav: activeChain.nav, hash: activeChain.hash, subs };
+    seq: activeChain.seq, nav: activeChain.nav, hash: activeChain.hash, subs, creditCards, validSet, curMk };
   restoreFlagFocus(focusJob);
+  restoreDeleteFocus(deleteJob, false);
 }
 
-async function deleteSubscription(s) {
+async function deleteSubscription(s, button) {
+  if (!s) return;
+  const host = view(), seq = currentRouteSeq(), nav = currentNavSeq(), hash = location.hash;
+  const before = { page: button?.closest('.subscriptions-page'), generation: subscriptionsReadGeneration,
+    modal: byId('modal-root'), modalUnchanged: watchModalRoot(),
+    eligible: document.activeElement === button && flagFocusUsable(button) && !document.hidden };
   if (!window.confirm(`確定要刪除「${s.name}」嗎？此動作無法復原。`)) return;
-  const seq = currentRouteSeq();
+  const acceptedHere = host === view() && host.isConnected && seq === currentRouteSeq()
+    && nav === currentNavSeq() && hash === location.hash && before.generation === subscriptionsReadGeneration;
+  const operation = { id: s.id, owner: acceptedHere ? takeSubscriptionsPresentation() : -1, host, seq, nav, hash, confirmed: false };
+  const focusJob = startDeleteFocus(button, operation, before);
+  deleteOperations.add(operation);
   try {
     await api('/subscriptions/' + s.id, { method: 'DELETE' });
-    rerenderSubscriptionsAfterAction(seq, '訂閱已刪除');
+    confirmSubscriptionDelete(operation);
+    if (flagPresentationCurrent(operation)) {
+      subscriptionNotice = '訂閱已刪除';
+      await renderSubscriptionsPage({ showLoading: false }, null, null, operation, focusJob);
+    }
   } catch (e) { toast(e.message, true); }
+  finally { deleteOperations.delete(operation); finishDeleteFocus(focusJob); }
 }
 
 function syncSubscriptionColumnWidths() {
@@ -869,7 +1052,7 @@ async function recordToAccounting(s) {
 async function toggleCancel(s, button) {
   const seq = currentRouteSeq();
   const operation = { id: s.id, target: !s.considerCancel, operation: ++flagOperation,
-    owner: ++subscriptionsPresentationOwner, host: view(), seq, nav: currentNavSeq(), hash: location.hash };
+    owner: takeSubscriptionsPresentation(), host: view(), seq, nav: currentNavSeq(), hash: location.hash };
   const focusJob = startFlagFocus(s.id, button, operation.operation);
   const sent = sendSubscriptionFlag(operation);
   try {
