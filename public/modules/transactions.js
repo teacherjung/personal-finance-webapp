@@ -5,6 +5,7 @@
 // 帳單匯入工作流已歸戶 transactions-import.js（系統優化階段二①），本檔只留頁面本體（列表/編輯/店家檔案）。
 import { api, view, byId, money, esc, monthKey, todayStr, daysUntil, openForm, openInfo, confirmDelete, toast, stmtOrig, currentRouteSeq } from '../app.js';
 import { CHART } from './theme.js';
+import { cashflowDateLabel } from './cashflow-model.js';
 import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
 import { sortRows, thBuilder, bindSortClicks } from './tx-sort.js';
@@ -265,8 +266,8 @@ function rowHtml(t, ctx = {}) {
     ? `<span class="store-open" data-store="${esc(t.id)}"${tip}>${esc(t.note)}</span>`
     : esc(t.note || '')) + pairTag;
   return `<tr>
-    <td class="nowrap">${esc(t.date)}</td>
-    <td class="muted nowrap">${esc(t.account || '—')}</td>
+    <td class="nowrap" title="${esc(t.date)}"><span class="credit-mobile-only">${esc(t.date)}</span><span class="credit-desktop-only">${esc(cashflowDateLabel(t.date))}</span></td>
+    <td class="muted nowrap" title="${esc(t.account || '')}">${esc(t.account || '—')}</td>
     <td class="muted">${noteCell}</td>
     <td>${esc(t.category)}</td>
     <td class="muted">${esc(t.subcategory || '—')}</td>
@@ -394,6 +395,12 @@ function openTxForm(tx, accounts = [], cards = [], all = []) {
   const isFeeKey = /國外交易服務費/.test(sk);
   const siblings = (sk && !isFeeKey) ? (all || []).filter(x => x.id !== tx.id && x.source === 'stmt' && String(x.storeKey || '') === sk) : [];
   const propagable = siblings.length;
+  const originalNote = String(tx?.note || '');
+  const sameNotes = originalNote.trim() ? all.filter(x => x.id !== tx.id && isCardTx(x) && String(x.note || '') === originalNote) : [];
+  const canLearnNote = [tx, ...sameNotes].some(x => x?.source === 'stmt' && Boolean(stmtOrig(x.stmtRef))
+    && !/國外交易服務費/.test(String(x.storeKey || '')) && !/國外交易服務費/.test(stmtOrig(x.stmtRef)))
+    && !/國外交易服務費/.test(originalNote);
+  const canSyncNote = Boolean(originalNote.trim()) && (sameNotes.length > 0 || canLearnNote);
   openForm({
     title: '編輯消費',   // 信用卡明細＝匯入 + 編輯；手動新增走收支頁
     fields: [
@@ -405,7 +412,8 @@ function openTxForm(tx, accounts = [], cards = [], all = []) {
       // 標籤與列表表頭一致（使用者定）；「店名／品項」＝這欄也常拿來記買了什麼（LG 18升除濕機（momo）），
       // 不是只有店名（使用者定 2026-07-19）
       { key: 'note', label: '消費說明（店名／品項）', type: 'text', full: true, placeholder: '例：全聯、星巴克、LG 除濕機（momo）' },
-      ...(propagable ? [{ key: 'applyAll', label: `同時套用分類到「${sk}」的其他 ${propagable} 筆記錄`, type: 'checkbox', full: true }] : []),
+      ...(canSyncNote ? [{ key: 'applySameNote', label: `同時套用「消費說明」到其他相同的說明（共 ${sameNotes.length} 筆）`, type: 'checkbox', full: true }] : []),
+      ...(propagable ? [{ key: 'applyAll', label: `同時套用「分類」「子分類」到其他相同的店家（共 ${propagable} 筆）`, type: 'checkbox', full: true }] : []),
     ],
     values: tx || {},
     onMount: (/** @type {any} */ root) => {
@@ -414,17 +422,37 @@ function openTxForm(tx, accounts = [], cards = [], all = []) {
       const fill = (parent, cur) => { subSel.innerHTML = subOptions(parent, cur); };
       fill(catSel.value, tx?.subcategory || '');
       catSel.onchange = () => fill(catSel.value, '');
+      const noteChoice = root.querySelector('#f_applySameNote');
+      if (noteChoice) {
+        const help = document.createElement('p');
+        help.className = 'hint';
+        help.id = 'credit-note-sync-help';
+        help.textContent = '選「否」只改這筆，原有共用名稱規則保持。選「是」會同步修改前說明完全相同的卡片明細，包含其他月份與卡片，不包含銀行收支；有完整帳單原文的消費也會記住未來名稱，即使其他明細為 0 筆。手動記錄與國外交易服務費不記住未來名稱。單筆清空會回到自動名稱；同步清空還會取消這次原文的名稱規則，保留分類規則。分類另依店家選擇，與說明分開。';
+        noteChoice.setAttribute('aria-describedby', help.id);
+        noteChoice.parentElement.append(help);
+      }
     },
     onSubmit: async (data) => {
-      const { applyAll, ...rest } = data;
+      const { applyAll, applySameNote, ...rest } = data;
       const fields = /** @type {any} */ (rest);
       const body = { ...fields, type: 'expense', subcategory: fields.subcategory || '' };   // 信用卡明細一律支出（ledger:'card' 由後端保留，前端不送）
       if (tx) {
         // 「同店一起改」原子化（護欄 G3）：勾了就把 applyAll 併進同一個 PUT，後端一次寫檔完成編輯＋傳播——
         // 不再前端「PUT 再另呼 apply-category」兩次寫（中途失敗會半套用、且這條原本沒接錯誤）
         if (applyAll && sk) body.applyAll = true;
-        const r = await api('/transactions/' + tx.id, { method: 'PUT', body });
-        if (r.applied) toast(`已儲存，並把「${sk}」的其他 ${r.applied.changed} 筆一起改成 ${body.category}${body.subcategory ? `·${body.subcategory}` : ''}`);
+        if (applySameNote && canSyncNote) { body.applySameNote = true; body.expectedNote = originalNote; }
+        let r;
+        try { r = await api('/transactions/' + tx.id, { method: 'PUT', body }); }
+        catch (err) {
+          if (!body.applySameNote) throw err;
+          throw new Error(`${err.message}。儲存結果待核對，請重新載入確認後再編輯。`);
+        }
+        if (body.applySameNote && (!Number.isSafeInteger(r?.appliedNote?.changed) || r.appliedNote.changed < 0
+          || !Number.isSafeInteger(r?.appliedNote?.learned) || r.appliedNote.learned < 0)) {
+          throw new Error('未收到完整同步結果，資料可能已儲存；請重新載入核對，勿直接重送。');
+        }
+        if (r.appliedNote) toast(`已儲存消費說明，並更新其他 ${r.appliedNote.changed} 筆${fields.note ? (r.appliedNote.learned ? '；未來相同帳單原文也會套用' : '') : '；已回到自動名稱，並取消這次原文的自訂名稱規則'}${r.applied ? '；分類也已同步' : ''}`);
+        else if (r.applied) toast(`已儲存，並把「${sk}」的其他 ${r.applied.changed} 筆一起改成 ${body.category}${body.subcategory ? `·${body.subcategory}` : ''}`);
         // 學習是隱形的＝使用者不知道系統記住了什麼（今天「改一筆以為修好了」的一半原因）→ 說出來
         else if (sk) toast(`已儲存。以後「${sk}」的消費會自動歸到 ${body.category}${body.subcategory ? `·${body.subcategory}` : ''}`);
         else toast('已儲存');
