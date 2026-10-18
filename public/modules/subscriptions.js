@@ -2,7 +2,7 @@
 // 訂閱追蹤頁（頁面協調層）：攤提數學已歸戶 subscriptions-model.js（系統優化階段二②，零依賴純函式＋
 // 前後端對照考題）；A4 列印報表已歸戶 subscriptions-report.js（階段二③）。本檔留 DOM/圖表/表單。
 // subStatus 留此（吃 daysUntil＝依「今天」而變）；帶 export 的常數/函式＝報表模組的接縫（呼叫時取用、TDZ 安全）。
-import { api, view, byId, esc, money, daysUntil, monthKey, todayStr, openForm, openInfo, toast, currentRouteSeq } from '../app.js';
+import { api, view, byId, esc, money, daysUntil, monthKey, todayStr, openForm, openInfo, toast, currentRouteSeq, currentNavSeq, watchModalRoot } from '../app.js';
 import { CHART, AXIS, GRID } from './theme.js';
 import { icon } from './icons.js';
 import { renderHistorySection } from './history.js';
@@ -161,10 +161,12 @@ function subscriptionsEmptyHtml(notice) {
   </div>`;
 }
 
-function rerenderSubscriptionsAfterAction(seq, message) {
-  if (seq !== currentRouteSeq()) return;
+/** @param {number} seq @param {string} message @param {FlagFocusJob|null} [focusJob] @param {any} [operation] */
+function rerenderSubscriptionsAfterAction(seq, message, focusJob = null, operation = null) {
+  if (seq !== currentRouteSeq()) { finishFlagFocus(focusJob); return; }
+  if (operation && !flagPresentationCurrent(operation)) return;
   subscriptionNotice = message;
-  renderSubscriptions({ showLoading: false });
+  return renderSubscriptionsPage({ showLoading: false }, focusJob, null, operation);
 }
 
 // 排序用的「續費/停用」生效日期
@@ -224,7 +226,194 @@ async function autoExpire(subs) {
   return true;
 }
 
+/** @typedef {{id:string, operation:number, button:any, host:any, workspace:any, seq:number, nav:number, hash:string,
+ * generation:number, modal:any, modalUnchanged:()=>boolean, done:boolean, replacing:boolean,
+ * attempting:any, cleanups:Array<()=>void>}} FlagFocusJob */
+let subscriptionsReadGeneration = 0;
+let flagOperation = 0;
+/** @type {any} */ let flagFocusJob = null;
+let subscriptionsPresentationOwner = 0;
+let flagConfirmationRevision = 0;
+/** @type {any} */ let subscriptionsPresented = null;
+/** @type {any} */ let subscriptionsReading = null;
+const flagConfirmations = new Map();
+const flagWriteTails = new Map();
+
+function flagPresentationCurrent(owner) {
+  return owner && owner.owner === subscriptionsPresentationOwner && owner.host === view()
+    && owner.host.isConnected && owner.seq === currentRouteSeq() && owner.nav === currentNavSeq()
+    && owner.hash === location.hash;
+}
+
+function subscriptionsPresentationCurrent(presentation) {
+  return presentation && presentation === subscriptionsPresented && presentation.host === view()
+    && presentation.host.isConnected && presentation.page.isConnected
+    && presentation.page.parentElement === presentation.host && presentation.seq === currentRouteSeq()
+    && presentation.nav === currentNavSeq() && presentation.hash === location.hash;
+}
+
+function syncPresentedFlag(id, value) {
+  const p = subscriptionsPresented;
+  if (!subscriptionsPresentationCurrent(p)) return;
+  const items = p.subs.filter(s => s.id === id);
+  const rows = [...p.page.querySelectorAll('.subs-table tbody tr[data-id]')].filter(row => row.dataset.id === id);
+  if (items.length !== 1 || rows.length !== 1) return;
+  const buttons = [...rows[0].querySelectorAll('[data-flag]')].filter(b => b.dataset.flag === id);
+  if (buttons.length !== 1) return;
+  // 列事件閉包仍讀這個物件；只改 DOM 會使下一次取反使用舊值。
+  items[0].considerCancel = value;
+  rows[0].querySelector('.cancel-dot')?.classList.toggle('on', value);
+  buttons[0].classList.toggle('flag-on', value);
+  buttons[0].title = value ? '已標記考慮停用' : '標記考慮停用';
+  buttons[0].innerHTML = icon(value ? 'box-x' : 'box', 15);
+}
+
+function confirmSubscriptionFlag(operation, saved) {
+  if (saved?.id !== operation.id || typeof saved.considerCancel !== 'boolean'
+    || saved.considerCancel !== operation.target) return false;
+  flagConfirmations.set(operation.id, { revision: ++flagConfirmationRevision, value: saved.considerCancel });
+  syncPresentedFlag(operation.id, saved.considerCancel);
+  // 只有仍能提交的在途讀取需要覆蓋其較早快照；後續 GET 本身已在確認之後。
+  if (!flagPresentationCurrent(subscriptionsReading)) flagConfirmations.clear();
+  return true;
+}
+
+function mergeConfirmedFlags(rows, confirmedAtStart) {
+  const counts = new Map();
+  rows.forEach(row => counts.set(row.id, (counts.get(row.id) || 0) + 1));
+  for (const row of rows) {
+    const confirmed = flagConfirmations.get(row.id);
+    if (counts.get(row.id) === 1 && confirmed && confirmed.revision > confirmedAtStart) row.considerCancel = confirmed.value;
+  }
+}
+
+function sendSubscriptionFlag(operation) {
+  const previous = flagWriteTails.get(operation.id) || Promise.resolve();
+  const sent = previous.catch(() => {}).then(() => api('/subscriptions/' + operation.id,
+    { method: 'PUT', body: { considerCancel: operation.target } }));
+  flagWriteTails.set(operation.id, sent);
+  return sent;
+}
+
+function finishFlagFocus(job) {
+  if (!job || job.done) return;
+  job.done = true;
+  job.cleanups.forEach(remove => remove());
+  if (flagFocusJob === job) flagFocusJob = null;
+}
+
+function flagFocusCurrent(job) {
+  return job && !job.done && flagFocusJob === job && job.operation === flagOperation
+    && job.host === view() && job.host.isConnected && job.workspace.isConnected
+    && job.workspace.parentElement === job.host && job.seq === currentRouteSeq()
+    && job.nav === currentNavSeq() && job.hash === location.hash
+    && job.generation === subscriptionsReadGeneration
+    && job.modal === byId('modal-root') && job.modalUnchanged()
+    && !job.modal.querySelector('.modal') && !document.hidden;
+}
+
+function startFlagFocus(id, button, operation) {
+  finishFlagFocus(flagFocusJob);
+  const host = view(), workspace = button?.closest('.subscriptions-page');
+  if (document.activeElement !== button || !button?.isConnected || workspace?.parentElement !== host) return null;
+  /** @type {FlagFocusJob} */
+  const job = { id, operation, button, host, workspace, seq: currentRouteSeq(), nav: currentNavSeq(),
+    hash: location.hash, generation: subscriptionsReadGeneration, modal: byId('modal-root'),
+    modalUnchanged: watchModalRoot(), done: false, replacing: false, attempting: null, cleanups: [] };
+  flagFocusJob = job;
+  const cancel = () => finishFlagFocus(job);
+  const listen = (target, event, handler) => {
+    target.addEventListener(event, handler, true);
+    job.cleanups.push(() => target.removeEventListener(event, handler, true));
+  };
+  for (const event of ['pointerdown', 'keydown', 'touchstart', 'wheel']) listen(document, event, cancel);
+  listen(document, 'focusin', event => { if (event.target !== button && event.target !== job.attempting) cancel(); });
+  listen(button, 'blur', () => { if (!job.replacing) cancel(); });
+  listen(window, 'hashchange', cancel);
+  // 元素 blur 也會經過 window 的捕獲階段；只有真正視窗失焦才撤銷。
+  listen(window, 'blur', event => { if (event.target === window) cancel(); });
+  listen(document, 'visibilitychange', () => { if (document.hidden) cancel(); });
+  return job;
+}
+
+function flagFocusUsable(node) {
+  if (!node?.isConnected || node.matches(':disabled') || node.closest('[inert],[hidden]')) return false;
+  for (let p = node; p; p = p.parentElement) {
+    const style = getComputedStyle(p);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+  }
+  return node.getClientRects().length > 0;
+}
+
+function focusFlagCandidate(job, target) {
+  if (!flagFocusCurrent(job) || !flagFocusUsable(target)) return false;
+  const added = !target.hasAttribute('tabindex') && target.matches('h2');
+  if (added) target.setAttribute('tabindex', '-1');
+  const restore = () => { if (added && target.getAttribute('tabindex') === '-1') target.removeAttribute('tabindex'); };
+  job.attempting = target;
+  try { target.focus({ preventScroll: true }); } catch { /* focus can fail on a disconnected candidate */ }
+  job.attempting = null;
+  if (document.activeElement !== target || !flagFocusCurrent(job) || !flagFocusUsable(target)) {
+    restore(); return false;
+  }
+  if (added) {
+    // 撤銷工作不提早拆掉仍持焦標題的屬性；離焦或移除才還原自己的值。
+    const observer = new MutationObserver(() => { if (!target.isConnected) release(); });
+    const release = () => { target.removeEventListener('blur', release); observer.disconnect(); restore(); };
+    target.addEventListener('blur', release, { once: true });
+    observer.observe(document, { childList: true, subtree: true });
+  }
+  return true;
+}
+
+function restoreFlagFocus(job) {
+  if (!flagFocusCurrent(job)) return finishFlagFocus(job);
+  const matches = [...job.workspace.querySelectorAll('.subs-table tbody tr[data-id]')].filter(row => row.dataset.id === job.id);
+  // 重複身分不能猜第一列；使用者文字也不拼進 selector。
+  if (matches.length > 1) return finishFlagFocus(job);
+  const candidates = [];
+  if (matches.length === 1) {
+    for (const action of ['flag', 'edit']) {
+      const buttons = [...matches[0].querySelectorAll(`[data-${action}]`)].filter(b => b.dataset[action] === job.id);
+      if (buttons.length === 1) candidates.push(buttons[0]);
+    }
+  }
+  const headings = job.workspace.querySelectorAll('.subscriptions-workspace .subscriptions-section-head h2');
+  if (headings.length === 1) candidates.push(headings[0]);
+  for (const target of candidates) {
+    if (!flagFocusCurrent(job) || (document.activeElement !== document.body && document.activeElement !== job.button)) break;
+    if (focusFlagCandidate(job, target)) break;
+  }
+  finishFlagFocus(job);
+}
+
 export async function renderSubscriptions({ showLoading = true } = {}) {
+  return renderSubscriptionsPage({ showLoading });
+}
+
+/**
+ * @param {{showLoading?:boolean}} options
+ * @param {FlagFocusJob|null} [focusJob]
+ * @param {{generation:number,owner:number,host:any,seq:number,nav:number,hash:string}|null} [chain]
+ * @param {any} [operation]
+ */
+async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = null, chain = null, operation = null) {
+  if (!chain) {
+    if (operation && !flagPresentationCurrent(operation)) return;
+    if (flagFocusJob !== focusJob) finishFlagFocus(flagFocusJob);
+    chain = { generation: ++subscriptionsReadGeneration, owner: operation ? operation.owner : ++subscriptionsPresentationOwner,
+      host: view(), seq: currentRouteSeq(), nav: currentNavSeq(), hash: location.hash };
+    if (focusJob && !focusJob.done) focusJob.generation = chain.generation;
+    subscriptionsReading = chain;
+    try { return await renderSubscriptionsPage({ showLoading }, focusJob, chain); }
+    finally {
+      if (subscriptionsReading === chain) { subscriptionsReading = null; flagConfirmations.clear(); }
+    }
+  }
+  const activeChain = chain;
+  const current = () => activeChain.generation === subscriptionsReadGeneration && flagPresentationCurrent(activeChain);
+  const confirmedAtStart = flagConfirmationRevision;
+  flagConfirmations.clear();
   const seq = currentRouteSeq();
   const notice = subscriptionNotice;
   subscriptionNotice = '';
@@ -236,24 +425,30 @@ export async function renderSubscriptions({ showLoading = true } = {}) {
   try {
     [raw, cards] = await Promise.all([api('/subscriptions'), api('/cards')]);
     if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁（Codex r10#6）
+    if (!current()) return;
     const expired = await autoExpire(raw);
     if (seq !== currentRouteSeq()) return;   // autoExpire 的 PUT 往返期間切走了頁——含下面的遞迴分支都別再動
+    if (!current()) return;
     if (expired) {
       subscriptionNotice = notice;
-      return renderSubscriptions({ showLoading: false });   // 沿用目前畫面／首次載入卡，不讓內部校正造成頁面高度跳動
+      return renderSubscriptionsPage({ showLoading: false }, focusJob, chain);   // 沿用目前畫面／首次載入卡，不讓內部校正造成頁面高度跳動
     }
   } catch (e) {
     if (seq !== currentRouteSeq()) return;
+    if (!current()) return;
+    finishFlagFocus(focusJob);
     view().innerHTML = subscriptionsLoadErrorHtml(e?.message);
     const retry = byId('retrySubscriptions');
     if (retry) retry.onclick = () => renderSubscriptions();
     return;
   }
 
+  mergeConfirmedFlags(raw, confirmedAtStart);
   const creditCards = cards.filter(c => (c.type || 'credit') === 'credit').map(c => c.name);
   const validSet = new Set(creditCards);
   freezeCompletedMonths(raw).catch(() => {});   // 月份結束後自動凍結到歷史紀錄
   if (!raw.length) {
+    finishFlagFocus(focusJob);
     view().innerHTML = subscriptionsEmptyHtml(notice);
     byId('addSub').onclick = () => openSubForm(null, creditCards);
     byId('emptyAddSub').onclick = () => openSubForm(null, creditCards);
@@ -274,6 +469,8 @@ export async function renderSubscriptions({ showLoading = true } = {}) {
   const activeThis = subs.filter(s => activeInMonth(s, curMk));
   const endingCount = subs.filter(s => subStatus(s) === 'ending').length;
 
+  if (focusJob && (!flagFocusCurrent(focusJob) || document.activeElement !== focusJob.button)) finishFlagFocus(focusJob);
+  if (focusJob && !focusJob.done) focusJob.replacing = true;
   view().innerHTML = `
     <div class="subscriptions-page">
     ${subscriptionsPageHeadHtml()}
@@ -326,6 +523,7 @@ export async function renderSubscriptions({ showLoading = true } = {}) {
   `;
 
   byId('addSub').onclick = () => openSubForm(null, creditCards);
+  if (focusJob && !focusJob.done) { focusJob.workspace = view().querySelector('.subscriptions-page'); focusJob.replacing = false; }
   byId('printSubs').onclick = () => printSubscriptionReport(subs, curMk, nextMk);
   view().querySelectorAll('[data-cost-detail]').forEach(b => b.onclick = () => openCostDetailModal(subs, b.dataset.costDetail));
   view().querySelectorAll('th.sortable').forEach(th => th.onclick = () => {
@@ -343,12 +541,15 @@ export async function renderSubscriptions({ showLoading = true } = {}) {
     deleteSubscription(s);
   });
   view().querySelectorAll('[data-record]').forEach(b => b.onclick = () => recordToAccounting(subs.find(s => s.id === b.dataset.record)));
-  view().querySelectorAll('[data-flag]').forEach(b => b.onclick = () => toggleCancel(subs.find(s => s.id === b.dataset.flag)));
+  view().querySelectorAll('[data-flag]').forEach(b => b.onclick = () => toggleCancel(subs.find(s => s.id === b.dataset.flag), b));
   wireDragAndDrop();
   syncSubscriptionColumnWidths();
 
   drawBreakdown(activeThis, curMk);
   renderHistorySection(byId('historySection'));
+  subscriptionsPresented = { host: activeChain.host, page: view().querySelector('.subscriptions-page'),
+    seq: activeChain.seq, nav: activeChain.nav, hash: activeChain.hash, subs };
+  restoreFlagFocus(focusJob);
 }
 
 async function deleteSubscription(s) {
@@ -665,13 +866,22 @@ async function recordToAccounting(s) {
   } catch (e) { toast(e.message, true); }
 }
 
-async function toggleCancel(s) {
+async function toggleCancel(s, button) {
   const seq = currentRouteSeq();
+  const operation = { id: s.id, target: !s.considerCancel, operation: ++flagOperation,
+    owner: ++subscriptionsPresentationOwner, host: view(), seq, nav: currentNavSeq(), hash: location.hash };
+  const focusJob = startFlagFocus(s.id, button, operation.operation);
+  const sent = sendSubscriptionFlag(operation);
   try {
-    await api('/subscriptions/' + s.id, { method: 'PUT', body: { considerCancel: !s.considerCancel } });
-    const message = s.considerCancel ? '已取消「考慮停用」標記' : '已標記為考慮停用';
-    rerenderSubscriptionsAfterAction(seq, message);
+    const saved = await sent;
+    if (!confirmSubscriptionFlag(operation, saved)) return;
+    const message = operation.target ? '已標記為考慮停用' : '已取消「考慮停用」標記';
+    await rerenderSubscriptionsAfterAction(seq, message, focusJob, operation);
   } catch (e) { toast(e.message, true); }
+  finally {
+    finishFlagFocus(focusJob);
+    if (flagWriteTails.get(operation.id) === sent) flagWriteTails.delete(operation.id);
+  }
 }
 
 function drawBreakdown(activeThis, curMk) {

@@ -697,6 +697,7 @@ const MANIFEST = {
       'test/server.test.js',
       'test/snapshot-safety.test.js',
       'test/subscriptions-model.test.js',
+      'test/subscriptions-row-focus.test.js',
     ],
   },
   'docs/contracts/income-expense.md': {
