@@ -445,7 +445,7 @@ function openTxForm(tx, accounts = [], cards = [], all = []) {
         try { r = await api('/transactions/' + tx.id, { method: 'PUT', body }); }
         catch (err) {
           if (!body.applySameNote) throw err;
-          throw new Error(`${err.message}。儲存結果待核對，請重新載入確認後再編輯。`);
+          throw new Error(`${err.message}。儲存結果待核對，請重新載入確認後再編輯。`, { cause: err });
         }
         if (body.applySameNote && (!Number.isSafeInteger(r?.appliedNote?.changed) || r.appliedNote.changed < 0
           || !Number.isSafeInteger(r?.appliedNote?.learned) || r.appliedNote.learned < 0)) {
