@@ -506,14 +506,16 @@ async function readCashflowPage(/** @type {RetryFocusJob|null} */ focusJob) {
     byId(id).onchange = (e) => {
       const year = /** @type {HTMLSelectElement} */ (e.target).value;
       const availableMonths = monthNumbersForYear(months, year);
-      const month = availableMonths.includes(selectedMonth) ? selectedMonth : (availableMonths[0] || selectedMonth);
+      const selected = byId(id === 'yearSelDesktop' ? 'monthSelDesktop' : 'monthSel').value;
+      const month = availableMonths.includes(selected) ? selected : (availableMonths[0] || selected);
       monthFilter = `${year}-${month}`;
       renderCashflow();
     };
   }
   for (const id of ['monthSel', 'monthSelDesktop']) {
     byId(id).onchange = (e) => {
-      monthFilter = `${selectedYear}-${/** @type {HTMLSelectElement} */ (e.target).value}`;
+      const year = byId(id === 'monthSelDesktop' ? 'yearSelDesktop' : 'yearSel').value;
+      monthFilter = `${year}-${/** @type {HTMLSelectElement} */ (e.target).value}`;
       renderCashflow();
     };
   }
