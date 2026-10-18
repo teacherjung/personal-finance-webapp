@@ -627,3 +627,30 @@ for (const preface of ['', '未貼：這是前言\n\n']) test(`假 CLI→正式�
     assert.equal(result.receipt.posted, false);
   }
 });
+
+
+test('正式發審依指定裁示設定重算，與送審索引同列來源；錯指派停在外送前', async (t) => {
+  const seed = (f) => {
+    Object.assign(f.settings, { owner: 'William', rulingAssignments: [{ id: 'technical', decider: 'Sol',
+      scope: '合成技術工作', source: 'https://example.invalid/owner-grant', from: '2026-10-14T00:00:00Z', until: null }] });
+    f.settings.participants.push({ id: 'Sol', role: '技術裁示者', account: 'author' });
+    f.allComments.push(
+      { id: '10', change: '108', author: 'author', createdAt: '2026-10-15T01:00:00Z', body: '## ❓ 待裁（2026-10-15）：合成技術問題\n裁示指派：technical' },
+      { id: '11', change: '99', author: 'author', createdAt: '2026-10-15T01:01:00Z', body: '## ⚖️ Sol 裁示（2026-10-15）：合成答案\n裁示指派：technical\n原話（對話中，Codex 轉述）：**「採合成方案」**\n原題：https://github.com/example/other-project/pull/108#issuecomment-10' });
+    f.values.rulings = '指定裁示者 Sol（technical；指派來源 https://example.invalid/owner-grant）：https://github.com/example/other-project/pull/99#issuecomment-11';
+    f.write();
+  };
+  const f = fixture(t); seed(f);
+  assert.doesNotThrow(() => prepareReview(f.args, f));
+  const prepared = prepareReview(f.args, f);
+  assert.ok(prepared.prompt.includes(f.values.rulings));
+  for (const kind of ['no-settings', 'wrong-route', 'expired', 'plain-link']) {
+    const g = fixture(t); seed(g);
+    if (kind === 'no-settings') Reflect.deleteProperty(g.settings, 'rulingAssignments');
+    if (kind === 'wrong-route') g.allComments[1].body = g.allComments[1].body.replace('technical', 'other');
+    if (kind === 'expired') g.settings.rulingAssignments[0].until = '2026-10-15T01:01:00Z';
+    if (kind === 'plain-link') g.values.rulings = 'https://github.com/example/other-project/pull/99#issuecomment-11';
+    g.write(); const result = await runReview(g.args, g);
+    assert.equal(result.code, 2, kind); assert.equal(g.runnerCalls.length, 0); absent(g);
+  }
+});

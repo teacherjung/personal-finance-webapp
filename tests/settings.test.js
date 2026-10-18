@@ -240,7 +240,12 @@ test('⑨考題用的空白設定跟 settings.json 形狀一致，而且對外�
   // 形狀＝欄位名與型別；陣列只看「是陣列」（填設定會改長度）
   const shape = (v) => (Array.isArray(v) ? 'array'
     : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, shape(v[k])])) : typeof v);
-  assert.deepEqual(shape(unfilled()), shape(read()), `${path.basename(UNFILLED_FILE)} 的形狀跟 settings.json 不一樣：設定多了或少了一欄，空白設定要一起改`);
+  const withoutAssignments = (data) => {
+    require('../tools/ruling-assignments.js').assignmentsOf(data);
+    const required = { ...data }; delete required.rulingAssignments;
+    return required;
+  };
+  assert.deepEqual(shape(withoutAssignments(unfilled())), shape(withoutAssignments(read())), `${path.basename(UNFILLED_FILE)} 的形狀跟 settings.json 不一樣：設定多了或少了一欄，空白設定要一起改`);
   assert.notDeepEqual(shape({ a: { b: 1 } }), shape({ a: { b: '1' } }), '對照組：型別變了要看得出來');
   assert.notDeepEqual(shape({ a: {} }), shape({ a: { b: [] } }), '對照組：多一欄要看得出來');
 
@@ -317,4 +322,15 @@ test('照 GitHub 範本填完平台動作與合併指令，設定說明書照樣
   assert.ok(line.includes('Reviewed\\-By'), `說明書那一行要看得到 Reviewed-By：${line}`);
   assert.ok(line.includes('\\\\n'), '換行在說明書裡寫成看得見的 \\n（跳脫後是兩個反斜線加 n）');
   assert.ok(md.includes('allComments') && md.includes('repoFile'), '十二個動作都排得出來');
+});
+
+test('選填裁示者指派列入設定說明；缺省維持原產物、壞形狀不能產生', () => {
+  const f = require('./helpers/ruling-assignment-fixture.js').fixture();
+  const data = { ...unfilled(), ...f.settings };
+  const output = build(data);
+  assert.ok(output.includes('### 裁示者指派（A1）'));
+  assert.ok(output.includes('本工作線的工程與必要前置'));
+  assert.ok(output.includes('範圍語意與來源真偽由實作者及複審核對'));
+  data.rulingAssignments = null; assert.throws(() => build(data), /裁示指派設定/u);
+  delete data.rulingAssignments; assert.ok(!build(data).includes('### 裁示者指派（A1）'));
 });

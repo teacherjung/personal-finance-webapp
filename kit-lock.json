@@ -1,7 +1,7 @@
 {
   "repo": "teacherjung/ai-collab-kit",
-  "version": "88a003a3c143f592194ed186672e9f386fa3193a",
-  "syncedAt": "2026-10-16",
+  "version": "db48be894e7d3f9c9b1c6f607b7523d4a1741a98",
+  "syncedAt": "2026-10-19",
   "entries": [
     {
       "mode": "100644",
@@ -10,7 +10,7 @@
     },
     {
       "mode": "100644",
-      "blob": "5c47452d80be99e461f4e7986921e4c43410ee03",
+      "blob": "b713612b8f57d71a02bb2ec3c277047d9c8517ee",
       "path": "MACHINES.md"
     },
     {
@@ -115,7 +115,7 @@
     },
     {
       "mode": "100644",
-      "blob": "9db21c7735bcfc23350a187e53f07a15e6a540dc",
+      "blob": "d4d43a8e0cdd64aacce0e4d3328b235624506c75",
       "path": "templates/ruling-record.md"
     },
     {
@@ -265,6 +265,11 @@
     },
     {
       "mode": "100644",
+      "blob": "73c4e6027ebb8aac06761b53d0e478ea211e04cd",
+      "path": "tests/helpers/ruling-assignment-fixture.js"
+    },
+    {
+      "mode": "100644",
       "blob": "7f7ccb2b32cc5925f704ef65329cc4949039f1d6",
       "path": "tests/helpers/unfilled-settings.json"
     },
@@ -280,7 +285,7 @@
     },
     {
       "mode": "100644",
-      "blob": "4ec18a499ee5efb1884d0bde3c2d7f9ef7c9782e",
+      "blob": "20a834706c0ed8a61646d3dfe9a64e5ebf172ca1",
       "path": "tests/manifest.json"
     },
     {
@@ -320,7 +325,7 @@
     },
     {
       "mode": "100644",
-      "blob": "84fe75e9098c71c0e77f4df072ded451fc497403",
+      "blob": "0b5338bbd8229fd53c0f93a119afdd91f75f10c5",
       "path": "tests/review-launch.test.js"
     },
     {
@@ -332,6 +337,11 @@
       "mode": "100644",
       "blob": "7d301d67877605b1f2cb941bcac522c0fd339475",
       "path": "tests/rules-length.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "af70a651e52f867d220c7f4ee8287f8346ef7455",
+      "path": "tests/ruling-assignments.test.js"
     },
     {
       "mode": "100644",
@@ -350,7 +360,7 @@
     },
     {
       "mode": "100644",
-      "blob": "fb08ac9a43eb99f8c16d55d93b2f47b4fd704d04",
+      "blob": "0c9f6995fc258b30bb896e35b379384967a783ea",
       "path": "tests/settings.test.js"
     },
     {
@@ -400,7 +410,7 @@
     },
     {
       "mode": "100644",
-      "blob": "669b5f526595460e791f9ffd05ec36097b56acae",
+      "blob": "164b9d3c08117e877c72947e8a285f5ae0d23783",
       "path": "tools/build-settings.js"
     },
     {
@@ -445,7 +455,7 @@
     },
     {
       "mode": "100644",
-      "blob": "740d010f792e7a0faa9c961608fa82e1bd2e4921",
+      "blob": "5343789061878efa55d17e85de8a74c024a3d1d7",
       "path": "tools/gates/check-pending-rulings.js"
     },
     {
@@ -490,7 +500,7 @@
     },
     {
       "mode": "100644",
-      "blob": "fd847bf180129705370686386067305cd7596d0c",
+      "blob": "11a07e11bfaa57376297266f5ffe5375fdf532b0",
       "path": "tools/pending-rulings.js"
     },
     {
@@ -500,13 +510,18 @@
     },
     {
       "mode": "100644",
-      "blob": "4659e02cb233ef072d54938e67234296fb8efbab",
+      "blob": "4862284d91da9b2e2f0af329ccf2c721399cddb4",
       "path": "tools/review-launch.js"
     },
     {
       "mode": "100644",
       "blob": "3892a6c43631fc832fe5580202a0b4155119abc5",
       "path": "tools/risk-tier.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "bc9ce92374e4d34f9555499c1ceac7c889123cd4",
+      "path": "tools/ruling-assignments.js"
     },
     {
       "mode": "100644",
@@ -545,7 +560,7 @@
     },
     {
       "mode": "100755",
-      "blob": "b1dd228a0eeb605f3175c31272e4477525ee4dac",
+      "blob": "3dce346f61d94dc074f0f3cfc26556706d1092e8",
       "path": "tools/week-digest.js"
     }
   ]

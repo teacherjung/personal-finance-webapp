@@ -32,6 +32,7 @@
   "review-launch.test.js",
   "risk-tier.test.js",
   "rules-length.test.js",
+  "ruling-assignments.test.js",
   "run-checks.test.js",
   "scan-postmortem.test.js",
   "scan-probe.test.js",

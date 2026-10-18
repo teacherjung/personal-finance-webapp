@@ -190,12 +190,12 @@ export function prepareReview(args, { git = reviewGit, ask = platform.ask } = {}
   else demand(previousHead === undefined, '首輪不得帶不明來源的前輪差異');
   const decider = pending.deciderOf(settings);
   demand(decider, '裁示者未登記，無法核對相關裁示');
-  const rulings = pending.evaluate(ask('allComments', {}, { settings }), decider);
+  const rulings = pending.evaluate(ask('allComments', {}, { settings }), decider, settings);
   demand(!rulings.unsure, '平台相關裁示無法核對');
   const related = /** @type {Array<{ ask: {change: string, id: string, body: string}, by: {change: string, id: string, body: string} }>} */ (rulings.ruled)
     .filter((item) => String(item.ask.change) === String(change));
-  const links = related.map((item) => launcher.substitute(rl.commentLink,
-    { project, change: item.by.change, comment: item.by.id }, '裁示連結').text);
+  const links = related.map((item) => pending.rulingLink(item.by, launcher.substitute(rl.commentLink,
+    { project, change: item.by.change, comment: item.by.id }, '裁示連結').text));
   demand(values.rulings === (links.length ? links.join('、') : '沒有'), '相關裁示不符官方配對');
   const risk = riskTier.run(change, { settings, platform: { ask }, git: (command) => {
     try { return { ok: true, out: git(root, command) }; } catch { return { ok: false, out: '' }; }

@@ -33,7 +33,7 @@ function onlyThisChange(result, changeId) {
 function gateRun(changeId, { settings = readSettings(), platform = { ask } } = {}) {
   if (!changeId) return { code: 2, lines: ['用法：node tools/gates/check-pending-rulings.js <變更編號>'] };
   const decider = deciderOf(settings);
-  if (!decider) return { code: 2, lines: ['待裁閘：專案設定裡的裁示者識別值或貼文帳號還沒填——分不出誰的裁示算數，查不清楚就不放行。'] };
+  if (!decider) return { code: 2, lines: ['待裁閘：專案設定裡的裁示者識別值或貼文帳號未填或不唯一（也請核對 owner）；修正 settings.json 後重跑——分不出誰的裁示算數，查不清楚就不放行。'] };
   // 先問平台這一支的正式編號再比對：平台認得「#48」、分支名這類寫法，其他閘照跑，這裡若拿原字去比就一題都對不上、放行
   let id;
   let comments;
@@ -46,7 +46,7 @@ function gateRun(changeId, { settings = readSettings(), platform = { ask } } = {
     }
     throw e;
   }
-  const result = evaluate(comments, decider);
+  const result = evaluate(comments, decider, settings);
   if (result.unsure) return { code: 2, lines: [`待裁閘：${result.unsure}——先後判不了，查不清楚就不放行。`] };
   const mine = onlyThisChange(result, id);
   const lines = [`待裁閘｜變更 ${id}（掃了整個專案 ${comments.length} 則留言，只看問在這一支的題）`, ...render(mine)];

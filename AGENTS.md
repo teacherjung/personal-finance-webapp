@@ -6,7 +6,7 @@
 
 1. **不分任務，全文讀 [RULES.md](RULES.md)、[共用底層契約](docs/contracts/shared-foundation.md) 與 [本專案協作附則](docs/project-collaboration.md)**；本檔的錢的絕對邊界與鐵則同樣不經路由。
 2. 查 [領域契約路由表](docs/contracts/README.md)，以預計修改的完整路徑搜尋，命中幾份就全文讀幾份；再依下表讀相關正本。接手一段時間沒碰的工作，先讀 [PROJECT.md](PROJECT.md) 的「重要決定（已拍板，勿重議）」。
-3. 開工前跑一次 `node tools/pending-rulings.js`（不帶參數；RULES D1）；留痕與共用檔查清單（D5）見協作附則。
+3. 開工前跑一次 `node tools/pending-rulings.js`（不帶參數；RULES D1）；需要裁示先讀 [裁示者設定與標準留痕](templates/ruling-record.md)，人選、範圍與期間以 `settings.json`／其產物 `PROJECT-SETTINGS.md` 為準；留痕與共用檔查清單（D5）見協作附則。
 4. 實作、複審、發審、合併與驗收依[協作附則](docs/project-collaboration.md)；結論標頭見[範本](templates/verdict-header.md)。
 
 |何時讀|正本|

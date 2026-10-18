@@ -657,3 +657,18 @@ test('⑩連兩輪沒「通過」：輪次要相鄰、每輪算不算通過照�
   assert.equal(twoMissesInARow([miss(1), verdict('Alpha', 2, sha, '需修改後再審')], 'Beta', 'beta CLI', roles), false, '別位的不算');
   assert.equal(twoMissesInARow([miss(1), miss(2)], 'Beta', 'beta 新來源', roles), false, '換了來源就是另一位');
 });
+
+test('指定裁示者的發審索引顯示指派來源，壞設定在開樹前拒絕', () => {
+  const f = require('./helpers/ruling-assignment-fixture.js').fixture();
+  const s = settingsFor({ owner: 'Boss', rulingAssignments: f.settings.rulingAssignments });
+  s.participants.push(f.settings.participants[2]);
+  const r = repo(), dir = tmp('review-assignment-out-');
+  const platform = fakePlatform(answersFor(r, { allComments: f.comments }));
+  const out = launch('7', 'Beta', { settings: s, platform, cwd: r.dir, dir, template: TEMPLATE });
+  assert.ok(out.prompt.includes(`指定裁示者 Delta（engineering；指派來源 ${f.settings.rulingAssignments[0].source}）：https://x.invalid/acme/kit/pull/7#c-a`));
+  close('7', { settings: s, dir, leftoverRoots: [] });
+  s.rulingAssignments = null;
+  const rejectedDir = tmp('review-assignment-rejected-');
+  assert.throws(() => launch('7', 'Beta', { settings: s, platform, cwd: r.dir, dir: rejectedDir, template: TEMPLATE }), /相關裁示算不出來/u);
+  assert.deepEqual(fs.readdirSync(rejectedDir), []);
+});

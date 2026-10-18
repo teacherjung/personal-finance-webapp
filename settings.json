@@ -19,6 +19,11 @@
    "role": "AI 丙",
    "id": "Grok",
    "account": "teacherjung"
+  },
+  {
+   "role": "本工作線技術裁示者（GPT‑6.1 Sol）",
+   "id": "Sol",
+   "account": "teacherjung"
   }
  ],
  "accountRule": "只採計登記在參與者表裡的貼文帳號貼的 ❓／⚖️／🚫；沒登記的帳號貼的不採計為有效留痕——它貼的 ❓ 不入待裁，它貼的 ⚖️／🚫 不能替已採計的問題收口（原題繼續待裁），形狀合規的會另列成疑似。⚖️ 另外要由裁示者那一位的帳號貼。結論閘只認識別值、不認帳號。多方共用同一個帳號時，機器分不出是誰親自貼的——那是這套機制的邊界，不是保證。",
@@ -1420,5 +1425,23 @@
     "未設定"
    ]
   }
- }
+ },
+ "rulingAssignments": [
+  {
+   "id": "session25-technical",
+   "decider": "Sol",
+   "scope": "既有 25 項工程及必要前置的技術裁示；A5 本人點頭、產品／畫面驗收、個資公開與錢邊界保留事項除外",
+   "source": "https://github.com/teacherjung/personal-finance-webapp/pull/689#issuecomment-6161914097",
+   "from": "2026-10-14T05:54:25Z",
+   "until": null
+  },
+  {
+   "id": "finance-backlog-20261019",
+   "decider": "Sol",
+   "scope": "本輪理財待辦逐項核實、施工及必要前置的技術裁示；A5 本人點頭、本人實際驗收、個資公開及錢邊界保留事項除外，不恢復手機、雲端或理財 Gemini／掃描線",
+   "source": "https://github.com/teacherjung/personal-finance-webapp/pull/708#issuecomment-6253454472",
+   "from": "2026-10-18T18:20:30Z",
+   "until": null
+  }
+ ]
 }

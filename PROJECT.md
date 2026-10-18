@@ -124,6 +124,8 @@
 
 ## 重要決定（已拍板，勿重議）
 
+- **本輪理財待辦與裁示接線（2026-10-18 UTC）**：依[本人本輪指派](https://github.com/teacherjung/personal-finance-webapp/pull/708#issuecomment-6253454472)與[實際 GPT‑6.1 Sol／xhigh 範圍裁示](https://github.com/teacherjung/personal-finance-webapp/pull/708#issuecomment-6253484711)，逐項核實後處理可自主完成的理財待辦，先補必要裁示制度同步，再接訂閱刪除回焦與既有信用卡草稿；其餘既定工程亦逐項核前提，不以未分配略過。較早[同步暫停原文](https://github.com/teacherjung/ai-collab-kit/pull/111#issuecomment-6252361888)保留，此順序是新指派下的技術解讀，不改寫成本人曾逐字撤銷延期。套件固定版本 `db48be894e7d3f9c9b1c6f607b7523d4a1741a98` 經官方整批同步，專案指派正本為 `settings.json`、人讀表為 `PROJECT-SETTINGS.md`；正式複審、合併與代驗狀態見 [#708](https://github.com/teacherjung/personal-finance-webapp/pull/708)。不將推薦代選當本人實看，不恢復手機、雲端或理財 Gemini／掃描線，不結清外部前提與原安裝待補。
+
 - **模型工作線（2026-10-18）**：本人說「算了，這條線結束掉。目前就Codex實作Grok複審就好」（[原話留痕](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6249335559)）；Codex實作、Grok正式複審，Gemini線停止且掃描跳過。共同規則與設定統一由本人另指派的工作線處理，本支批次修正不自行改接線或等待Gemini切換。
 
 - **本次待辦觸發裁示（2026-10-16）**：實際 GPT‑6.1 Sol／xhigh 的[技術代裁](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6208198145)依 #692 整支差異核條件，非 William 本人新增指示、非正式放行。48／51／55／56／57／78／79 與原22同支最小補正；58同支只補誠實射程，54舊 scan archive、55舊 scan直接覆蓋、58完整來源記帳及原18公開模型投影另排。原23已到另支時機，先核原前置；49／53／85及原19未因本支達後續條件，59外部屬性仍缺完整證據，當版材料若被遮蔽須先修正。各項實作、驗證與正式複審狀態分開記，不以此裁示結清安裝、驗收或全部待辦。
