@@ -42,8 +42,10 @@ function assertSubscriptionsStructure(source) {
   for (const marker of ['id="addSub"', 'id="printSubs"']) {
     assert.ok(head.includes(marker), `缺少訂閱頁首操作：${marker}`);
   }
-  assert.match(render, /const thisMonth = sumMonth\(curMk\);/);
-  assert.match(render, /const nextMonth = sumMonth\(nextMk\);/);
+  assert.match(render, /const \{ nextMk, thisMonth, nextMonth, delta, activeThis, endingCount \} = subscriptionTotals\(subs, curMk\);/);
+  const totals = functionBlock(source, 'function subscriptionTotals(', '\nfunction subscriptionDeltaText(');
+  assert.match(totals, /const nextMk = addMonths\(curMk, 1\);/);
+  assert.match(totals, /const thisMonth = amortizedForMonth\(subs, curMk\), nextMonth = amortizedForMonth\(subs, nextMk\);/);
   assert.match(render, /fmtFee\(thisMonth \* 12\)/);
   assert.equal((render.match(/if \(seq !== currentRouteSeq\(\)\) return;/g) || []).length, 3,
     '讀取、自動更新與錯誤狀態的三道路由守衛都必須保留');

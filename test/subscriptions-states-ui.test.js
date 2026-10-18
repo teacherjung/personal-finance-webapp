@@ -63,6 +63,7 @@ function namedFunction(source, name) {
     subscriptionsLoadingHtml: 'subscriptionsLoadErrorHtml',
     subscriptionsLoadErrorHtml: 'subscriptionsEmptyHtml',
     subscriptionsEmptyHtml: 'rerenderSubscriptionsAfterAction',
+    deleteSubscription: 'syncSubscriptionColumnWidths',
     toggleCancel: 'drawBreakdown',
     openSubForm: null,
   };
@@ -148,18 +149,20 @@ function assertStateWiring(source) {
   assert.match(render, /export async function renderSubscriptions\(\{ showLoading = true \} = \{\}\)/);
   assert.match(render, /const seq = currentRouteSeq\(\);\s*const notice = subscriptionNotice;\s*subscriptionNotice = '';\s*destroyCharts\(\);\s*if \(showLoading\) view\(\)\.innerHTML = subscriptionsLoadingHtml\(\);/);
   assert.match(source, /try \{\s*\[raw, cards\] = await Promise\.all\(\[api\('\/subscriptions'\), api\('\/cards'\)\]\);/);
-  assert.match(source, /\} catch \(e\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;\s*if \(!current\(\)\) return;\s*finishFlagFocus\(focusJob\);\s*view\(\)\.innerHTML = subscriptionsLoadErrorHtml/);
+  assert.match(source, /\} catch \(e\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;\s*if \(!current\(\)\) return;\s*finishFlagFocus\(focusJob\);\s*finishDeleteFocus\(deleteJob\);\s*view\(\)\.innerHTML = subscriptionsLoadErrorHtml/);
   assert.match(source, /if \(retry\) retry\.onclick = \(\) => renderSubscriptions\(\);/);
   assert.match(emptyBranch, /byId\('emptyAddSub'\)\.onclick = \(\) => openSubForm\(null, creditCards\);/);
   assert.match(emptyBranch, /renderHistorySection\(byId\('historySection'\)\);/);
   assert.match(render, /\$\{subscriptionsPageHeadHtml\(\)\}\s*\$\{subscriptionNoticeHtml\(notice\)\}/,
     '一般成功頁必須呈現一次性通知，不可被空白 helper 裡的同名呼叫假滿足');
-  assert.match(render, /if \(expired\) \{\s*subscriptionNotice = notice;\s*return renderSubscriptionsPage\(\{ showLoading: false \}, focusJob, chain\);/,
+  assert.match(render, /if \(expired\) \{\s*subscriptionNotice = notice;\s*return renderSubscriptionsPage\(\{ showLoading: false \}, focusJob, chain, null, deleteJob\);/,
     '自動校正後重載必須把尚未顯示的通知接回下一輪');
   assert.match(render, /view\(\)\.querySelectorAll\('th\.sortable'\)[\s\S]*?renderSubscriptions\(\{ showLoading: false \}\);\s*\}\);/,
     '表頭排序只能原地更新，不可把整頁清成載入狀態');
   assert.match(source, /function rerenderSubscriptionsAfterAction\(seq, message, focusJob = null, operation = null\) \{\s*if \(seq !== currentRouteSeq\(\)\) \{ finishFlagFocus\(focusJob\); return; \}\s*if \(operation && !flagPresentationCurrent\(operation\)\) return;\s*subscriptionNotice = message;\s*return renderSubscriptionsPage\(\{ showLoading: false \}, focusJob, null, operation\);/);
-  assert.match(source, /async function deleteSubscription\(s\) \{\s*if \(!window\.confirm\(`確定要刪除「\$\{s\.name\}」嗎？此動作無法復原。`\)\) return;\s*const seq = currentRouteSeq\(\);\s*try \{\s*await api\('\/subscriptions\/' \+ s\.id, \{ method: 'DELETE' \}\);\s*rerenderSubscriptionsAfterAction\(seq, '訂閱已刪除'\);/);
+  const deletion = namedFunction(source, 'deleteSubscription');
+  assert.match(deletion, /if \(!window\.confirm\(`確定要刪除「\$\{s\.name\}」嗎？此動作無法復原。`\)\) return;/);
+  assert.match(deletion, /await api\('\/subscriptions\/' \+ s\.id, \{ method: 'DELETE' \}\);\s*confirmSubscriptionDelete\(operation\);\s*if \(flagPresentationCurrent\(operation\)\) \{\s*subscriptionNotice = '訂閱已刪除';\s*await renderSubscriptionsPage\(\{ showLoading: false \}, null, null, operation, focusJob\);/);
   assert.match(source, /async function applyOrder\(ids, listKey\) \{\s*const seq = currentRouteSeq\(\);\s*await Promise\.all[\s\S]*?setListSort\(listKey, 'manual', 'asc'\);\s*if \(seq !== currentRouteSeq\(\)\) return;\s*renderSubscriptions\(\{ showLoading: false \}\);\s*\}/,
     '拖曳排序必須保留手動排序偏好，並且只在原路由原地更新');
   assert.match(toggle, /const message = operation\.target \? '已標記為考慮停用' : '已取消「考慮停用」標記';\s*await rerenderSubscriptionsAfterAction\(seq, message, focusJob, operation\);/);
@@ -208,7 +211,7 @@ test('訂閱追蹤狀態：破壞消毒、重試、空白接線、路由守衛�
   assert.ok(source.includes(emptyCta), '突變目標必須存在：空白引導接線');
   assert.throws(() => assertStateWiring(source.replace(emptyCta, `byId('emptyAddSub').onclick = () => {}; // ${emptyCta}`)));
 
-  const catchGuard = 'if (seq !== currentRouteSeq()) return;\n    if (!current()) return;\n    finishFlagFocus(focusJob);\n    view().innerHTML = subscriptionsLoadErrorHtml';
+  const catchGuard = 'if (seq !== currentRouteSeq()) return;\n    if (!current()) return;\n    finishFlagFocus(focusJob);\n    finishDeleteFocus(deleteJob);\n    view().innerHTML = subscriptionsLoadErrorHtml';
   assert.ok(source.includes(catchGuard), '突變目標必須存在：失敗狀態路由守衛');
   assert.throws(() => assertStateWiring(source.replace(catchGuard, `/* ${catchGuard} */\n    view().innerHTML = subscriptionsLoadErrorHtml`)));
 
@@ -226,7 +229,7 @@ test('訂閱追蹤狀態：破壞消毒、重試、空白接線、路由守衛�
   assert.ok(source.includes(successNotice), '突變目標必須存在：一般成功頁通知');
   assert.throws(() => assertStateWiring(source.replace(successNotice, '${subscriptionsPageHeadHtml()}')));
 
-  const expireNotice = 'subscriptionNotice = notice;\n      return renderSubscriptionsPage({ showLoading: false }, focusJob, chain);';
+  const expireNotice = 'subscriptionNotice = notice;\n      return renderSubscriptionsPage({ showLoading: false }, focusJob, chain, null, deleteJob);';
   assert.ok(source.includes(expireNotice), '突變目標必須存在：自動校正通知接力');
   assert.throws(() => assertStateWiring(source.replace(expireNotice,
     'return renderSubscriptions({ showLoading: false });')));
@@ -236,7 +239,7 @@ test('訂閱追蹤狀態：破壞消毒、重試、空白接線、路由守衛�
   assert.throws(() => assertStateWiring(source.replace(conditionalLoading,
     'view().innerHTML = subscriptionsLoadingHtml();')));
 
-  const deleteRefresh = "rerenderSubscriptionsAfterAction(seq, '訂閱已刪除');";
+  const deleteRefresh = "subscriptionNotice = '訂閱已刪除';\n      await renderSubscriptionsPage({ showLoading: false }, null, null, operation, focusJob);";
   assert.ok(source.includes(deleteRefresh), '突變目標必須存在：刪除成功原地確認');
   assert.throws(() => assertStateWiring(source.replace(deleteRefresh,
     'renderSubscriptions({ showLoading: false });')));
