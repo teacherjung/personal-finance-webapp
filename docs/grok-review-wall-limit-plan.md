@@ -6,6 +6,8 @@
 
 技術接法由實際 GPT‑6.1 Sol／xhigh 核定：Grok 60 分鐘、預換門檻 70 分鐘、Gemini 自有上限 50 分鐘。預換與牆鐘維持 600 秒差額；這是原接線的數值餘裕，不是已量到服務端憑證剩餘壽命或任何前置準備後仍有完整餘裕的保證。
 
+[接線完整裁示](https://github.com/teacherjung/personal-finance-webapp/pull/705#issuecomment-6247914729)與[歷史凍結稿歸屬裁示](https://github.com/teacherjung/personal-finance-webapp/pull/705#issuecomment-6247916264)分別保留，不作正式複審放行。
+
 ## 範圍
 
 - `scripts/grok-scan.js`：`GROK_WALL_MS = 60 * 60_000`；原整場 timer、程序群組終止及收尾繼續使用此值。

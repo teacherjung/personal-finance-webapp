@@ -9,10 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { gitEnv } from '../lib/git-env.js';
 import { isMainModule } from '../lib/is-main.js';
 import { runCanary, sandboxEnv, PROFILE, BOX_ROOT } from './grok-sandbox-canary.js';
-import { killGroupAndWait, sweepEscapees, freePort, readSessionsOnce, escapeForms, shapeMatchesIn, stripLineMarkers, GROK_WALL_MS } from './grok-scan.js';
+import { killGroupAndWait, sweepEscapees, freePort, readSessionsOnce, escapeForms, shapeMatchesIn, stripLineMarkers } from './grok-scan.js';
 import { loadGeminiAuth } from './gemini-auth.js';
 import { startGeminiRelay } from './gemini-relay.js';
 import { validateResult, MAX_MATERIAL_BYTES, MAX_RESPONSE_BYTES } from './gemini-client.js';
+
+const GEMINI_WALL_MS = 50 * 60_000;
 
 // clientSourceRoot 只由已固定盒外發射器給定；CLI 沒有來源旗標，正式呼叫必填。
 /** @typedef {{repo:string,base:string,head:string,promptFile:string,outFile:string,model:string,providerHead:string,clientSourceRoot?:string}} ScanArgs */
@@ -294,8 +296,8 @@ export async function runGeminiScan(args, deps = {}) {
       });
       child.once('error', () => finish({ status: null, signal: 'CHILD' }));
       child.once('close', (status, signal) => finish({ status, signal }));
-      const wallMs = deps.wallMs ?? GROK_WALL_MS;
-      if (!pid || !Number.isSafeInteger(wallMs) || wallMs < 1 || wallMs > GROK_WALL_MS) { stopChild('CHILD'); return; }
+      const wallMs = deps.wallMs ?? GEMINI_WALL_MS;
+      if (!pid || !Number.isSafeInteger(wallMs) || wallMs < 1 || wallMs > GEMINI_WALL_MS) { stopChild('CHILD'); return; }
       timer = setTimeout(() => stopChild?.('TIMEOUT'), wallMs);
       monitor = setInterval(() => { try { if (activeRelay.snapshot().failed) stopChild?.('RELAY'); } catch { stopChild?.('RELAY'); } }, 25);
     });

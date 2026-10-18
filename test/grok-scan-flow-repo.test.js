@@ -386,11 +386,55 @@ test('node_modules 捷徑指到不叫 node_modules 的資料夾＝退 2（不把
   assert.deepEqual(readdirSync(iso.resultsRoot), [], '退 2 時結果包要整個不留');
 });
 
-test('牆上時間上限不超過盒內憑證提早換新的 60 分鐘（掃到一半憑證過期＝整輪白跑）', () => {
+test('牆上時間上限與預換門檻保留執行餘裕', () => {
   const src = readFileSync(join(ROOT, 'scripts', 'grok-auth-refresh.js'), 'utf8');
   const early = Number(/opt\.earlySecs \?\? (\d+)/.exec(src)?.[1]);
   assert.ok(early > 0, '讀不到 grok-auth-refresh.js 提早換新的秒數——考題要跟著改');
   assert.ok(GROK_WALL_MS < early * 1000, `GROK_WALL_MS ${GROK_WALL_MS} 超過提早換新的 ${early} 秒`);
+  assert.equal(GROK_WALL_MS, 60 * 60_000);
+  assert.equal(early * 1000 - GROK_WALL_MS, 10 * 60_000);
+});
+
+test('整場 timer 實際排入一小時，觸發後終止群組並拒收清場', async (t) => {
+  if (!SANDBOX_OK) { t.skip(SKIP_AFTER_CANARY); return; }
+  const repo = tinyRepo(), iso = isolated(), inst = fakeGrok();
+  const executable = join(inst, 'bin', 'grok'), source = readFileSync(executable, 'utf8');
+  const needle = "\nprintf '%s'";
+  assert.equal(source.split(needle).length, 2);
+  // 讓真實子程序有機會等到受控 timer；拿掉終止的突變也能自行結束。
+  writeFileSync(executable, source.replace(needle, '\n/bin/sleep 0.4' + needle));
+  const originalTimer = globalThis.setTimeout;
+  /** @type {number[]} */ const delays = [];
+  /** @type {{pid:number,signal?:string|number}[]} */ const timerKills = [];
+  /** @type {string[]} */ const logs = [];
+  globalThis.setTimeout = /** @type {typeof setTimeout} */ ((callback, delay, ...args) => {
+    if (typeof delay === 'number' && delay > 30 * 60_000) {
+      delays.push(delay);
+      return originalTimer(() => {
+        const originalKill = process.kill;
+        process.kill = (pid, signal) => { timerKills.push({ pid, signal }); return originalKill(pid, signal); };
+        try { callback(...args); } finally { process.kill = originalKill; }
+      }, 50);
+    }
+    return originalTimer(callback, delay, ...args);
+  });
+  let result;
+  try {
+    result = await runScan({ base: repo.base, head: repo.head, promptFile: promptFile() },
+      { ...iso, repo: repo.dir, ...withGrok(inst), relayScript: fakeRelay('ok'), log: m => logs.push(m) });
+  } finally { globalThis.setTimeout = originalTimer; }
+  assert.deepEqual(delays, [60 * 60_000]);
+  assert.equal(result.code, 2, result.summary.join('\n'));
+  assert.match(result.summary.join('\n'), /SIGKILL/);
+  assert.equal(timerKills.length, 1);
+  assert.ok(timerKills[0].pid < 0, '整場 timer 必須終止程序群組');
+  assert.equal(timerKills[0].signal, 'SIGKILL');
+  assert.ok(logs.some(line => line.startsWith('掃描開始：')));
+  const box = logs.find(line => line.startsWith('盒子：'))?.slice('盒子：'.length);
+  assert.ok(box);
+  assert.throws(() => lstatSync(box), { code: 'ENOENT' });
+  assert.equal(readdirSync(iso.liveRoot).length, 0);
+  assert.deepEqual(readdirSync(iso.resultsRoot), []);
 });
 
 test('node_modules 複製失敗＝退 2，訊息只寫 cp 的退出碼、不印它的錯誤輸出（裡面有本機路徑）', async (t) => {
