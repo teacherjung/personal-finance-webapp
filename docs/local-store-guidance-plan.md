@@ -1,6 +1,6 @@
 # LOCAL 資料位置及保存指引
 
-追加的 docs/sync-index.md 與 test/vault-and-backup-integrity.test.js 亦已單獨 D5 核為專案自有；後者的原損毀題改核逐次私有診斷與公開指路，保留真 quick_check 故障及暫存清理斷言。
+追加的 README.md、docs/sync-index.md 與 test/vault-and-backup-integrity.test.js 亦已單獨 D5 核為專案自有；README.md 沒有另命中領域路由，其資料指引沿已讀的資料與儲存契約；後者的原損毀題改核逐次私有診斷與公開指路，保留真 quick_check 故障及暫存清理斷言。
 
 本支從已合併的 #711 開始，基底 5e4b2448b01434c71eb5f3819eb3df66bf5e68d3。2026-10-18 UTC 開工無參數 D1：374 支、2765 則留言，待裁 0；開著 PR 0。預選 17 路徑 D5 均屬專案自有。預約後依下列公開裁示施工，正式核收見 [#712](https://github.com/teacherjung/personal-finance-webapp/pull/712)。
 
@@ -50,7 +50,7 @@ GPT‑6.1 Sol／xhigh 的終端／開庫、側欄、HTTP 接線三份全文已�
 
 ## 施工檔案預選
 
-預約路徑：server.js、lib/store.js、lib/repo.js、lib/local-index.js、test/store-guidance.test.js、test/local-index.test.js、test/helpers/store-guidance-case.js、test/helpers/local-index-case.js、test/store-file-permissions.test.js、test/helpers/store-permission-case.js、test/vault-and-backup-integrity.test.js、test/hosted-auth.test.js、docs/contracts/README.md、docs/contracts/data-storage.md、docs/contracts/frontend-features.md、docs/sync-index.md、test/contract-split.test.js、本文、PROJECT.md。新增 lib/local-index.js 與 test/local-index.test.js、test/helpers/local-index-case.js 歸前端功能；資料指引的 test/store-guidance.test.js、test/helpers/store-guidance-case.js 歸資料與儲存；同步 README 與 test/contract-split.test.js 的 MANIFEST。送審前依實際差異核實清單。
+預約及 K5 追加路徑：README.md、server.js、lib/store.js、lib/repo.js、lib/local-index.js、test/store-guidance.test.js、test/local-index.test.js、test/helpers/store-guidance-case.js、test/helpers/local-index-case.js、test/store-file-permissions.test.js、test/helpers/store-permission-case.js、test/vault-and-backup-integrity.test.js、test/hosted-auth.test.js、docs/contracts/README.md、docs/contracts/data-storage.md、docs/contracts/frontend-features.md、docs/sync-index.md、test/contract-split.test.js、本文、PROJECT.md。新增 lib/local-index.js 與 test/local-index.test.js、test/helpers/local-index-case.js 歸前端功能；資料指引的 test/store-guidance.test.js、test/helpers/store-guidance-case.js 歸資料與儲存；同步 README 與 test/contract-split.test.js 的 MANIFEST。送審前依實際差異核實清單。
 
 優先重用現有權限題的真故障分類、close 與內容保存，只加每次診斷輸出的觀察。新 HTTP 題沿已重現的 /api/db、/api/bank-statement/preview（JSON 與 NDJSON）真入口，不另造錯誤路由。原版靜態來源對照用獨立 Express 靜態服務和 Buffer，對照每個實際執行環境的大小寫及負例，不能拿 Mac 既有結果當 CI 答案。
 

@@ -579,11 +579,11 @@ test('⭐ 裁決｜店名規則與開 app 自動整理這兩條路，不得長�
 //    改壞其中一支不會被守著另一支的題抓到。逐支交代誰有安全網、誰沒有：
 //      ① `snapshotTo`：操作前 `<tag>.bak`（經 backupNow）與每日滾動備份走這裡
 //         ——本節除了「啟動 .bak」那一族以外的題守著。
-//      ② `backupOnce`：啟動 `.bak`，**損毀時的還原指引點名要改名回去的就是這一顆**
+//      ② `backupOnce`：啟動 `.bak`，須驗證候選備份的內容與失敗保存
 //         ——本節「啟動 .bak」那一族守著失敗路徑（舊備份不可被動到）與成功路徑（那顆檔裡要有當下的資料）。
 //         ⚠️ 成功路徑非守不可（實測過的假綠）：把 `d.exec(VACUUM…)` 改成**從一顆全新的空白資料庫**
 //         產生 `.bak`，檔案照樣建出、原子替換與 .tmp 清理都正常 ⇒ 整套全綠、退出碼 0，
-//         而使用者照指引改名回去只會拿到一顆空殼。只驗「檔案有沒有生出來」擋不住這一手。
+//         而把空殼作為恢復來源會丟失帳本內容。只驗「檔案有沒有生出來」擋不住這一手。
 //      ③ `migrateLedgerIfNeeded`：`pre-ledger-migration.bak` ——本節末尾守著 happy path。
 //      ④ `migrateSecTradesContractIfNeeded`：`pre-sec-contract.bak`
 //         ——test/securities-migration.test.js 的搬家題守著 happy path。
@@ -747,10 +747,10 @@ test('備份｜啟動 .bak（還原指引點名的那一顆）同樣不可「先
     '前置：主庫本身必須開得起來（開不起來就代表長度算錯，backupOnce 壓根沒跑到、本題會空轉）');
   assert.match(out, /WARN:.*啟動備份/,
     '前置：backupOnce 必須真的跑到並失敗（沒有這行＝它寫去了別的路徑，那還原指引本身就失效了）');
-  assert.ok(existsSync(bak), '這一次備份失敗，上一顆好備份必須還在（還原指引叫使用者改名回去的就是它）');
+  assert.ok(existsSync(bak), '這一次備份失敗，上一顆好備份必須還在，才能保留恢復來源');
   assert.deepEqual(readFileSync(bak), goodBytes,
     '啟動 .bak 必須**逐位元組**完好——「先刪舊再做新」會留下 0-byte 的同名檔，'
-    + '檔案「還在」但內容全沒了，使用者照指引改名回去只會得到一顆空資料庫');
+    + '檔案「還在」但內容全沒了，以它恢復只會得到一顆空資料庫');
 });
 
 test('備份｜啟動 .bak 的成功路徑：那顆檔裡要有「這次開機時的真資料」（不是一顆合法的空殼）', () => {
@@ -783,7 +783,7 @@ test('備份｜啟動 .bak 的成功路徑：那顆檔裡要有「這次開機�
   // ② 第二次開機：backupOnce 應該把「現在這一刻的資料」照下來
   assert.match(boot(" s.load(); console.log('OPENED');"), /OPENED/,
     '前置：第二次開機要成功（開不起來的話 backupOnce 壓根沒跑到、本題會空轉）');
-  assert.ok(existsSync(bak), '每次啟動都要留下一顆 .bak（損毀還原指引叫使用者改名回去的就是它）');
+  assert.ok(existsSync(bak), '本題成功開庫必須產生 .bak，才有候選快照可驗內容');
 
   const d = new DatabaseSync(bak);
   try {
@@ -799,7 +799,7 @@ test('備份｜啟動 .bak 的成功路徑：那顆檔裡要有「這次開機�
       '備份裡必須是**這次開機時的真資料**——抓不到本題種下去那一筆，代表 .bak 的內容來源不是這顆庫');
     const st = readKv('settings');
     assert.ok(st && typeof st === 'object' && st.currency,
-      '備份裡的 settings 也要在——缺了它，改名回去只是一顆沒有任何設定的殼');
+      '備份裡的 settings 也要在——缺了它，以此恢復只會得到沒有設定的殼');
   } finally { d.close(); }
 });
 
