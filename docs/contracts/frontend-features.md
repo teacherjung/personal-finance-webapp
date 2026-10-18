@@ -133,3 +133,11 @@ DELETE 接受時取得呈現 owner；較新標記、刪除或一般呈現接管�
 **改這裡**：`theme.js` 的 CHART.green/red
 
 **記得同步這裡**：styles.css .cb-ok/.cb-over 寫死同色 hex（CSS 無法 import JS）；改色要兩邊一起改
+
+## LOCAL HTML 資料指引
+
+**改這裡**：LOCAL HTML 的側欄資料指引
+
+**記得同步這裡**：`server.js` 只在 LOCAL 初始化 `lib/local-index.js` 的單檔投影，再沿現成靜態供應器供應；未命中落回原 public。共享 `public/index.html` 保持，唯一完整 foot-note 只將 code 的固定檔名換成通用 SQLite 文字，其餘位元組、節點與按鈕保持。投影不接收定位、不開庫，不新增模式或資料位置 API。原來源接受的根、index、query、編碼、斜線與大小寫入口須仍取得新版表示，原負例保持；不加 SPA fallback 或全 URL 小寫。GET／HEAD、投影表示的條件式快取與單一 bytes Range 由原靜態供應器處理，切片／長度以 UTF-8 Buffer 核對。其他資產與 HOSTED 原身分牆、內容及入口保持。
+
+派生目錄僅含公有 index，啟動時建立完整表示；目標缺失／重複或初始化失敗不得靜默回舊文字，已取得的自身產物立即盡力清理，原錯保留。成功後 exit 同步盡力清理，只用自身目錄歸屬；不接管信號、listen 或 close，不掃他人／舊前綴目錄。信號、強制退出、崩潰及清理失敗可能殘留不含帳本或定位的公有產物；不承諾任意退出零殘留。正常重啟依來源重建，不提供來源熱更新保證。`test/local-index.test.js` 與 `test/helpers/local-index-case.js` 驗真 HTTP、有限入口、Buffer 協定及生命週期；`test/hosted-auth.test.js` 驗離線 HOSTED 保存。各已測環境以自身原來源為基線，異質掛載未覆蓋；如實測不相容須修正，不以未測聲明遮蔽。原生桌機與有效突變證據另見[施工計畫](../local-store-guidance-plan.md)。

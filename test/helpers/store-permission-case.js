@@ -14,9 +14,9 @@ async function runCase() {
   const exec = DatabaseSync.prototype.exec;
   const prepare = DatabaseSync.prototype.prepare;
   const close = DatabaseSync.prototype.close;
-  const log = console.log;
+  const log = console.log, errorLog = console.error;
   const mainDescriptors = new Set();
-  const report = { hits: 0, events: [], beforeSQL: [], errors: [], values: [], alive: [], afterClose: [], firstSQL: 0, closed: 0 };
+  const report = { diagnostics: [], hits: 0, events: [], beforeSQL: [], errors: [], values: [], alive: [], afterClose: [], firstSQL: 0, closed: 0 };
   const connections = new Set();
   let attempt = 0;
   const modes = () => ['', '-wal', '-shm'].map(suffix => {
@@ -107,6 +107,7 @@ async function runCase() {
     return result;
   };
   console.log = () => {};
+  console.error = (...parts) => report.diagnostics[attempt].push(parts.map(String).join(' '));
   syncBuiltinESMExports();
   try {
     const repo = await import('../../lib/repo.js');
@@ -116,6 +117,7 @@ async function runCase() {
       // 持續故障每輪重建機會；不借前次的主檔或連線當本輪前置。
       if (attempt && ['close', 'race'].includes(phase)) fs.rmSync(file, { force: true });
       if (attempt && phase === 'existing-removed') fs.copyFileSync(file + '.removed-0', file);
+      report.diagnostics.push([]);
       try {
         const db = await repo.getDb();
         db.history = [{ id: 'main-permission-' + phase, month: '2026-10', amount: phase === 'reopen' ? 863 : 479 }];
@@ -128,7 +130,7 @@ async function runCase() {
   } finally {
     fs.openSync = native.open; fs.closeSync = native.close;
     fs.existsSync = native.exists; fs.mkdirSync = native.mkdir;
-    DatabaseSync.prototype.exec = exec; DatabaseSync.prototype.prepare = prepare; DatabaseSync.prototype.close = close; console.log = log;
+    DatabaseSync.prototype.exec = exec; DatabaseSync.prototype.prepare = prepare; DatabaseSync.prototype.close = close; console.log = log; console.error = errorLog;
     syncBuiltinESMExports();
     for (const connection of connections) {
       try { close.call(connection); } catch { /* 受測開庫故障可能已關閉；這裡只清理探針持有的連線。 */ }

@@ -20,6 +20,8 @@ import { currentTenant } from './lib/tenant.js';
 import { isHosted, hostedConfig } from './lib/hosted.js';
 import { authRoutes, csrfOriginGuard, authGate } from './lib/routes/auth.js';
 import { isMainModule } from './lib/is-main.js';
+import { getLocalStoreDiagnostic } from './lib/repo.js';
+import { createLocalIndex } from './lib/local-index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // export 供測試載入（B0）：測試 import { app } 後自行在隨機埠監聽，不會動到 4321
@@ -182,8 +184,7 @@ function mountRateLimit(stage) {
     app.use(rl.paths, mw);
   }
 }
-// 雙模式（C2，裁決①）：HOSTED＝noteasy.com.tw（公開站＋帳號系統）；LOCAL＝預設＝以下每一行照舊。
-// ⚠️ LOCAL 分支的行為必須與 C2 之前 byte-for-byte 等價——這是 C0 的「本機版零改動」契約。
+// HOSTED 的身分牆及公開站只在此分支掛載，避免本機服務引入帳號流程。
 if (isHosted()) {
   hostedConfig();
   // ⚠️ Render 之類的平台會在前面代理：不設 trust proxy 的話 `req.ip` 是代理的 IP，
@@ -235,9 +236,9 @@ if (isHosted()) {
   // /finance＝理財 app（C3 才掛 auth gate；C2 先讓路徑存在＝重導到既有 SPA）
   app.use('/finance', express.static(join(__dirname, 'public')));
 } else {
-  // LOCAL：位置與改造前**完全相同**（原本就緊接在 if 之前，而 else 的第一行就是 static）——
-  // 中介層堆疊逐層比對過、無差異。本機不對外（只聽 127.0.0.1），沒有未驗證流量的問題。
   installJsonBodyParsers(app);
+  // 單檔投影沿用靜態供應器的入口、快取與 Range；其他資產落回原 public。
+  app.use(express.static(createLocalIndex(join(__dirname, 'public'))));
   app.use(express.static(join(__dirname, 'public')));
 }
 // 把 Chart.js 從 node_modules 對外提供（離線可用）
@@ -258,7 +259,7 @@ app.use('/api', (req, res) => res.status(404).json({ error: '不存在的 API �
 // ⚠️ 自審 r2（中）：診斷不可吞——搬家衝突的「二選一」指引、schema tripwire 的「寫入端漏了驗證」
 // 都靠這裡送達；一律 console.error 留紀錄。413＝上傳過大、回可操作的白話訊息；其餘有 status＝請求端問題
 // （如壞 JSON body）回泛用訊息；
-// 無 status＝伺服器內部錯誤 → 500＋err.message（訊息皆為我們自己寫的中文指引，無堆疊、無路徑洩漏）。
+// 無 status 回 err.message；需公開投影的錯誤由來源限制內容，不能在此假定所有原因都不含路徑。
 app.use((err, req, res, next) => {
   console.error('[api error]', /** @type {any} */ (err)?.message || err);
   if (res.headersSent) return next(err);
@@ -279,6 +280,7 @@ const PORT = Number(process.env.PORT) || 4321;   // 轉成數字（env 是字串
 // 只有「直接執行」（npm start / node server.js）才啟動監聽；被測試 import 時不開埠（B0）
 const isMain = isMainModule(import.meta.url);
 if (isMain) {
+  const localDiagnostic = isHosted() ? null : await getLocalStoreDiagnostic();
   // P1-6（C0 契約）：HOSTED 聽 0.0.0.0（Render 的健康檢查與流量才進得來）；LOCAL 維持 127.0.0.1 不對外。
   const server = app.listen(PORT, isHosted() ? '0.0.0.0' : '127.0.0.1', () => {
     console.log(`\n  個人理財網頁已啟動 ✅`);
@@ -286,7 +288,7 @@ if (isMain) {
     // ⚠️ 這一行以前不分模式都說「資料只存在本機」——HOSTED 下那是假的（資料在 Supabase）。
     console.log(isHosted()
       ? `  模式：HOSTED（資料存在雲端資料庫），按 Ctrl+C 可關閉。\n`
-      : `  資料只存在本機 data/store.db（SQLite；舊 store.json 僅為搬家備份），按 Ctrl+C 可關閉。\n`);
+      : `  資料只存在本機（SQLite），按 Ctrl+C 可關閉。\n  本程序設定的定位（未驗證檔案或備份）：\n${localDiagnostic}\n`);
   });
   // slowloris 防線（2026-07-28）：只收緊 HOSTED——LOCAL 只聽 127.0.0.1、只有自己在用，
   // 收緊只會在「上傳大備份剛好硬碟很慢」時誤殺自己。詳見 lib/parse-limits.js 檔尾。

@@ -1,6 +1,8 @@
 # LOCAL 資料位置及保存指引
 
-本支從已合併的 #711 開始，基底 5e4b2448b01434c71eb5f3819eb3df66bf5e68d3。2026-10-18 UTC 開工無參數 D1：374 支、2765 則留言，待裁 0；開著 PR 0。預選 17 路徑 D5 均屬專案自有。先預約計畫，產品尚未施工。
+追加的 docs/sync-index.md 與 test/vault-and-backup-integrity.test.js 亦已單獨 D5 核為專案自有；後者的原損毀題改核逐次私有診斷與公開指路，保留真 quick_check 故障及暫存清理斷言。
+
+本支從已合併的 #711 開始，基底 5e4b2448b01434c71eb5f3819eb3df66bf5e68d3。2026-10-18 UTC 開工無參數 D1：374 支、2765 則留言，待裁 0；開著 PR 0。預選 17 路徑 D5 均屬專案自有。預約後依下列公開裁示施工，正式核收見 [#712](https://github.com/teacherjung/personal-finance-webapp/pull/712)。
 
 ## 已重現的問題
 
@@ -11,7 +13,12 @@
 
 ## 實際技術裁示
 
-GPT‑6.1 Sol／xhigh 的終端／開庫、側欄、HTTP 接線三份全文已核讀；不是 William 本人原話或正式放行。正式 PR 逐份公開配對實際問答，路由 finance-backlog-20261019。派生 HTML 的有限生命週期第四份補充亦已核讀：初始化失敗立即清理、exit 同步盡力清理，不接管信號／listen／close；異常退出的非敏感自身產物殘留明列限制。大小寫依每個實際本機／CI來源對照，不對異質掛載作未測保證。
+GPT‑6.1 Sol／xhigh 的終端／開庫、側欄、HTTP 接線三份全文已核讀；不是 William 本人原話或正式放行。實際問答已在 #712 逐份公開配對，路由 finance-backlog-20261019。派生 HTML 的有限生命週期第四份補充亦已核讀：初始化失敗立即清理、exit 同步盡力清理，不接管信號／listen／close；異常退出的非敏感自身產物殘留明列限制。大小寫依每個實際本機／CI來源對照，不對異質掛載作未測保證。
+
+- guidance：[配對](https://github.com/teacherjung/personal-finance-webapp/pull/712#issuecomment-6256298195)、[完整答覆](https://github.com/teacherjung/personal-finance-webapp/pull/712#issuecomment-6256298010)。
+- sidebar：[配對](https://github.com/teacherjung/personal-finance-webapp/pull/712#issuecomment-6256298643)、[完整答覆](https://github.com/teacherjung/personal-finance-webapp/pull/712#issuecomment-6256298495)。
+- routing：[配對](https://github.com/teacherjung/personal-finance-webapp/pull/712#issuecomment-6256299147)、[完整答覆](https://github.com/teacherjung/personal-finance-webapp/pull/712#issuecomment-6256298978)。
+- lifecycle：[配對](https://github.com/teacherjung/personal-finance-webapp/pull/712#issuecomment-6256299558)、[完整答覆](https://github.com/teacherjung/personal-finance-webapp/pull/712#issuecomment-6256299425)。
 
 ## 施工邊界
 
@@ -43,6 +50,14 @@ GPT‑6.1 Sol／xhigh 的終端／開庫、側欄、HTTP 接線三份全文已�
 
 ## 施工檔案預選
 
-預約路徑：server.js、lib/store.js、lib/repo.js、lib/local-index.js、test/store-guidance.test.js、test/local-index.test.js、test/helpers/store-guidance-case.js、test/helpers/local-index-case.js、test/store-file-permissions.test.js、test/helpers/store-permission-case.js、test/hosted-auth.test.js、docs/contracts/README.md、docs/contracts/data-storage.md、docs/contracts/frontend-features.md、test/contract-split.test.js、本文、PROJECT.md。新增 lib/local-index.js 與 test/local-index.test.js、test/helpers/local-index-case.js 歸前端功能；資料指引的 test/store-guidance.test.js、test/helpers/store-guidance-case.js 歸資料與儲存；同步 README 與 test/contract-split.test.js 的 MANIFEST。送審前依實際差異核實清單。
+預約路徑：server.js、lib/store.js、lib/repo.js、lib/local-index.js、test/store-guidance.test.js、test/local-index.test.js、test/helpers/store-guidance-case.js、test/helpers/local-index-case.js、test/store-file-permissions.test.js、test/helpers/store-permission-case.js、test/vault-and-backup-integrity.test.js、test/hosted-auth.test.js、docs/contracts/README.md、docs/contracts/data-storage.md、docs/contracts/frontend-features.md、docs/sync-index.md、test/contract-split.test.js、本文、PROJECT.md。新增 lib/local-index.js 與 test/local-index.test.js、test/helpers/local-index-case.js 歸前端功能；資料指引的 test/store-guidance.test.js、test/helpers/store-guidance-case.js 歸資料與儲存；同步 README 與 test/contract-split.test.js 的 MANIFEST。送審前依實際差異核實清單。
 
 優先重用現有權限題的真故障分類、close 與內容保存，只加每次診斷輸出的觀察。新 HTTP 題沿已重現的 /api/db、/api/bank-statement/preview（JSON 與 NDJSON）真入口，不另造錯誤路由。原版靜態來源對照用獨立 Express 靜態服務和 Buffer，對照每個實際執行環境的大小寫及負例，不能拿 Mac 既有結果當 CI 答案。
+
+## 實作核對（送審前）
+
+相關定位、實際開庫、權限、保存及靜態協定考題 69 題通過；離線 HOSTED 原表示保存題另通過。31 個有效突變分兩批核實（23＋8），皆先確認目標唯一、基準綠、預期斷言紅、還原綠；未完成的準備、錯誤 readiness 入口、等待逾時、替換目標不存在及沒有斷言輸出的資產失敗不採計。資產比較改用 Buffer.equals 保持逐位元組核對，避免大量失敗差異的格式化拖垮驗證。兩批產品來源雜湊相同。
+
+IAB 原生桌機 1280×720：側欄通用文字、導航、快照按鈕與無橫向溢出已核；實際按快照成功。依 app ROUTES 逐頁 reload 12 個入口，頁面完成載入且觀察期 console 警告／錯誤為零；stock 無代號只驗選股入口。全部使用獨立合成資料，專用程序、分頁、資料及突變副本已清理。此證據不涵蓋其他瀏覽器、手機版面、真帳本或真備份可用性。
+
+[E10 推薦代選](https://github.com/teacherjung/personal-finance-webapp/pull/712#issuecomment-6256471800)依本人明確委任留痕，不冒稱本人實看。完整推送檢查、CI、正式 Grok 結論及合併後分級核收，以 #712 當版公開紀錄為準。

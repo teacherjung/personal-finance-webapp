@@ -16,6 +16,8 @@
 
 **記得同步這裡**：**新函式一律 async**（C4a 契約，鐵則 8）：全部呼叫端 `await`＋handler 包 `wrapRoute`/`asyncRoute`；改完跑 `npm run typecheck`（抓「讀」的漏）＋grep 掃「寫」的 fire-and-forget（tsc 抓不到）；`test/repo-async.test.js` 的簽名鎖與 HTTP 並發考題必須仍綠。**C4b 起還要顧到兩顆引擎**：新的寫入函式要走 `mutate()`（才有 CAS 重試），新的讀取函式要走 `readDb()`（才有規則同步與版本戳）；`test/hosted-store-pg.test.js` 也要仍綠
 
+`getLocalStoreDiagnostic` 是 async 純文字定位：沿 store 的模組載入時 FILE 與呼叫時 cwd，列有效主檔及原樣 -wal／-shm／.bak 後綴；不讀帳本，故不走 readDb，也不探查備份。僅供 LOCAL 終端啟動與開庫診斷，HOSTED 拒絕；不新增路徑 API。
+
 ## 驗證入櫃檯 B3
 
 **改這裡**：**驗證入櫃檯（B3）**
@@ -67,7 +69,9 @@
 **本機快照的檔案權限**（2026-10-12，交接原第 9 項）：`migrateLedgerIfNeeded`、`migrateSecTradesContractIfNeeded`、`backupOnce`、`snapshotTo` 在寫入完整帳本前，先排他建立 0600 空暫存檔，再 `VACUUM INTO`、成功後原子改名。安全建立失敗不得改走預設權限；仍按各入口的既有失敗政策保留舊目的備份及清理暫存檔。新的每日備份目錄以 0700 建立，已有目錄不批次改權限。`test/backup-file-permissions.test.js` 以隔離 SQLite 驗寫入前與完成後權限、內容及失敗處置；它不證明首次建立 data/ 與主資料庫的權限，以及現存 DB、WAL、SHM、歷史備份、既有目錄或公開歷史已安全。權限不替代加密，也不是對同一作業系統使用者的其他程序隔離。
 
 
-**新本機目錄與主檔的權限**（交接原第 9 項續作）：新資料目錄每個新建層以0700建立，主檔在SQLite前以wx排他預留0600空檔並關閉，再以正確編碼的URI mode=rw開啟；已有目錄及主檔不在啟動時chmod。建立或關閉回報失敗、競爭者EEXIST、預留或確認後移除，停止該次開庫，不以預設權限補建。安全建立失敗與非損毀開庫錯誤要求保留原檔與備份；只有合法數值SQLite主碼11／26（含延伸碼），或當次quick_check明確壞結果，沿用原人工還原指引。唯讀、IO、未知、缺碼與quick_check例外／缺結果都不據此引導刪檔；失敗關閉並清空連線，下次重新驗證。Node支援範圍為 `^22.23.1 || >=24.0.0`，排除23及預發行版，既有釘版不變；本機開庫在建立檔案或開SQLite前重用 `scripts/check-node-version.js` 的支援判斷。`test/store-file-permissions.test.js` 與 `test/helpers/store-permission-case.js` 走隔離SQLite及正式櫃檯，驗真fd／第一個SQL前權限與空檔、原生WAL／SHM存在→關閉消失→重開重建及新內容保存；既有0644主檔與0755目錄模式維持。故障控制驗兩次入口未沿用失敗連線；close控制是在真正關閉後回報錯誤，不是全部作業系統關閉錯誤的證明。
+**新本機目錄與主檔的權限**（交接原第 9 項續作）：新資料目錄每個新建層以0700建立，主檔在SQLite前以wx排他預留0600空檔並關閉，再以正確編碼的URI mode=rw開啟；已有目錄及主檔不在啟動時chmod。建立或關閉回報失敗、競爭者EEXIST、預留或確認後移除，停止該次開庫，不以預設權限補建。安全建立失敗與非損毀開庫錯誤要求保留原檔與備份；只有合法數值SQLite主碼11／26（含延伸碼），或當次quick_check明確壞結果，提供下列保存優先的人工還原指引。唯讀、IO、未知、缺碼與quick_check例外／缺結果都不據此引導刪檔；失敗關閉並清空連線，下次重新驗證。Node支援範圍為 `^22.23.1 || >=24.0.0`，排除23及預發行版，既有釘版不變；本機開庫在建立檔案或開SQLite前重用 `scripts/check-node-version.js` 的支援判斷。`test/store-file-permissions.test.js` 與 `test/helpers/store-permission-case.js` 走隔離SQLite及正式櫃檯，驗真fd／第一個SQL前權限與空檔、原生WAL／SHM存在→關閉消失→重開重建及新內容保存；既有0644主檔與0755目錄模式維持。故障控制驗兩次入口未沿用失敗連線；close控制是在真正關閉後回報錯誤，不是全部作業系統關閉錯誤的證明。
+
+**開庫定位與保存指引**：安全建立、未證損毀及明確損毀的公開 Error.message 不含本機定位或原始低階原因，適用直接轉送 message 的 JSON／NDJSON；詳細定位及原因只印本機終端，以引號、控制字元跳脫與有界文字顯示，內部 cause 保留。啟動只印設定定位，不宣稱檔案或備份已驗證。損毀人工步驟先停所有使用同資料檔的實例，確認候選備份存在且可辨識；缺席或不明先保留並停止。變更有效檔名之前，原主檔及存在 WAL／SHM 成組另存，候選備份也另存；從副本恢復且保留原候選，原組側檔移至保存位置，不與新主檔混放，再重啟驗證；失敗保留求助。存在不保證有效或最新。本指引不執行任何自動還原、移除、改名或新備份，不改其他搬家衝突流程。正式入口與保存題在 `test/store-guidance.test.js`、`test/helpers/store-guidance-case.js` 及原權限題，有限射程見[施工計畫](../local-store-guidance-plan.md)。
 
 **權限射程**：新建與重開的考題不證明所有路徑替換時點、inode固定、同使用者程序隔離、加密、現存檔案已收緊或9/23歷史鑰匙掃描已核實。一次性現存權限操作另有私有元資料清單與留痕，不讀真資料內容或開SQLite、不改owner、不碰seed；不能以新機制通過代替它。
 
