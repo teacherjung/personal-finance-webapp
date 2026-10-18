@@ -23,7 +23,7 @@
 
 `submitBrowserScan` 檢查唯一 `uploader-file-preview`、其唯一 `.file-preview-container` 的單一 `aria-describedby` 直接描述，完整檔名必須一致。可用狀態依已觀測的 TXT 標籤、非 loading 內容、無進度條及可用送出按鈕；縮短顯示的檔名或 FileList 本身不算完整核對。固定短提示填入後與送出前，各在同一 textbox 內對完整 textContent 作逐字比較，只回傳有限摘要。再取得另一個新 challenge 的 Submit 許可、消耗、重核附件／提示／模型／臨時／零回覆，才送出一次。
 
-`browser-attachment-ui/v1` 分列本機附件雜湊與 UI 名稱／可用性觀測；不宣稱已量得 Google 遠端檔案雜湊。唯一完整封閉 JSON、尾端挑戰、官方模型明細及 `receiverConsumptionVerified:false` 保留。輸出、上傳事件、掃前後隔離、來源／材料重建及程序／分頁清理均須通過。
+`browser-codeblock-ui/v1` 分列本機附件雜湊與 UI 名稱／可用性觀測；不宣稱已量得 Google 遠端檔案雜湊。唯一完整封閉 JSON、尾端挑戰、官方模型明細及 `receiverConsumptionVerified:false` 保留。輸出、上傳事件、掃前後隔離、來源／材料重建及程序／分頁清理均須通過。
 
 ## 驗證時序
 
@@ -34,11 +34,17 @@
 
 ## 失敗與界線
 
-### 回覆來源診斷候選
+### 唯一可見 JSON code 正文
 
-依 [GPT‑6.1 Sol 回覆來源裁示](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6243611259)，固定附件包裝與短提示要求唯一 JSON 程式碼區塊，區塊內只有符合 schema 的單一 object。診斷候選在唯一 `model-response-content` 保存有界呈現文字、DOM 結構與候選 code 的完整 `textContent`，分列雜湊；只留證，不把候選 code 當正式結果，也不修補原擷取內容。診斷候選不啟用正式掃描；正文邊界須先由這一場可見 DOM 證據確定。
+依 [GPT‑6.1 Sol 正文擷取裁示](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6243676492)，固定附件與短提示要求唯一 JSON 程式碼區塊。傳輸器沿小附件診斷實際觀測的父子鏈核對：`model-response-content` → `structured-content-container.model-response-text` → `.container` → `message-content` → `.markdown.markdown-main-panel.md-content` → `response-element.no-md.md-has-block-component` → `code-block` → `.code-block` → `.formatted-code-block-internal-container` → `.animated-opacity`，其中只有已觀測 JSON 標頭、Copy／Download 裝飾控制及唯一 `pre > code.code-container.formatted[role=text]`。Angular 動態 class 不作身分。
 
-小附件診斷明記 `capture-diagnostic`、`qualificationEligible=false`、`formalScan=false`；內部 `purpose=qualification` 與實際 status 保留，小材料成功不算完整容量資格。沿用固定來源、一次上傳、一次送出、兩道許可與清理；失敗只列實際執行的掃前後檢查。不讀剪貼簿、私人側欄或隱藏應用狀態，不因未知尾文連續試提示。正式擷取修法完成後換固定來源，重做完整容量資格、正式用途合成驗收及後續審查與實際掃描；舊失敗不追認。
+全容器只能有一組 code-block／pre／code，隱藏第二組也拒收；code 必須可見，直接讀完整 `textContent`，保留直接文字節點與 `hljs-attr`／`hljs-string`／`hljs-number` spans，不 trim、拼接候選片段、搜尋 JSON 邊界或修補。區塊外只收精確 JSON 標頭及已定義的空裝飾元件；額外正文、citation、尾文與未知元件均拒收，不設 citation 白名單。Copy／Download 只辨認、不操作，不讀剪貼簿或隱藏狀態。
+
+`response.txt` 保留可見 code 正文；`response-rendered.txt` 保留完整容器呈現文字；`response-dom.json` 保留已驗結構、code 內文字／highlight 配置與組合指紋。官方模型明細前後重讀並比對全部文字與結構，盒外再從兩份檔案及結構重算指紋，掃後洩漏檢查涵蓋這些證據。正文上限仍為 64 KiB，呈現容器上限為正文加 4 KiB 裝飾空間；超限不截斷。這些是 UI 可見證據，不稱模型原始傳輸文字。
+
+來源 `browser-codeblock-ui/v1` 與收據 `browser-codeblock-scan/v1` 排除舊整容器捕獲；盒內外仍核嚴格 JSON、重複鍵、封閉 schema、材料綁定及尾端挑戰，`receiverConsumptionVerified:false` 保留。行為題與有效突變涵蓋字元保存、直接文字節點、額外／隱藏 code、區塊外內容、citation、明細前後變化、舊來源與整容器退化。
+
+前兩場格式失敗只證明當時 UI 擷取文字不能解析，不能據此斷言模型原始輸出錯誤。小附件診斷留作來源證據，不追認為資格或掃描；診斷場失敗收尾、post 未執行的事實保留。修法的最終新來源須重做完整容量資格、正式用途合成驗收，再獨立複審與實際掃描。
 
 文字方案的失敗與 DOM 比較量測保留，不推論為 Google 官方容量上限。單附件完整資格失敗時交 Sol 裁示，不自行縮小材料、加容量或放寬憑證政策。
 

@@ -13,7 +13,7 @@ test('完整材料、尾碼與唯一場次綁定；純準備不預填 findings',
   assert.ok(p.controlPrompt.includes('exactly one fenced JSON code block'));
   assert.equal(p.attachmentText.includes('without Markdown'), false);
   const raw = Buffer.from(answer(p)), result = validateBrowserReply(raw, observation(p), p);
-  assert.equal(result.answer.findings.length, 1); assert.equal(result.sourceKind, 'browser-attachment-ui/v1');
+  assert.equal(result.answer.findings.length, 1); assert.equal(result.sourceKind, 'browser-codeblock-ui/v1');
   assert.equal(result.receiverConsumptionVerified, false);
   assert.throws(() => prepareBrowserPacket({ ...m, sha256: '0'.repeat(64) }));
   const obj = JSON.parse(m.text); obj.prompt = 'a'.repeat(ATTACHMENT_CAP);
@@ -24,10 +24,11 @@ test('來源觀測不能由模型自報取代；錯模式、非臨時、雙回�
   for (const [key, value] of Object.entries({ schema: 'native', scanId: 'wrong', origin: 'https://example.com',
     tabId: '../old', initialResponses: 1, submissions: 2, finalResponses: 2, temporaryBefore: false, temporaryAfter: false,
     selectedBefore: 'Auto', selectedAfter: 'Pro', details: 'Used Flash', detailsSource: 'model-text', complete: false, regenerations: 1,
-    requestSha256: '0'.repeat(64), responseSha256: '0'.repeat(64), responseBytes: 0 })) {
+    requestSha256: '0'.repeat(64), responseSha256: '0'.repeat(64), responseBytes: 0, bodySource: 'whole-container', renderedSha256: 'wrong', renderedBytes: 0, snapshotSha256: 'wrong' })) {
     assert.throws(() => validateBrowserReply(raw, { ...o, [key]: value }, p), key);
   }
   assert.throws(() => validateBrowserReply(raw, { ...o, trusted: true }, p));
+  assert.throws(() => validateBrowserReply(raw, { ...o, schema: 'browser-attachment-ui/v1' }, p));
 });
 test('只收完整嚴格 JSON：前後文、串接、重複鍵、UTF-8 破損、假工具與錯尾碼拒收', () => {
   const p = prepareBrowserPacket(material()), good = answer(p);

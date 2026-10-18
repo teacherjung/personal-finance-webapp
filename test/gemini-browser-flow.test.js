@@ -9,8 +9,8 @@ import { spawnSync } from 'node:child_process';
 import { browserClient } from '../scripts/gemini-browser-client.js';
 import { leaseMessage, sha256, SELECTED } from '../scripts/gemini-browser-protocol.js';
 import { writeOnce, readMail, mailExists, SOURCE_FILES } from '../scripts/gemini-browser-files.js';
-import { checkBrowserArtifacts, renderBrowserLauncher, renderBrowserCuaLoader } from '../scripts/gemini-browser-runner.js';
-import { material, answer, observation, jobFixture } from './helpers/gemini-browser-fixture.js';
+import { validateResponseArtifacts, checkBrowserArtifacts, renderBrowserLauncher, renderBrowserCuaLoader } from '../scripts/gemini-browser-runner.js';
+import { material, answer, observation, responseArtifacts, jobFixture } from './helpers/gemini-browser-fixture.js';
 
 function authorizeUpload(j, claim) {
   const request = { ...leaseMessage(j.descriptor, claim.instance, '9'.repeat(64), 'upload-request'), tabId: 'test-owned',
@@ -211,7 +211,7 @@ test('正式入口只接受數值精確等於完整容量的資格收據', () =>
     await module.evaluate();
     const cap=protocol.ATTACHMENT_CAP;
     for(const [label,attachmentBytes] of [['good',cap],['legacy',cap],['missing-transport',cap],['missing',undefined],['object',{}],['string',String(cap)],['below',cap-1],['above',cap+1],['fraction',cap+0.5]]){
-      receiptBytes=Buffer.from(JSON.stringify({schema:'browser-attachment-scan/v1',transport:label==='legacy'?'text/v1':label==='missing-transport'?undefined:protocol.TRANSPORT,sourceKind:protocol.OBSERVATION,purpose:'qualification',status:'PUBLISHED',sourceSha256:sourceSha,
+      receiptBytes=Buffer.from(JSON.stringify({schema:'browser-codeblock-scan/v1',transport:label==='legacy'?'text/v1':label==='missing-transport'?undefined:protocol.TRANSPORT,sourceKind:protocol.OBSERVATION,purpose:'qualification',status:'PUBLISHED',sourceSha256:sourceSha,
         providerHead:head,attachmentBytes,sourcePins:[{name:'node',sha256:nodeSha}]}));
       reached=0;
       const pins=['wrapper','deployment','prompt','node','cua-loader'].map(name=>({name,
@@ -229,4 +229,26 @@ test('正式入口只接受數值精確等於完整容量的資格收據', () =>
   const result = spawnSync(process.execPath, ['--experimental-vm-modules', '--input-type=module', '-e', script],
     { encoding: 'utf8', timeout: 15000, env: { PATH: '/usr/bin:/bin' } });
   assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, 'QUALIFICATION-CAPACITY-OK');
+});
+
+
+test('正文、呈現證據、結構與來源指紋必須互相吻合，舊來源不能借新檔追認', () => {
+  const p = jobFixture();
+  try {
+    const raw = Buffer.from(answer(p.packet)), o = observation(p.packet), artifacts = responseArtifacts(raw.toString());
+    const rendered = Buffer.from(artifacts.rendered), dom = artifacts.dom;
+    validateResponseArtifacts(raw, rendered, dom, o);
+    for (const mutate of [
+      x => { x.raw = Buffer.from('changed'); }, x => { x.rendered = Buffer.from('changed'); },
+      x => { x.dom.structure.codeNodes[0][1]--; }, x => { x.dom.structure.codeBlocks = 2; },
+      x => { x.dom.bodySource = 'whole-container'; }, x => { x.o.snapshotSha256 = '0'.repeat(64); },
+      x => { x.o.renderedBytes--; }, x => { x.o.renderedSha256 = '0'.repeat(64); },
+      x => { x.dom.unknown = true; }, x => { x.dom.structure.unknown = true; },
+    ]) {
+      const x = { raw, rendered, dom: structuredClone(dom), o: structuredClone(o) }; mutate(x);
+      assert.throws(() => validateResponseArtifacts(x.raw, x.rendered, x.dom, x.o));
+    }
+    checkBrowserArtifacts([rendered], 'not-present', '{}');
+    assert.throws(() => checkBrowserArtifacts([rendered], raw.toString().slice(0, 20), '{}'), /CANARY_LEAK/);
+  } finally { p.cleanup(); }
 });

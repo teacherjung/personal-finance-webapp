@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { URL as NodeURL } from 'node:url';
 import { isMainModule } from '../lib/is-main.js';
 import { SOURCE_ROOT, SOURCE_FILES, jobDirectory, readMail, readBoundedFile, writeOnce, mailExists, sourceDigest, browserError } from './gemini-browser-files.js';
-import { URL, ORIGIN, SELECTED, DETAILS, ATTACHMENT_CAP, CONTROL_CAP, OBSERVATION, REPLY_CAP, sha256, fields, validateDescriptor, leaseMessage } from './gemini-browser-protocol.js';
+import { URL, ORIGIN, SELECTED, DETAILS, ATTACHMENT_CAP, CONTROL_CAP, OBSERVATION, REPLY_CAP, RENDERED_CAP, sha256, fields, validateDescriptor, leaseMessage } from './gemini-browser-protocol.js';
 
 const sessions = new Map();
 const pause = () => new Promise(resolve => setTimeout(resolve, 100));
@@ -108,29 +108,77 @@ async function readback(s, key) {
   s.readbacks[key] = result;
   return result.match;
 }
-async function responseDiagnostic(s) {
-  // 診斷限本場回覆；候選 code 只留證，不替代正式回覆或修補解析失敗。
-  const value = await step(s, () => responses(s.tab).evaluate(element => {
-    const bounded = value => {
-      if (typeof value !== 'string' || value.length > 16384) throw Error('GEMINI_BROWSER_DIAGNOSTIC_SIZE');
-      return value;
-    };
-    const elements = [element, ...Array.from(element.querySelectorAll('*'))];
-    if (elements.length > 256) throw Error('GEMINI_BROWSER_DIAGNOSTIC_SIZE');
-    const nodes = elements.map(node => ({
-      tag: node.tagName, parent: elements.indexOf(node.parentElement), visible: node.getClientRects().length > 0,
-      role: node.getAttribute('role'), label: node.getAttribute('aria-label'), className: node.getAttribute('class'),
-      directText: bounded(Array.from(node.childNodes).filter(child => child.nodeType === 3).map(child => child.textContent).join('')),
-    }));
-    const codes = elements.flatMap((node, index) => node.tagName === 'CODE'
-      ? [{ index, visible: node.getClientRects().length > 0, text: bounded(node.textContent) }] : []);
-    return { renderedText: bounded(element.innerText), nodes, codes };
-  }), 'response-dom-diagnostic');
-  fields(value, ['renderedText', 'nodes', 'codes']);
-  if (!Array.isArray(value.nodes) || !Array.isArray(value.codes) || Buffer.byteLength(JSON.stringify(value)) > 65536) browserError('DIAGNOSTIC_SIZE');
-  writeOnce(s.dir, 'response-dom-diagnostic.json', { schema: 'response-dom-diagnostic/v1', diagnosticOnly: true,
-    renderedSha256: sha256(value.renderedText), ...value,
-    codes: value.codes.map(code => ({ ...code, sha256: sha256(code.text) })) });
+export function visibleJsonCodeResponse(element, limits) {
+  const fail = () => { throw Error('GEMINI_BROWSER_RESPONSE_DOM'); };
+  const known = new Set();
+  const blank = node => {
+    for (const child of node.childNodes) {
+      if (child.nodeType === 3 && child.textContent.trim()) fail();
+      if (![1, 3, 8].includes(child.nodeType)) fail();
+    }
+  };
+  const mark = (node, tag, classes = []) => {
+    if (!node || node.tagName !== tag || classes.some(name => !node.classList.contains(name))) fail();
+    known.add(node); return node;
+  };
+  const children = (node, specs) => {
+    blank(node);
+    if (node.children.length !== specs.length) fail();
+    return specs.map(([tag, classes], i) => mark(node.children[i], tag, classes));
+  };
+  const one = (node, tag, classes = []) => children(node, [[tag, classes]])[0];
+  mark(element, 'MODEL-RESPONSE-CONTENT');
+  for (const tag of ['code-block', 'pre', 'code']) if (element.querySelectorAll(tag).length !== 1) fail();
+  let wrapper = one(element, 'STRUCTURED-CONTENT-CONTAINER', ['model-response-text']);
+  wrapper = one(wrapper, 'DIV', ['container']);
+  wrapper = one(wrapper, 'MESSAGE-CONTENT');
+  wrapper = one(wrapper, 'DIV', ['markdown', 'markdown-main-panel', 'md-content']);
+  wrapper = one(wrapper, 'RESPONSE-ELEMENT', ['no-md', 'md-has-block-component']);
+  wrapper = one(wrapper, 'CODE-BLOCK');
+  wrapper = one(wrapper, 'DIV', ['code-block']);
+  wrapper = one(wrapper, 'DIV', ['formatted-code-block-internal-container']);
+  wrapper = one(wrapper, 'DIV', ['animated-opacity']);
+  const [header, pre] = children(wrapper, [['DIV', ['code-block-decoration', 'header-formatted']], ['PRE', []]]);
+  const [label, buttons] = children(header, [['SPAN', []], ['DIV', ['buttons']]]);
+  if (label.children.length || label.textContent !== 'JSON' || !label.getClientRects().length) fail();
+  const controls = children(buttons, [['GEM-ICON-BUTTON', ['download-button']], ['GEM-ICON-BUTTON', ['copy-button']]]);
+  for (let i = 0; i < controls.length; i++) {
+    const button = one(controls[i], 'BUTTON');
+    if (button.getAttribute('aria-label') !== ['Download code', 'Copy code'][i]) fail();
+    const [ripple, icon, focus, touch] = children(button, [['SPAN', ['mat-mdc-button-persistent-ripple']],
+      ['GEM-ICON', []], ['SPAN', ['mat-focus-indicator']], ['SPAN', ['mat-mdc-button-touch-target']]]);
+    for (const leaf of [ripple, focus, touch]) children(leaf, []);
+    const glyph = one(icon, 'MAT-ICON');
+    if (glyph.getAttribute('role') !== 'img') fail();
+    children(glyph, []);
+  }
+  const code = one(pre, 'CODE', ['code-container', 'formatted']);
+  if (code.getAttribute('role') !== 'text' || !code.getClientRects().length || !element.getClientRects().length) fail();
+  for (const child of code.children) {
+    mark(child, 'SPAN');
+    if (child.children.length || !child.getClientRects().length
+      || !['hljs-attr', 'hljs-string', 'hljs-number'].some(name => child.classList.contains(name))) fail();
+    for (const nested of child.childNodes) if (![3, 8].includes(nested.nodeType)) fail();
+  }
+  for (const child of code.childNodes) if (![1, 3, 8].includes(child.nodeType)) fail();
+  if (known.size !== element.querySelectorAll('*').length + 1) fail();
+  const codeText = code.textContent, renderedText = element.innerText;
+  if (typeof codeText !== 'string' || typeof renderedText !== 'string'
+    || codeText.length > limits.reply || renderedText.length > limits.rendered) fail();
+  return { schema: 'visible-json-code/v1', codeText, renderedText,
+    structure: { elements: known.size, highlightSpans: code.children.length, codeBlocks: 1, pre: 1, code: 1,
+      codeNodes: Array.from(code.childNodes).filter(child => child.nodeType !== 8).map(child => child.nodeType === 3
+        ? [3, child.textContent.length] : [1, child.textContent.length, ['hljs-attr', 'hljs-string', 'hljs-number'].filter(name => child.classList.contains(name)).join(' ')]) } };
+}
+async function readVisibleResponse(s) {
+  const value = await step(s, () => responses(s.tab).evaluate(visibleJsonCodeResponse,
+    { reply: REPLY_CAP, rendered: RENDERED_CAP }), 'response-code');
+  fields(value, ['schema', 'codeText', 'renderedText', 'structure']);
+  if (value.schema !== 'visible-json-code/v1' || typeof value.codeText !== 'string' || typeof value.renderedText !== 'string'
+    || !/** @type {string & {isWellFormed(): boolean}} */ (value.codeText).isWellFormed() || !/** @type {string & {isWellFormed(): boolean}} */ (value.renderedText).isWellFormed()) browserError('REPLY_ENCODING');
+  const raw = Buffer.from(value.codeText), rendered = Buffer.from(value.renderedText);
+  if (!raw.length || raw.length > REPLY_CAP || !rendered.length || rendered.length > RENDERED_CAP) browserError('REPLY_SIZE');
+  return { raw, rendered, structure: value.structure, snapshotSha256: sha256(JSON.stringify(value)) };
 }
 async function failed(s, error) {
   const codes = ['UI_STATE', 'NO_LIVE_RUNNER', 'ACK', 'PRECONDITION', 'ORIGIN', 'NONEMPTY', 'ABORTED', 'SOURCE_CHANGED', 'READBACK_RESULT'];
@@ -269,11 +317,7 @@ export async function captureBrowserScan(runId) {
     }
     if (await step(s, () => selected(s.tab)) !== SELECTED
       || !await step(s, () => main(s.tab).getByText('Temporary Chat', { exact: true }).isVisible())) browserError('POSTCONDITION');
-    await responseDiagnostic(s);
-    const response = await step(s, () => responses(s.tab).innerText());
-    if (typeof response !== 'string' || !/** @type {string & {isWellFormed(): boolean}} */ (response).isWellFormed()) browserError('REPLY_ENCODING');
-    const raw = Buffer.from(response);
-    if (!raw.length || raw.length > REPLY_CAP) browserError('REPLY_SIZE');
+    const captured = await readVisibleResponse(s), { raw, rendered } = captured;
     s.phase = 'details-menu';
     await step(s, () => button(s.tab, 'Show more options').click());
     // 保留本場選單畫面，才能分辨介面改版與控制失敗；它不是採用回覆的資格。
@@ -299,14 +343,17 @@ export async function captureBrowserScan(runId) {
     await step(s, () => sidebar.getByRole('button', { name: 'Close sidebar', exact: true }).click());
     await step(s, () => sidebar.waitFor({ state: 'hidden', timeoutMs: 10000 }));
     s.phase = 'final-observation';
-    if (await step(s, () => responses(s.tab).count()) !== 1 || sha256(await step(s, () => responses(s.tab).innerText())) !== sha256(raw)
+    if (await step(s, () => responses(s.tab).count()) !== 1 || (await readVisibleResponse(s)).snapshotSha256 !== captured.snapshotSha256
       || await step(s, () => selected(s.tab)) !== SELECTED || await step(s, () => button(s.tab, 'Stop response').isVisible())) browserError('REPLY_CHANGED');
     const observation = { schema: OBSERVATION, scanId: s.d.scanId, tabId: s.tab.id, origin: ORIGIN,
       initialResponses: 0, submissions: 1, finalResponses: 1, temporaryBefore: true, temporaryAfter: true,
       selectedBefore: SELECTED, selectedAfter: SELECTED, details, detailsSource, complete: true, regenerations: 0,
       requestSha256: s.d.requestSha256, controlSha256: s.d.manifest.control.sha256,
-      attachment: { name: s.d.manifest.attachment.name, count: 1, ready: true, uploads: s.uploads, localSha256: s.d.manifest.attachment.sha256 }, responseSha256: sha256(raw), responseBytes: raw.length };
+      attachment: { name: s.d.manifest.attachment.name, count: 1, ready: true, uploads: s.uploads, localSha256: s.d.manifest.attachment.sha256 }, responseSha256: sha256(raw), responseBytes: raw.length,
+      bodySource: 'visible-json-code/v1', renderedSha256: sha256(rendered), renderedBytes: rendered.length, snapshotSha256: captured.snapshotSha256 };
     alive(s);
+    writeOnce(s.dir, 'response-rendered.txt', rendered);
+    writeOnce(s.dir, 'response-dom.json', { bodySource: observation.bodySource, structure: captured.structure, snapshotSha256: captured.snapshotSha256 });
     writeOnce(s.dir, 'response.txt', raw);
     writeOnce(s.dir, 'capture.json', { instance: s.instance, observation });
     await cleanup(s, false);

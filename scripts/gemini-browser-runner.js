@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 import { SOURCE_ROOT, SOURCE_FILES, JOB_ROOT, configureBrowserOwner, privateDirectory, readMail, readBoundedFile, writeOnce, mailExists, sourceDigest, browserError } from './gemini-browser-files.js';
-import { prepareBrowserPacket, validateBrowserReply, validateLease, fields, ATTACHMENT_CAP, CONTROL_CAP, FRAME_CAP, TRANSPORT, OBSERVATION, REPLY_CAP, MODEL, EFFORT, sha256, SELECTED } from './gemini-browser-protocol.js';
+import { prepareBrowserPacket, validateBrowserReply, validateLease, fields, ATTACHMENT_CAP, CONTROL_CAP, FRAME_CAP, TRANSPORT, OBSERVATION, REPLY_CAP, RENDERED_CAP, MODEL, EFFORT, sha256, SELECTED } from './gemini-browser-protocol.js';
 import { parseUniqueJson } from './gemini-native-protocol.js';
 import { snapshotPinnedSources, verifyPinnedSourcesUnchanged } from './gemini-native-runner.js';
 import { buildScanMaterials, verifyProvider } from './gemini-scan.js';
@@ -161,8 +161,13 @@ export class BrowserLease {
       fields(captured, ['instance', 'observation']);
       if (captured.instance !== this.instance || captured.observation.tabId !== this.permit.tabId) browserError('CAPTURE');
       if (!mailExists(this.dir, 'quiescent.json')) return null;
-      this.requireQuiescent(false); this.state = 'CAPTURED';
-      return { raw: readBoundedFile(join(this.dir, 'response.txt'), REPLY_CAP), observation: captured.observation };
+      this.requireQuiescent(false);
+      const raw = readBoundedFile(join(this.dir, 'response.txt'), REPLY_CAP);
+      const rendered = readBoundedFile(join(this.dir, 'response-rendered.txt'), RENDERED_CAP);
+      const dom = readMail(this.dir, 'response-dom.json');
+      validateResponseArtifacts(raw, rendered, dom, captured.observation);
+      this.state = 'CAPTURED';
+      return { raw, rendered, dom, observation: captured.observation };
     }
     return null;
   }
@@ -172,6 +177,32 @@ export class BrowserLease {
     if (q.instance !== this.instance || typeof q.failed !== 'boolean' || (!failureAllowed && q.failed)
       || ((this.permit || this.uploadPermit) && q.tabClosed !== true) || typeof q.tabClosed !== 'boolean') browserError('QUIESCENCE');
   }
+}
+
+export function validateResponseArtifacts(raw, rendered, dom, observation) {
+  fields(dom, ['bodySource', 'structure', 'snapshotSha256']);
+  const s = dom.structure;
+  fields(s, ['elements', 'highlightSpans', 'codeBlocks', 'pre', 'code', 'codeNodes']);
+  if (dom.bodySource !== 'visible-json-code/v1' || observation.bodySource !== dom.bodySource
+    || !Number.isSafeInteger(s.highlightSpans) || s.highlightSpans < 0 || s.elements !== 29 + s.highlightSpans
+    || s.codeBlocks !== 1 || s.pre !== 1 || s.code !== 1 || !Array.isArray(s.codeNodes)) browserError('RESPONSE_DOM');
+  let length = 0, highlights = 0;
+  for (const node of s.codeNodes) {
+    if (!Array.isArray(node) || ![1, 3].includes(node[0]) || node.length !== (node[0] === 1 ? 3 : 2)
+      || !Number.isSafeInteger(node[1]) || node[1] < 0) browserError('RESPONSE_DOM');
+    if (node[0] === 1) {
+      if (typeof node[2] !== 'string' || !/^(?:hljs-attr|hljs-string|hljs-number)(?: (?:hljs-attr|hljs-string|hljs-number))*$/.test(node[2])) browserError('RESPONSE_DOM');
+      highlights++;
+    }
+    length += node[1];
+  }
+  const decode = bytes => new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  const value = { schema: dom.bodySource, codeText: decode(raw), renderedText: decode(rendered), structure: s };
+  if (!raw.length || raw.length > REPLY_CAP || !rendered.length || rendered.length > RENDERED_CAP
+    || length !== value.codeText.length || highlights !== s.highlightSpans
+    || observation.responseBytes !== raw.length || observation.responseSha256 !== sha256(raw)
+    || observation.renderedBytes !== rendered.length || observation.renderedSha256 !== sha256(rendered)
+    || observation.snapshotSha256 !== dom.snapshotSha256 || dom.snapshotSha256 !== sha256(JSON.stringify(value))) browserError('RESPONSE_ARTIFACT');
 }
 
 function verifyRequestFiles(job, packet, identity) {
@@ -245,7 +276,7 @@ export async function runBrowserScan(deployment) {
     const bytes = readBoundedFile(q.path);
     if (sha256(bytes) !== q.sha256) browserError('QUALIFICATION_HASH');
     const receipt = parseUniqueJson(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-    if (receipt.schema !== 'browser-attachment-scan/v1' || receipt.transport !== TRANSPORT || receipt.sourceKind !== OBSERVATION
+    if (receipt.schema !== 'browser-codeblock-scan/v1' || receipt.transport !== TRANSPORT || receipt.sourceKind !== OBSERVATION
       || receipt.purpose !== 'qualification' || receipt.status !== 'PUBLISHED' || receipt.sourceSha256 !== sources.sha256
       || receipt.attachmentBytes !== ATTACHMENT_CAP || receipt.providerHead !== deployment.providerHead) browserError('QUALIFICATION');
     if (receipt.sourcePins?.find(p => p.name === 'node')?.sha256 !== deployment.pins.find(p => p.name === 'node').sha256) browserError('QUALIFICATION_NODE');
@@ -327,14 +358,14 @@ export async function runBrowserScan(deployment) {
       if (Object.hasOwn(event, 'lease')) { if (event.lease !== descriptor.lease) browserError('EVENT_CHANGED'); delete event.lease; }
       return Buffer.from(JSON.stringify(event));
     });
-    const artifacts = [...attachmentArtifacts, ...wire.chunks, capture.raw, Buffer.from(JSON.stringify(capture.observation)), Buffer.from([...sessionFiles.files.keys()].join('\n')), ...sessionFiles.files.values()];
+    const artifacts = [...attachmentArtifacts, ...wire.chunks, capture.raw, capture.rendered, Buffer.from(JSON.stringify(capture.dom)), Buffer.from(JSON.stringify(capture.observation)), Buffer.from([...sessionFiles.files.keys()].join('\n')), ...sessionFiles.files.values()];
     checkBrowserArtifacts(artifacts, marker, material.text);
     checkBrowserArtifacts(artifacts, descriptor.lease, material.text);
     if (verifyProvider(SOURCE_ROOT, deployment.providerHead).digest !== provider.digest
       || buildScanMaterials({ ...deployment, outFile: '' }).materialSha256 !== material.sha256) browserError('SOURCE_CHANGED');
     lease.requireQuiescent(false);
     rmSync(box, { recursive: true, force: true }); cleaned = true;
-    const receipt = { schema: 'browser-attachment-scan/v1', transport: TRANSPORT, status: 'PUBLISHED', purpose: deployment.purpose,
+    const receipt = { schema: 'browser-codeblock-scan/v1', transport: TRANSPORT, status: 'PUBLISHED', purpose: deployment.purpose,
       formalScan: deployment.purpose === 'scan', runId, base: deployment.base, head: deployment.head,
       providerHead: deployment.providerHead, providerDigest: provider.digest, sourceSha256: sources.sha256, sourcePins: pinsBefore,
       attachmentBytes: packet.manifest.attachment.bytes, attachmentSha256: packet.manifest.attachment.sha256,

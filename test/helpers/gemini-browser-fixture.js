@@ -2,6 +2,7 @@
 import { mkdirSync, rmSync, readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { JSDOM } from 'jsdom';
 import { SOURCE_ROOT, SOURCE_FILES, JOB_ROOT, sourceDigest, writeOnce, readMail } from '../../scripts/gemini-browser-files.js';
 import { prepareBrowserPacket, SELECTED, DETAILS, ORIGIN, OBSERVATION, sha256 } from '../../scripts/gemini-browser-protocol.js';
 import { BrowserLease } from '../../scripts/gemini-browser-runner.js';
@@ -14,12 +15,19 @@ export function material() {
   return { text, sha256: sha256(text), base, head };
 }
 export function answer(packet) { return JSON.stringify({ ...packet.binding, tailChallenge: packet.tailChallenge, findings: [finding()] }); }
+export function responseArtifacts(raw) {
+  const rendered = 'JSON\n' + raw, structure = { elements: 29, highlightSpans: 0, codeBlocks: 1, pre: 1, code: 1, codeNodes: [[3, raw.length]] };
+  const snapshotSha256 = sha256(JSON.stringify({ schema: 'visible-json-code/v1', codeText: raw, renderedText: rendered, structure }));
+  return { rendered, dom: { bodySource: 'visible-json-code/v1', structure, snapshotSha256 } };
+}
 export function observation(packet, raw = answer(packet)) {
+  const { rendered, dom } = responseArtifacts(raw);
   return { schema: OBSERVATION, scanId: packet.binding.scanId, tabId: 'test-owned', origin: ORIGIN,
     initialResponses: 0, submissions: 1, finalResponses: 1, temporaryBefore: true, temporaryAfter: true,
     selectedBefore: SELECTED, selectedAfter: SELECTED, details: DETAILS, detailsSource: 'response-details', complete: true, regenerations: 0,
     requestSha256: packet.requestSha256, controlSha256: packet.manifest.control.sha256,
-    attachment: { name: packet.manifest.attachment.name, count: 1, ready: true, uploads: 1, localSha256: packet.manifest.attachment.sha256 }, responseSha256: sha256(raw), responseBytes: Buffer.byteLength(raw) };
+    attachment: { name: packet.manifest.attachment.name, count: 1, ready: true, uploads: 1, localSha256: packet.manifest.attachment.sha256 }, responseSha256: sha256(raw), responseBytes: Buffer.byteLength(raw),
+    bodySource: dom.bodySource, renderedSha256: sha256(rendered), renderedBytes: Buffer.byteLength(rendered), snapshotSha256: dom.snapshotSha256 };
 }
 export function jobFixture(input = material()) {
   mkdirSync(JOB_ROOT, { mode: 0o700, recursive: true });
@@ -39,6 +47,40 @@ export function jobFixture(input = material()) {
     stop() { clearInterval(timer); }, error() { return failure; },
     cleanup() { clearInterval(timer); rmSync(dir, { recursive: true, force: true }); },
   };
+}
+
+// DOM 取自小附件診斷的父子鏈；jsdom 只補可見性，不冒充實際網頁驗收。
+export function responseDom(raw, options = {}) {
+  const window = new JSDOM().window, d = window.document;
+  const add = (parent, tag, classes = '', attrs = {}) => {
+    const node = d.createElement(tag); node.className = classes;
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+    parent.append(node); return node;
+  };
+  const root = add(d.body, 'model-response-content');
+  let parent = root;
+  for (const [tag, classes] of [['structured-content-container', 'model-response-text'], ['div', 'container'],
+    ['message-content', ''], ['div', 'markdown markdown-main-panel md-content'], ['response-element', 'no-md md-has-block-component'],
+    ['code-block', ''], ['div', 'code-block'], ['div', 'formatted-code-block-internal-container'], ['div', 'animated-opacity']]) parent = add(parent, tag, classes);
+  const header = add(parent, 'div', 'code-block-decoration header-formatted');
+  add(header, 'span').textContent = 'JSON';
+  const buttons = add(header, 'div', 'buttons');
+  for (const [cls, label] of [['download-button', 'Download code'], ['copy-button', 'Copy code']]) {
+    const button = add(add(buttons, 'gem-icon-button', cls), 'button', '', { 'aria-label': label });
+    add(button, 'span', 'mat-mdc-button-persistent-ripple');
+    add(add(button, 'gem-icon'), 'mat-icon', '', { role: 'img' });
+    add(button, 'span', 'mat-focus-indicator'); add(button, 'span', 'mat-mdc-button-touch-target');
+  }
+  const code = add(add(parent, 'pre'), 'code', 'code-container formatted', { role: 'text' });
+  if (options.highlight) {
+    code.append(d.createTextNode(raw.slice(0, 1)));
+    add(code, 'span', 'hljs-string').textContent = raw.slice(1, -1);
+    code.append(d.createTextNode(raw.slice(-1)));
+  } else code.textContent = raw;
+  if (options.mutateDom) options.mutateDom(root, d);
+  for (const node of [root, ...root.querySelectorAll('*')]) node.getClientRects = () => node.hasAttribute('hidden') || node.closest('[hidden]') ? [] : [{}];
+  Object.defineProperty(root, 'innerText', { value: options.rendered ?? 'JSON\n' + raw });
+  return { root, close: () => window.close() };
 }
 
 export function browserFixture(job, options = {}) {
@@ -64,16 +106,9 @@ export function browserFixture(job, options = {}) {
     async evaluate(fn, expected) {
       if (key.includes('textbox:Enter a prompt for Gemini')) return fn({ textContent: state.text }, expected);
       if (key.endsWith('model-response-content')) {
-        const node = (tagName, textContent, visible = true) => ({ tagName, textContent,
-          parentElement: null, childNodes: [{ nodeType: 3, textContent }],
-          getAttribute: () => null, getClientRects: () => visible ? [{}] : [] });
-        const root = node('MODEL-RESPONSE-CONTENT', '');
-        const codes = (state.codeTexts ?? [state.raw ?? raw]).map(text => node('CODE', text));
-        for (const code of codes) code.parentElement = root;
-        root.childNodes = codes; root.innerText = state.raw ?? raw;
-        root.querySelectorAll = selector => { assertKey(selector === '*'); return codes; };
-        calls.push(['response-dom-diagnostic', key]);
-        return fn(root, expected);
+        const { root, close } = responseDom(state.raw ?? raw, state);
+        calls.push(['response-code', key]);
+        try { return fn(root, expected); } finally { close(); }
       }
       assertKey(key.endsWith('input-area-v2'));
       const container = { getAttribute: name => { assertKey(name === 'aria-describedby'); return state.descriptionId ?? 'synthetic-description'; } };

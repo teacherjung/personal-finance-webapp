@@ -8,10 +8,11 @@ export { sha256 };
 export const ATTACHMENT_CAP = 2 * 1024 * 1024;
 export const CONTROL_CAP = 4096;
 export const TRANSPORT = 'single-text-attachment/v1';
-export const OBSERVATION = 'browser-attachment-ui/v1';
+export const OBSERVATION = 'browser-codeblock-ui/v1';
 // JSON 字串的控制字元可展開為六字元；frame 亦包含附件以外的固定資料。
 export const FRAME_CAP = (ATTACHMENT_CAP + CONTROL_CAP + RESPONSE_CAP) * 8;
 export const REPLY_CAP = RESPONSE_CAP;
+export const RENDERED_CAP = REPLY_CAP + CONTROL_CAP;
 export const MODEL = '4 Argon';
 export const EFFORT = 'High';
 export const SELECTED = 'Open mode picker, currently Argon High';
@@ -95,14 +96,16 @@ export function prepareBrowserPacket(material, { scanId = randomBytes(16).toStri
 export function validateBrowserReply(raw, observation, packet) {
   if (!Buffer.isBuffer(raw) || !raw.length || raw.length > REPLY_CAP) fail('REPLY_SIZE');
   const response = new TextDecoder('utf-8', { fatal: true }).decode(raw);
-  fields(observation, ['schema', 'scanId', 'tabId', 'origin', 'initialResponses', 'submissions', 'finalResponses', 'temporaryBefore', 'temporaryAfter', 'selectedBefore', 'selectedAfter', 'details', 'detailsSource', 'complete', 'regenerations', 'requestSha256', 'attachment', 'controlSha256', 'responseSha256', 'responseBytes']);
+  fields(observation, ['schema', 'scanId', 'tabId', 'origin', 'initialResponses', 'submissions', 'finalResponses', 'temporaryBefore', 'temporaryAfter', 'selectedBefore', 'selectedAfter', 'details', 'detailsSource', 'complete', 'regenerations', 'requestSha256', 'attachment', 'controlSha256', 'responseSha256', 'responseBytes', 'bodySource', 'renderedSha256', 'renderedBytes', 'snapshotSha256']);
   if (observation.schema !== OBSERVATION || observation.scanId !== packet.binding.scanId
     || !/^[a-zA-Z0-9-]{1,128}$/.test(observation.tabId) || observation.origin !== ORIGIN
     || observation.initialResponses !== 0 || observation.submissions !== 1 || observation.finalResponses !== 1
     || observation.temporaryBefore !== true || observation.temporaryAfter !== true
     || observation.selectedBefore !== SELECTED || observation.selectedAfter !== SELECTED || observation.details !== DETAILS
     || !['response-details', 'thinking-steps'].includes(observation.detailsSource)
-    || observation.complete !== true || observation.regenerations !== 0) fail('OBSERVATION');
+    || observation.complete !== true || observation.regenerations !== 0 || observation.bodySource !== 'visible-json-code/v1'
+    || !/^[a-f0-9]{64}$/.test(observation.renderedSha256) || !/^[a-f0-9]{64}$/.test(observation.snapshotSha256)
+    || !Number.isSafeInteger(observation.renderedBytes) || observation.renderedBytes < 1 || observation.renderedBytes > RENDERED_CAP) fail('OBSERVATION');
   fields(observation.attachment, ['name', 'count', 'ready', 'uploads', 'localSha256']);
   if (observation.attachment.name !== packet.manifest.attachment.name || observation.attachment.count !== 1
     || observation.attachment.ready !== true || observation.attachment.uploads !== 1
@@ -110,7 +113,8 @@ export function validateBrowserReply(raw, observation, packet) {
     || observation.controlSha256 !== packet.manifest.control.sha256 || observation.requestSha256 !== packet.requestSha256 || observation.responseSha256 !== sha256(raw)
     || observation.responseBytes !== raw.length) fail('CAPTURE_BINDING');
   const answer = validateFindings(parseUniqueJson(response), packet.binding, packet.files, packet.tailChallenge);
-  return { answer, responseSha256: sha256(raw), responseBytes: raw.length, sourceKind: OBSERVATION, receiverConsumptionVerified: false };
+  return { answer, responseSha256: sha256(raw), responseBytes: raw.length, sourceKind: OBSERVATION, bodySource: observation.bodySource, renderedSha256: observation.renderedSha256,
+    renderedBytes: observation.renderedBytes, snapshotSha256: observation.snapshotSha256, receiverConsumptionVerified: false };
 }
 
 if (typeof process !== 'undefined' && isMainModule(import.meta.url)) { process.stderr.write('GEMINI_BROWSER_LIBRARY_ONLY\n'); process.exitCode = 78; }
