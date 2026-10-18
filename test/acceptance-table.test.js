@@ -64,6 +64,8 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
   // E 的腳本必須是明確名單：scripts/ 裡沒點名的新腳本＝沒列到（當 unknownTier）——寬鬆的 check-* 會把未來被啟動流程掛上的新腳本靜靜當成不需驗收（#573 r3）
   assert.equal(tierOf('scripts/check-node-version.js').tier, tierId('C'), 'start.command 每次啟動都跑它，壞了 App 起不來');
   assert.equal(tierOf('scripts/grok-review.js').tier, tierId('E'), '正式複審入口不在 App 啟動路徑；同族工具依程序與考題驗證');
+  assert.deepEqual(tierOf('scripts/grok-review-projection.js'), { path: 'scripts/grok-review-projection.js', tier: tierId('E'), known: true }, '公開投影依收件程序與考題驗證；不在 App 啟動路徑');
+  assert.deepEqual(tierOf('scripts/grok-review-projection-future.js'), { path: 'scripts/grok-review-projection-future.js', tier: settings.acceptance.unknownTier, known: false });
   assert.deepEqual(tierOf('scripts/grok-final-reply.js'), { path: 'scripts/grok-final-reply.js', tier: tierId('E'), known: true }, '完整結論接線依程序與考題驗證；不在 App 啟動路徑');
   for (const name of ['gemini-auth', 'gemini-client', 'gemini-relay', 'gemini-scan']) {
     assert.deepEqual(tierOf(`scripts/${name}.js`), { path: `scripts/${name}.js`, tier: tierId('E'), known: true }, '隔離掃描腳本依程序與考題驗證；不在 App 啟動路徑');

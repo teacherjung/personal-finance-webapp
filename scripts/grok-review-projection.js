@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { posix } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { isMainModule } from '../lib/is-main.js';
 import { verifyFinalSelection } from './grok-final-reply.js';
 
 export const PROJECTION_POLICY = 'grok-review-path-projection/v1';
@@ -158,4 +159,9 @@ export function reviewPublication(projection) {
     + `公開 final SHA-256：${projection.final.projected.sha256}\n`
     + `替換區段：stdout ${projection.stdout.edits.length}；final ${projection.final.edits.length}。\n`;
   return projection.final.text + annotation;
+}
+
+if (isMainModule(import.meta.url)) {
+  process.stderr.write('本模組由 scripts/grok-review.js 核對完整私有原件後呼叫；不可單獨產生正式投影。\n');
+  process.exitCode = 2;
 }

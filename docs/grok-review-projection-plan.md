@@ -4,7 +4,7 @@
 
 ## 範圍與可信來源
 
-只改正式複審前端、新投影模組、相應測試及協作附則。安全 runner、final-selection、F3 範本與結論閘維持既有版本。私有結果包先驗選取、原文雜湊、模型與用途，再交叉核對 runner 保存的 launch／manifest 與 workspace 編碼；讀取使用一般檔案、owner、不可跟隨 symlink、前後身分與容量檢查。盒子清理後只核當場保存的 canonical 路徑，不重建盒子。
+只改正式複審前端、新投影模組、相應測試及協作附則；[Sol 登記補充](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6247059592)准許在 settings.json 的驗收表加入該精確檔名，並由原產生器同步 PROJECT-SETTINGS.md。新模組同既有複審輔助模組列 E，不改整支 PR 的風險或其他驗收動作。安全 runner、final-selection、F3 範本與結論閘維持既有版本。私有結果包先驗選取、原文雜湊、模型與用途，再交叉核對 runner 保存的 launch／manifest 與 workspace 編碼；讀取使用一般檔案、owner、不可跟隨 symlink、前後身分與容量檢查。盒子清理後只核當場保存的 canonical 路徑，不重建盒子。
 
 ## 固定投影政策 v1
 
