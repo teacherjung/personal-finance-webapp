@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // @ts-check
-// 隔離傳輸不代表完成複審；正式結論仍須由 Grok 產生、逐字發布，再經 F7 核對。
+// 隔離傳輸不代表完成複審；模型原件與公開投影須可重算，再經 F7 核對。
 // 本前端不提供 GitHub 寫入能力，也不判斷發現是否屬實；runner 的圍欄由 grok-scan.js 負責。
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { constants, closeSync, existsSync, fstatSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { gitEnv } from '../lib/git-env.js';
 import { isMainModule } from '../lib/is-main.js';
 import launcher from '../tools/review-launch.js';
@@ -17,12 +18,16 @@ import riskTier from '../tools/risk-tier.js';
 import reviewVerdicts from '../tools/gates/check-review-verdicts.js';
 import { repoLabelFrom, REVIEW_MODEL_FLOOR, reviewModelsQualified, runScan } from './grok-scan.js';
 import { verifyFinalSelection } from './grok-final-reply.js';
+import { RECEIPT_SCHEMA, buildProjectionContext, createReviewProjection, verifyReviewProjection, reviewPublication } from './grok-review-projection.js';
 
 const SHA = /^[a-f0-9]{40}$/u;
 const MODEL = /^[A-Za-z0-9._-]+$/u;
 const LOCAL_PATH = /(?:file:\/\/|\/(?:Users|home|private|tmp)\/|\/var\/folders\/)/u;
 const PRIVACY_REPAIR = '；請查 docs/project-collaboration.md「Grok（本專案）」並補正送審來源，再重跑本輪發審指令';
 const hash = (value) => createHash('sha256').update(value).digest('hex');
+const sourceHashes = () => ({ providerSha256: hash(readFileSync(fileURLToPath(import.meta.url))),
+  projectionModuleSha256: hash(readFileSync(new URL('./grok-review-projection.js', import.meta.url))),
+  runnerSha256: hash(readFileSync(new URL('./grok-scan.js', import.meta.url))) });
 const escapeRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 /** @returns {never} */
 const stop = (message) => { throw new Error(`${message}；請重新核對送審產生器的 launch.json、提示與設定，再重跑 scripts/grok-review.js。`); };
@@ -73,13 +78,12 @@ function localPathFree(text, phase, ignoreCase = false) {
   demand(!(ignoreCase ? new RegExp(LOCAL_PATH, 'iu') : LOCAL_PATH).test(text), `${phase}仍含本機絕對路徑${PRIVACY_REPAIR}`);
 }
 
-function replyPathView(text, phase) {
+function replyViews(text, phase, inspect) {
   const asciiEscape = /%([0-7][0-9a-f])|\\u00([0-7][0-9a-f])|\\x([0-7][0-9a-f])|\\\//giu;
   let view = text;
   // 限制展開次數，避免把未解完的文字當成已查清的路徑。
   for (let pass = 0; pass <= 3; pass++) {
-    credentialFree(view, phase);
-    localPathFree(view, phase, true);
+    inspect(view);
     demand(!/%[89a-f][0-9a-f]|\\(?:u00|x)[89a-f][0-9a-f]/iu.test(view), `${phase}含未支援編碼（ENCODING_UNSUPPORTED）${PRIVACY_REPAIR}`);
     demand(!/\\(?:u00(?![0-9a-f]{2})|x(?![0-9a-f]{2}))/iu.test(view), `${phase}編碼檢查未完成（ENCODING_UNRESOLVED）${PRIVACY_REPAIR}`);
     if (pass === 3) {
@@ -91,6 +95,14 @@ function replyPathView(text, phase) {
     if (next === view) return;
     view = next;
   }
+}
+
+function replyPathView(text, phase) {
+  replyViews(text, phase, view => { credentialFree(view, phase); localPathFree(view, phase, true); });
+}
+
+function rawCredentialViews(text, phase) {
+  replyViews(text, phase, view => credentialFree(view, phase));
 }
 
 /** 已公開材料也可能殘留個人路徑；此檢查不聲稱能辨識任意編碼的機密。 */
@@ -138,7 +150,7 @@ export function prepareReview(args, { git = reviewGit, ask = platform.ask } = {}
   }
   demand(resolve(promptFile) === join(folder, 'prompt.md') && resolve(outFile) === join(folder, 'output.log')
     && realpathSync(reviewTree) === join(folder, 'tree') && realpathSync(mutationCopy) === join(folder, 'mutation'), '送審路徑不是同一輪的隔離樹');
-  demand(!existsSync(outFile) && !existsSync(`${outFile}.receipt.json`), '本輪輸出已存在，不可覆寫或重用');
+  demand(['', '.receipt.json', '.original.json', '.projection.json'].every(suffix => !existsSync(outFile + suffix)), '本輪輸出已存在，不可覆寫或重用');
   const root = realpathSync(record.root);
   demand(realpathSync(git(root, ['rev-parse', '--show-toplevel'])) === root, 'launch 倉庫根目錄不符');
   demand(repoLabelFrom(git(root, ['remote', 'get-url', 'origin'])) === project, '倉庫遠端與專案不符');
@@ -237,7 +249,7 @@ export function prepareReview(args, { git = reviewGit, ask = platform.ask } = {}
     review: { project, change: String(change), reviewer: 'Grok', source: 'Grok CLI', round: record.round, ...(previousHead ? { previousHead } : {}) } };
 }
 
-export function validateReply(reply, expected) {
+function validateReplyStructure(reply, expected) {
   demand(typeof reply === 'string' && reply.trim() !== '', '安全 runner 未提供 Grok 原文');
   const header = new RegExp('^🤖 Grok｜來源：Grok CLI｜審 `'+ expected.head.slice(0, 7) + '`｜r' + expected.round + '｜結論：(通過|需修改後再審|不可合併)$', 'u');
   const lines = reply.split(/\r?\n/u);
@@ -245,8 +257,84 @@ export function validateReply(reply, expected) {
   demand(lines.filter((line) => /^🤖/u.test(line)).length === 1, 'Grok 原文有多個結論標頭');
   for (const heading of ['### 本輪實際用的設定', '### 清單逐項結果', '### 發現']) demand(lines.includes(heading), 'Grok 原文缺正式結論小標');
   demand(lines.filter((line) => line !== '').at(-1) === '未貼', 'Grok 原文文末未獨立標示未貼');
+  return reply;
+}
+
+export function validateReply(reply, expected) {
+  validateReplyStructure(reply, expected);
   publicReply(reply);
   return reply;
+}
+
+const fileIdentity = s => [s.dev, s.ino, s.mode, s.nlink, s.uid, s.size, s.mtimeNs, s.ctimeNs].join(':');
+function privateEvidence(file) {
+  let fd;
+  try {
+    demand(realpathSync(file) === resolve(file), '私有證據路徑不是一般檔案');
+    const before = lstatSync(file, { bigint: true });
+    demand(before.isFile() && before.nlink === 1n && before.uid === BigInt(process.getuid?.() ?? -1)
+      && !(before.mode & 0o022n) && before.size <= 64n * 1024n * 1024n, '私有證據檔案身分或容量不符');
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    demand(fileIdentity(before) === fileIdentity(fstatSync(fd, { bigint: true })), '私有證據開啟身分失配');
+    const data = readFileSync(fd);
+    demand(fileIdentity(before) === fileIdentity(fstatSync(fd, { bigint: true }))
+      && fileIdentity(before) === fileIdentity(lstatSync(file, { bigint: true })) && data.length === Number(before.size), '私有證據讀取中變更');
+    return new TextDecoder('utf-8', { fatal: true }).decode(data);
+  } finally { if (fd !== undefined) closeSync(fd); }
+}
+
+function evidenceJson(text) {
+  try { return JSON.parse(text); } catch { stop('私有證據 JSON 不完整'); }
+}
+
+export function loadReviewEvidence(got) {
+  const dir = got.resultsDir;
+  demand(typeof dir === 'string' && realpathSync(dir) === resolve(dir), 'runner 結果包路徑失配');
+  const st = lstatSync(dir);
+  demand(st.isDirectory() && st.uid === process.getuid?.() && !(st.mode & 0o077), 'runner 結果包不是私有目錄');
+  const original = evidenceJson(privateEvidence(join(dir, 'review-result.json')));
+  demand(isDeepStrictEqual(original, got), 'runner 私存原件與記憶體結果不一致');
+  const launchText = privateEvidence(join(dir, 'launch.json'));
+  demand(evidenceJson(launchText)?.scanScriptSha256 === sourceHashes().runnerSha256, 'runner 來源與私有 launch 失配');
+  return { launchText, manifestText: privateEvidence(join(dir, 'review-manifest.json')) };
+}
+
+function validateRawReview(got, expected) {
+  demand(got && got.source === 'Grok CLI' && /^[a-f0-9]{64}$/u.test(got.manifestSha256)
+    && typeof got.recipe === 'string' && got.recipe.length > 0 && typeof got.resultsDir === 'string', '安全 runner 的複審收據不符');
+  for (const key of ['head', 'base', 'model', 'effort']) demand(got[key] === expected[key], '安全 runner 的複審版本或設定不符');
+  demand(got.modelFloor === REVIEW_MODEL_FLOOR && got.modelQualified === true && reviewModelsQualified(got.observedModels), '安全 runner 的模型資格收據不符');
+  try { verifyFinalSelection(got); } catch { stop('安全 runner 的完整 stdout／final 雜湊或選取收據不符'); }
+  rawCredentialViews(got.stdout, '完整 stdout');
+  rawCredentialViews(got.reply, 'final 回覆');
+  validateReplyStructure(got.reply, expected);
+}
+
+/** 發布前重讀安全原件與來源；呼叫者另外固定預期 PR、版本、輪次及接收器完整來源。 */
+export function verifyReviewPublication({ original, receipt, projection, body, expected }) {
+  demand(receipt?.schema === RECEIPT_SCHEMA, '舊收據或未知收件版本不可採計');
+  validateRawReview(original, expected);
+  const evidence = loadReviewEvidence(original);
+  const context = buildProjectionContext(original, evidence.launchText, evidence.manifestText, expected);
+  verifyReviewProjection(original, context, projection);
+  publicReply(projection.stdout.text, 'stdout');
+  validateReply(projection.final.text, expected);
+  demand(body === reviewPublication(projection), '發布本文不是完整可重算投影與固定附記');
+  publicReply(body);
+  for (const key of ['project', 'change', 'head', 'base', 'round', 'model', 'effort']) demand(receipt[key] === expected[key], '發布收據身分失配');
+  demand(receipt.reviewer === 'Grok' && receipt.source === 'Grok CLI' && receipt.replySha256 === original.replySha256
+    && receipt.stdoutSha256 === original.stdoutSha256 && receipt.manifestSha256 === original.manifestSha256
+    && isDeepStrictEqual(receipt.selection, original.selection), '發布收據原件對應失配');
+  demand(receipt.modelFloor === original.modelFloor && receipt.modelQualified === original.modelQualified
+    && isDeepStrictEqual(receipt.observedModels, original.observedModels)
+    && receipt.runnerRecipe === original.recipe && receipt.resultsDir === original.resultsDir
+    && receipt.posted === false, '發布收據資格或來源失配');
+  demand(isDeepStrictEqual(receipt.original, { stdout: projection.stdout.original, final: projection.final.original })
+    && isDeepStrictEqual(receipt.projected, { stdout: projection.stdout.projected, final: projection.final.projected })
+    && receipt.projectionSha256 === hash(JSON.stringify(projection))
+    && isDeepStrictEqual(receipt.publication, { bytes: Buffer.byteLength(body), sha256: hash(body) }), '發布收據投影對應失配');
+  for (const [key, value] of Object.entries(sourceHashes())) demand(receipt[key] === value, '收件來源指紋失配');
+  return body;
 }
 
 export async function runReview(args, { git = reviewGit, ask = platform.ask, runner = runScan } = {}) {
@@ -260,25 +348,34 @@ export async function runReview(args, { git = reviewGit, ask = platform.ask, run
       promptFile: material, model: args.model, effort: args.effort, review: ready.review });
     if (result.code !== 0) return { code: result.code === 1 ? 1 : 2, lines: ['正式複審未完成：安全 runner 非零；依隔離程序處理並重跑，不產生結論。'] };
     const got = result.review;
-    demand(got && got.head === ready.record.head && got.base === ready.record.base && got.source === 'Grok CLI'
-      && got.model === args.model && got.effort === args.effort && /^[a-f0-9]{64}$/u.test(got.manifestSha256)
-      && typeof got.recipe === 'string' && got.recipe.length > 0 && typeof got.resultsDir === 'string' && got.resultsDir.length > 0, '安全 runner 的複審收據不符');
-    demand(got.modelFloor === REVIEW_MODEL_FLOOR && got.modelQualified === true && reviewModelsQualified(got.observedModels), '安全 runner 的模型資格收據不符');
-    try { verifyFinalSelection(got); }
-    catch { stop('安全 runner 的完整 stdout／final 雜湊或選取收據不符'); }
-    publicReply(got.stdout, 'stdout');
-    const reply = validateReply(got.reply, { head: ready.record.head, round: ready.record.round });
-    demand(got.replySha256 === hash(reply), '安全 runner 原文雜湊不符');
-    const receipt = { project: args.project, change: String(args.change), head: ready.record.head, base: ready.record.base,
+    demand(got, '安全 runner 缺複審原件');
+    const expected = { project: args.project, change: String(args.change), head: ready.record.head, base: ready.record.base,
+      round: ready.record.round, model: args.model, effort: args.effort };
+    validateRawReview(got, expected);
+    const evidence = loadReviewEvidence(got);
+    const context = buildProjectionContext(got, evidence.launchText, evidence.manifestText, expected);
+    const projection = createReviewProjection(got, context);
+    publicReply(projection.stdout.text, 'stdout');
+    validateReply(projection.final.text, expected);
+    const reply = reviewPublication(projection);
+    const receipt = { schema: RECEIPT_SCHEMA, project: args.project, change: String(args.change), head: ready.record.head, base: ready.record.base,
       reviewer: 'Grok', source: 'Grok CLI', round: ready.record.round, model: args.model, effort: args.effort,
       observedModels: [...got.observedModels], modelFloor: got.modelFloor, modelQualified: got.modelQualified,
-      providerSha256: hash(readFileSync(fileURLToPath(import.meta.url))),
-      runnerSha256: hash(readFileSync(new URL('./grok-scan.js', import.meta.url))),
+      ...sourceHashes(),
       originalPromptSha256: ready.originalSha256, materialSha256: hash(ready.prompt), publicContextSha256: ready.contextSha256,
-      replySha256: got.replySha256, stdoutSha256: got.stdoutSha256, selection: got.selection, manifestSha256: got.manifestSha256, runnerRecipe: got.recipe, resultsDir: got.resultsDir, posted: false };
-    writeFileSync(`${args.outFile}.receipt.json`, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+      replySha256: got.replySha256, stdoutSha256: got.stdoutSha256, selection: got.selection, manifestSha256: got.manifestSha256,
+      original: { stdout: projection.stdout.original, final: projection.final.original },
+      projected: { stdout: projection.stdout.projected, final: projection.final.projected },
+      projectionSha256: hash(JSON.stringify(projection)), publication: { bytes: Buffer.byteLength(reply), sha256: hash(reply) },
+      runnerRecipe: got.recipe, resultsDir: got.resultsDir, posted: false };
+    verifyReviewPublication({ original: got, receipt, projection, body: reply, expected });
+    writeFileSync(`${args.outFile}.original.json`, JSON.stringify(got, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    writeFileSync(`${args.outFile}.projection.json`, JSON.stringify(projection, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     writeFileSync(args.outFile, reply, { flag: 'wx', mode: 0o600 });
-    return { code: 0, lines: ['Grok 原文與收據已保存，尚未貼文；由外層逐字代貼並依 F7 核對，退出零不代表通過。'], receipt };
+    verifyReviewPublication({ original: evidenceJson(privateEvidence(`${args.outFile}.original.json`)), receipt,
+      projection: evidenceJson(privateEvidence(`${args.outFile}.projection.json`)), body: privateEvidence(args.outFile), expected });
+    writeFileSync(`${args.outFile}.receipt.json`, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    return { code: 0, lines: ['Grok 完整原件、路徑投影與新版收據已保存，尚未貼文；外層重算發布本文並依 F7 核對，退出零不代表通過。'], receipt };
   } catch (error) {
     return { code: 2, lines: [`正式複審未完成：${error instanceof Error ? error.message : '讀取或驗證失敗'}；不產生正式通過。`] };
   } finally {
