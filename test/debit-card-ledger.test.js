@@ -259,7 +259,34 @@ test('銀行匯入紀錄的筆數格與刪除確認句要把兩本帳都講出�
   assert.ok(t.includes('3 筆收支交易') && t.includes('2 筆刷卡消費明細') && t.includes('一起刪'), `★兩本帳都要講：${t}`);
   assert.equal(bankBatchDeleteConfirmText({ count: 3, minDate: 'a', maxDate: 'b' }), '整批 3 筆（a~b）', '沒有連帶＝照舊');
   const src = readFileSync(new URL('../public/modules/cashflow.js', import.meta.url), 'utf8');
-  assert.match(src, /confirmDelete\(bankBatchDeleteConfirmText\(b\)/, '★確認窗走共用句');
+  const startMark = 'async function deleteBankBatchRow(state, batch, button, row, contentGeneration) {';
+  const endMark = '\nfunction renderBankBatchList(state) {';
+  assert.equal(src.split(startMark).length, 2, '確認處理函式須有唯一擷取入口');
+  assert.equal(src.split(endMark).length, 2, '確認處理函式須有唯一結束邊界');
+  const start = src.indexOf(startMark), end = src.indexOf(endMark, start);
+  assert.ok(end > start);
+  // 原函式注入唯一格式器回音，分辨「有呼叫」與「真的使用回傳」；真文案另由 DOM 題驗。
+  const factory = new Function('window', 'bankBatchDeleteConfirmText', 'bankBatchDeletes', 'bankBatchResults',
+    'currentWorkspace', 'renderGeneration', 'currentRouteSeq', 'api', 'pruneBankBatchResults',
+    `return (${src.slice(start, end)});`);
+  const batch = { batchId: 'formatter-wiring', count: 3, cardCount: 2, minDate: '2026-01-28', maxDate: '2026-01-30' };
+  const tbody = {}, row = { parentElement: tbody };
+  const button = { isConnected: true, dataset: { delbatch: batch.batchId }, closest: () => row };
+  const state = { current: () => true, contentGeneration: 1, revision: 0, list: [batch], content: {
+    contains: node => node === button, querySelector: () => tbody, querySelectorAll: () => [button],
+  } };
+  const formatCalls = [], prompts = [], locks = new Map();
+  let posts = 0;
+  const sentinel = '本題格式器唯一回音';
+  const handler = factory({ confirm: message => { prompts.push(message); return false; } },
+    value => { formatCalls.push(value); return sentinel; }, locks, new Map(), () => null, 1, () => 1,
+    async () => { posts++; return {}; }, () => {});
+  await handler(state, batch, button, row, 1);
+  assert.equal(formatCalls.length, 1);
+  assert.equal(formatCalls[0], batch, '確認句須收到本次原批次實體');
+  assert.deepEqual(prompts, [`確定要刪除「${sentinel}」嗎？此動作無法復原。`]);
+  assert.equal(posts, 0, '取消不可送出刪除');
+  assert.equal(locks.size, 0, '取消須釋出本次鎖');
   assert.match(src, /bankBatchCountText\(b\)/, '★筆數格走共用句');
 });
 

@@ -4,7 +4,7 @@
 // 銀行帳單裡的「繳卡費」那筆才是刷卡消費的現金流出，計入這裡。
 // 三層分類：金流（收入/支出/內轉）→ 分類 → 子分類。收入走 incomeTree、
 // 支出沿用信用卡的 expenseTree（統計合得起來）、內轉固定 內轉出/內轉入（無分類樹）。
-import { api, apiStream, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, confirmDelete, toast, currentRouteSeq, currentNavSeq, watchModalRoot } from '../app.js';
+import { api, apiStream, view, byId, wan, money, esc, monthKey, todayStr, openForm, openInfo, toast, currentRouteSeq, currentNavSeq, watchModalRoot } from '../app.js';
 import { progressText } from './progress-text.js';   // 上傳進度：後端推代碼、句子住這支純模組（可行為測）
 import { icon } from './icons.js';
 import { isCardTx } from './categories.js';
@@ -31,6 +31,14 @@ let unconfirmedRevision = 0;
 let importRevision = 0;
 let deleteRevision = 0;
 let deleteSequence = 0;
+let uncertainBatchDeleteRevision = 0;
+let bankBatchOpenSequence = 0;
+const bankBatchDeletes = new Map();
+/** @type {Map<string, {revision:number, confirmed:boolean, mainPending:boolean, batchPending:boolean}>} */
+const bankBatchResults = new Map();
+/** @typedef {{root:HTMLElement, dialog:HTMLElement, content:HTMLElement, list:any[], revision:number, read:number,
+ * contentGeneration:number, reading:boolean, error:string, current:()=>boolean, close:()=>void}} BankBatchWorkspace */
+/** @type {BankBatchWorkspace|null} */ let bankBatchWorkspace = null;
 const cashflowDeletes = new Map();
 /** @type {Map<string, number>} */ const confirmedCashflowDeletes = new Map();
 let readRevision = 0;
@@ -246,6 +254,8 @@ function pendingCashflowMessage(/** @type {CashflowWorkspace} */ state) {
   if (state.revision === editRevision) return '';
   return state.revision < unconfirmedRevision
     ? '部分欄位尚未確認儲存，請重新讀取後確認資料'
+    : state.revision < uncertainBatchDeleteRevision
+      ? '刪除結果尚未確認，請重新讀取後確認資料'
     : state.revision < deleteRevision
       ? (state.success ? '資料已刪除，畫面尚未更新' : '資料已刪除，暫時無法載入列表')
     : !state.success && state.revision < importRevision
@@ -279,6 +289,8 @@ async function deleteCashflowRow(tx, button, row, state) {
     && [...state.node.querySelectorAll('[data-del]')].filter(node => /** @type {HTMLElement} */ (node).dataset.del === id).length === 1
     && button.dataset.del === id;
   if (!original() || cashflowDeletes.has(id)) return;
+  if (tx.source === 'bank' && (bankBatchDeletes.has(tx.importBatch)
+    || state.revision < (bankBatchResults.get(tx.importBatch)?.revision || 0))) { showPendingCashflowWrite(); return; }
   if (state.revision < (confirmedCashflowDeletes.get(id) || 0)) { showPendingCashflowWrite(); return; }
   const generation = renderGeneration, seq = currentRouteSeq(), modal = byId('modal-root');
   if (!modal) return;
@@ -489,7 +501,7 @@ async function readCashflowPage(/** @type {RetryFocusJob|null} */ focusJob) {
     };
   }
   byId('uploadBank').onclick = () => openBankUpload();
-  { const bb = byId('bankBatches'); if (bb) bb.onclick = () => openBankBatchManager(); }
+  { const bb = byId('bankBatches'); if (bb) bb.onclick = () => openBankBatchManager(bb); }
   for (const id of ['yearSel', 'yearSelDesktop']) {
     byId(id).onchange = (e) => {
       const year = /** @type {HTMLSelectElement} */ (e.target).value;
@@ -520,6 +532,7 @@ async function readCashflowPage(/** @type {RetryFocusJob|null} */ focusJob) {
     node: host.querySelector('.cashflow-workspace'), visit, route: seq, success: true };
   failedState = null;
   readRevision = dataRevision;
+  coverBankBatchResults('mainPending', dataRevision);
   for (const [id, revision] of confirmedCashflowDeletes) {
     if (revision <= dataRevision) confirmedCashflowDeletes.delete(id);
   }
@@ -855,11 +868,137 @@ function showBankPreview(r, b64, pw, onPage = () => true) {
 
 // ---- 銀行對帳單匯入紀錄（比照信用卡帳單的「匯入紀錄」）：列出每次上傳匯入的批次，可整批刪除後重新上傳。----
 // 刪除移除該批「現金流交易」＋（金融卡帳單）連帶記到卡片的刷卡消費明細、不動帳戶餘額（餘額是當前快照；重新上傳同帳單會依現值參考日重設）。
-async function openBankBatchManager() {
-  const batches = await api('/bank-statement/batches');
-  const root = byId('modal-root');
-  const render = (/** @type {any[]} */ list) => {
-    const rows = list.map(b => `<tr>
+function pruneBankBatchResults() {
+  for (const [id, result] of bankBatchResults) {
+    if (!result.mainPending && !result.batchPending && !bankBatchDeletes.has(id)) bankBatchResults.delete(id);
+  }
+}
+
+function bankBatchListHasIds(/** @type {any} */ list) {
+  return Array.isArray(list) && list.every(item => item && typeof item.batchId === 'string' && item.batchId);
+}
+
+/** @param {'mainPending'|'batchPending'} domain @param {number} revision */
+function coverBankBatchResults(domain, revision) {
+  for (const result of bankBatchResults.values()) if (result.revision <= revision) result[domain] = false;
+  pruneBankBatchResults();
+}
+
+/** @param {BankBatchWorkspace} state */
+function pendingBankBatchMessage(state) {
+  const pending = [...bankBatchResults.values()].filter(result => result.revision > state.revision);
+  return pending.some(result => !result.confirmed) ? '刪除結果尚未確認，請重新讀取後確認資料'
+    : pending.length ? '資料已刪除，匯入紀錄尚未更新' : '';
+}
+
+/** @param {BankBatchWorkspace} state */
+function showBankBatchNotice(state) {
+  if (!state.current()) return;
+  const notice = /** @type {HTMLElement} */ (state.dialog.querySelector('[data-bank-batch-notice]'));
+  const pending = pendingBankBatchMessage(state);
+  notice.hidden = !pending && !state.error;
+  if (notice.hidden) { notice.replaceChildren(); return; }
+  const message = pending || '暫時無法更新匯入紀錄，以下是上次成功載入的內容';
+  notice.innerHTML = `<span>${esc(message)}${state.error ? '。載入失敗：' + esc(state.error) : ''}</span>
+    <button type="button" class="btn-ghost" data-retry-bank-batches>重新讀取匯入紀錄</button>`;
+  const button = /** @type {HTMLButtonElement} */ (notice.querySelector('[data-retry-bank-batches]'));
+  const read = state.read;
+  button.disabled = state.reading;
+  button.onclick = () => {
+    if (!state.current() || state.reading || state.read !== read || button.disabled || !button.isConnected
+      || state.dialog.querySelector('[data-bank-batch-notice]') !== notice
+      || notice.querySelector('[data-retry-bank-batches]') !== button) return;
+    readBankBatchList(state);
+  };
+}
+
+/** @param {BankBatchWorkspace} state */
+async function readBankBatchList(state) {
+  if (!state.current()) return;
+  const read = ++state.read, revision = editRevision;
+  state.reading = true;
+  showBankBatchNotice(state);
+  if (!state.current() || state.read !== read) return;
+  try {
+    const list = await api('/bank-statement/batches');
+    if (!state.current() || state.read !== read) return;
+    if (!bankBatchListHasIds(list)) throw new Error('匯入紀錄回應不完整');
+    state.list = list;
+    state.revision = revision;
+    state.error = '';
+    coverBankBatchResults('batchPending', revision);
+    if (!list.length && !pendingBankBatchMessage(state)) { state.close(); return; }
+    renderBankBatchList(state);
+  } catch (e) {
+    if (state.current() && state.read === read) state.error = e.message;
+  } finally {
+    if (state.read === read) state.reading = false;
+    if (state.current() && state.read === read) showBankBatchNotice(state);
+  }
+}
+
+/** @param {string} id @param {boolean} confirmed */
+function registerBankBatchResult(id, confirmed) {
+  const revision = ++editRevision;
+  if (confirmed) deleteRevision = revision;
+  else uncertainBatchDeleteRevision = revision;
+  bankBatchResults.set(id, { revision, confirmed, mainPending: true, batchPending: true });
+  showPendingCashflowWrite();
+  if (bankBatchWorkspace) showBankBatchNotice(bankBatchWorkspace);
+}
+
+/** @param {BankBatchWorkspace} state @param {any} batch @param {HTMLElement} button @param {Element} row @param {number} contentGeneration */
+async function deleteBankBatchRow(state, batch, button, row, contentGeneration) {
+  const id = batch.batchId;
+  const original = () => state.current() && contentGeneration === state.contentGeneration && button.isConnected
+    && button.closest('tr') === row && row.parentElement === state.content.querySelector('tbody')
+    && state.content.contains(button) && button.dataset.delbatch === id
+    && [...state.content.querySelectorAll('[data-delbatch]')].filter(node => /** @type {HTMLElement} */ (node).dataset.delbatch === id).length === 1
+    && state.list.filter(item => item.batchId === id).length === 1;
+  if (typeof id !== 'string' || !id || !original() || bankBatchDeletes.has(id)) return;
+  if (state.revision < (bankBatchResults.get(id)?.revision || 0)) { showBankBatchNotice(state); return; }
+  const main = currentWorkspace(), generation = renderGeneration, route = currentRouteSeq();
+  const operation = {};
+  let accepted = 0;
+  const owns = () => original() && accepted === deleteSequence;
+  const mainCurrent = () => main && currentWorkspace() === main && generation === renderGeneration
+    && route === currentRouteSeq() && !cashflowRead;
+  bankBatchDeletes.set(id, operation);
+  try {
+    if (!window.confirm(`確定要刪除「${bankBatchDeleteConfirmText(batch)}」嗎？此動作無法復原。`) || !original()) return;
+    accepted = ++deleteSequence;
+    let result;
+    try { result = await api('/bank-statement/batch/delete', { method: 'POST', body: { batchId: id } }); }
+    catch {
+      registerBankBatchResult(id, false);
+      if (bankBatchDeletes.get(id) === operation) bankBatchDeletes.delete(id);
+      if (owns()) toast('刪除結果尚未確認，請重新讀取後確認資料', true);
+      return;
+    }
+    const confirmed = result?.ok === true;
+    registerBankBatchResult(id, confirmed);
+    if (bankBatchDeletes.get(id) === operation) bankBatchDeletes.delete(id);
+    if (!owns()) return;
+    if (!confirmed) { toast('刪除結果尚未確認，請重新讀取後確認資料', true); return; }
+    toast(Number.isSafeInteger(result.removed) && result.removed >= 0
+      ? `已刪除 ${result.removed} 筆，可重新上傳` : '資料已刪除，請重新讀取確認資料');
+    if (!owns()) return;
+    const jobs = [];
+    if (mainCurrent()) jobs.push(renderCashflow());
+    if (owns()) jobs.push(readBankBatchList(state));
+    // 兩條都是唯讀；各自處理錯誤，批次清單失敗不能阻斷主列表的恢復。
+    await Promise.all(jobs);
+  } finally {
+    if (bankBatchDeletes.get(id) === operation) bankBatchDeletes.delete(id);
+    pruneBankBatchResults();
+  }
+}
+
+/** @param {BankBatchWorkspace} state */
+function renderBankBatchList(state) {
+  if (!state.current()) return;
+  const contentGeneration = ++state.contentGeneration;
+  const rows = state.list.map(b => `<tr>
       <td class="nowrap" title="存提日範圍">${esc(b.minDate || '')} ~ ${esc(b.maxDate || '')}</td>
       <td class="num">${esc(bankBatchCountText(b))}</td>
       <td class="num pos">${b.income ? '+' + money(b.income) : '<span class="muted">—</span>'}</td>
@@ -867,8 +1006,34 @@ async function openBankBatchManager() {
       <td class="num muted">${b.transfer ? money(b.transfer) : '—'}</td>
       <td><button class="btn-danger btn-sm" data-delbatch="${esc(b.batchId)}" title="刪除整批">${icon('trash', 15)}</button></td>
     </tr>`).join('');
-    // 外殼歸戶（U3 擴大②）：backdrop:false＝原程式本來就沒有背景點擊關閉（搬家不裝修）
-    const { close } = openModalShell({
+  state.content.innerHTML = `<div class="tbl-wrap"><table>
+    <thead><tr><th>日期範圍</th><th class="num">筆數</th><th class="num">收入</th><th class="num">支出</th><th class="num">內轉</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="6" class="empty">尚無銀行對帳單匯入批次。</td></tr>'}</tbody>
+  </table></div>`;
+  state.content.querySelectorAll('[data-delbatch]').forEach(node => {
+    const button = /** @type {HTMLElement} */ (node), row = button.closest('tr');
+    const batch = state.list.find(item => item.batchId === button.dataset.delbatch);
+    button.onclick = () => { if (batch && row) return deleteBankBatchRow(state, batch, button, row, contentGeneration); };
+  });
+  showBankBatchNotice(state);
+}
+
+/** @param {HTMLElement} button */
+async function openBankBatchManager(button) {
+  const workspace = currentWorkspace(), host = view(), hash = location.hash, nav = currentNavSeq();
+  const root = byId('modal-root'), unchanged = watchModalRoot(), opening = ++bankBatchOpenSequence;
+  const current = () => workspace && currentWorkspace() === workspace && button.isConnected && workspace.node.contains(button)
+    && host === view() && hash === location.hash && nav === currentNavSeq()
+    && root === byId('modal-root') && unchanged() && opening === bankBatchOpenSequence;
+  if (!current()) return;
+  const revision = editRevision;
+  let batches;
+  try {
+    batches = await api('/bank-statement/batches');
+    if (!current()) return;
+    if (!bankBatchListHasIds(batches)) throw new Error('匯入紀錄回應不完整');
+  } catch (e) { if (current()) toast(e.message, true); return; }
+  const shell = openModalShell({
       title: '銀行對帳單匯入紀錄', size: 'lg', backdrop: false,
       bodyHtml: `
         <ul class="muted batch-help" style="font-size:12.5px;margin:0 0 12px 18px;line-height:1.9;padding:0">
@@ -876,24 +1041,38 @@ async function openBankBatchManager() {
           <li>分箱判斷不對、或想換一份帳單重來，可整批<b class="hl">「刪除」</b>後重新上傳。</li>
           <li>刪除會移除這批<b class="hl">「收支交易」</b>，金融卡帳單那一批也會一起拿掉<b class="hl">連帶記到卡片的刷卡消費明細</b>（筆數格括號裡那個數字）；<b class="hl">帳戶餘額不動</b>（重新上傳同一份帳單會自動重設）。</li>
         </ul>
-        <div class="tbl-wrap"><table>
-          <thead><tr><th>日期範圍</th><th class="num">筆數</th><th class="num">收入</th><th class="num">支出</th><th class="num">內轉</th><th></th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="6" class="empty">尚無銀行對帳單匯入批次。</td></tr>'}</tbody>
-        </table></div>
+        <div class="hint" data-bank-batch-notice role="alert" hidden></div>
+        <div data-bank-batch-content></div>
         <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>`,
-    });
-    root.querySelector('[data-close]').onclick = close;
-    root.querySelectorAll('[data-delbatch]').forEach(btn => /** @type {HTMLElement} */ (btn).onclick = () => {
-      const b = list.find(x => x.batchId === /** @type {HTMLElement} */ (btn).dataset.delbatch);
-      confirmDelete(bankBatchDeleteConfirmText(b), async () => {
-        const r = await api('/bank-statement/batch/delete', { method: 'POST', body: { batchId: b.batchId } });
-        toast(`已刪除 ${r.removed} 筆，可重新上傳`);
-        const rest = await api('/bank-statement/batches');   // 刪光了就關視窗（不留「尚無批次」的死巷，因入口鈕也一併消失）；還有批次才重繪
-        setTimeout(() => { if (rest.length) render(rest); else root.innerHTML = ''; }, 0);
-      });
-    });
+  });
+  const dialog = /** @type {HTMLElement} */ (root.querySelector('.modal'));
+  const content = /** @type {HTMLElement} */ (dialog.querySelector('[data-bank-batch-content]'));
+  const modalUnchanged = watchModalRoot();
+  let observer = /** @type {MutationObserver|null} */ (null);
+  const state = { root, dialog, content, list: batches, revision, read: 0, contentGeneration: 0, reading: false,
+    error: '', current: () => bankBatchWorkspace === state && root === byId('modal-root') && root.isConnected
+      && dialog.isConnected && root.querySelector('.modal') === dialog && content.parentElement === dialog.querySelector('.modal-body')
+      && dialog.querySelectorAll('[data-bank-batch-content]').length === 1 && dialog.querySelector('[data-bank-batch-content]') === content
+      && dialog.querySelectorAll('[data-bank-batch-notice]').length === 1
+      && host === view() && host.isConnected && hash === location.hash && nav === currentNavSeq() && modalUnchanged(),
+    close: () => {
+      if (root.querySelector('.modal') !== dialog) return;
+      cleanup(); shell.close();
+    } };
+  const cleanup = () => {
+    observer?.disconnect();
+    window.removeEventListener('hashchange', check);
+    if (bankBatchWorkspace === state) bankBatchWorkspace = null;
   };
-  render(batches);
+  const check = () => { if (!state.current()) cleanup(); };
+  observer = new MutationObserver(check);
+  observer.observe(root, { childList: true, subtree: true, attributes: true });
+  window.addEventListener('hashchange', check);
+  bankBatchWorkspace = state;
+  root.querySelector('[data-close]').onclick = state.close;
+  root.querySelector('.x-close').onclick = state.close;
+  coverBankBatchResults('batchPending', revision);
+  renderBankBatchList(state);
 }
 
 /** 換頁後 owns 不再接收非同步錯誤，須在換頁時告知仍可見的原表單。 @param {HTMLElement} root @param {number} nav */

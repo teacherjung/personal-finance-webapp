@@ -20,6 +20,12 @@ let holdWrite = null;
 let holdBeforeWrite = null;
 let deleteQueue = new Map();
 let deleteResponse = { ok: true };
+let batchReadQueue = [];
+let batchDeleteQueue = new Map();
+let failBatchReads = false;
+let batchReplyOverride = false;
+let batchReply = null;
+let batchBodies = [];
 let serial = 0;
 let windowErrors = [];
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -30,6 +36,22 @@ const text = selector => el(selector)?.textContent ?? '';
 const reads = () => calls.filter(x => x.method === 'GET' && x.path === '/api/transactions').length;
 const writes = () => calls.filter(x => x.method !== 'GET');
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
+function removeBankBatchRows(id) {
+  const before = rows.length;
+  rows = rows.filter(row => !(row.source === 'bank' && row.importBatch === id) && !(row.source === 'stmt' && row.bankBatch === id));
+  return before - rows.length;
+}
+function bankBatchFixtureList() {
+  const groups = new Map();
+  for (const row of rows.filter(item => item.source === 'bank' && item.importBatch)) {
+    if (!groups.has(row.importBatch)) groups.set(row.importBatch, { batchId: row.importBatch, count: 0, income: 0, expense: 0, transfer: 0, minDate: row.date, maxDate: row.date });
+    const group = groups.get(row.importBatch);
+    group.count++;
+    group[row.type] += row.amount;
+  }
+  for (const group of groups.values()) group.cardCount = rows.filter(row => row.source === 'stmt' && row.bankBatch === group.batchId).length;
+  return [...groups.values()];
+}
 async function select(id, value) {
   document.getElementById(id).value = value;
   document.getElementById(id).dispatchEvent(new Event('change', { bubbles: true }));
@@ -55,6 +77,18 @@ async function boot() {
     const intercepted = method === 'GET' && endpointQueue.get(path)?.shift();
     if (intercepted) return intercepted();
     if (path === '/api/mode') return json({ hosted: false });
+    if (path === '/api/bank-statement/batches' && method === 'GET') {
+      const snapshot = bankBatchFixtureList(), action = batchReadQueue.shift();
+      if (action) return action(snapshot);
+      return failBatchReads ? readError() : json(snapshot);
+    }
+    if (path === '/api/bank-statement/batch/delete' && method === 'POST') {
+      const body = JSON.parse(init.body), action = batchDeleteQueue.get(body.batchId)?.shift();
+      batchBodies.push(body);
+      if (action) return action();
+      const removed = removeBankBatchRows(body.batchId);
+      return json(batchReplyOverride ? batchReply : { ok: true, removed });
+    }
     if (path === '/api/bank-statement/preview') {
       const body = JSON.parse(init.body);
       assert.equal(body.data, 'c3ludGhldGljLXBkZg==');
@@ -108,6 +142,7 @@ beforeEach(async () => {
   serial++; rows = fixture(); calls = []; readQueue = []; endpointQueue = new Map(); previewSimilar = 1; applyFlags = []; failReads = false; failWrites = false; legacyText = false; holdWrite = null; holdBeforeWrite = null;
   await boot();
   window.confirm = () => true; deleteQueue = new Map(); deleteResponse = { ok: true };
+  batchReadQueue = []; batchDeleteQueue = new Map(); failBatchReads = false; batchReplyOverride = false; batchReply = null; batchBodies = [];
   document.getElementById('modal-root').replaceChildren();
   await navigate('#cards'); await navigate('#cashflow');
   await select('yearSelDesktop', '2025'); await select('monthSelDesktop', '03');
@@ -1477,4 +1512,378 @@ test('單筆刪除｜建立pending提示同步開新窗後不啟動舊作業GET'
   assert.equal(fired, true); assert.equal(deleteCount(), 1); assert.equal(reads(), 0);
   assert.equal(el('#delete-reentry-input').value, '本題未存輸入');
   assert.match(text('#cashflowReadError'), /資料已刪除/);
+});
+
+const batchReads = () => calls.filter(call => call.method === 'GET' && call.path === '/api/bank-statement/batches').length;
+async function seedBankBatchManager({ second = true, linked = false } = {}) {
+  const id = `${serial}-batch-a`;
+  Object.assign(rows[0], { source: 'bank', importBatch: id });
+  if (second) Object.assign(rows[1], { source: 'bank', importBatch: `${serial}-batch-b` });
+  if (linked) rows.push({ ...rows[0], id: `${serial}-linked`, source: 'stmt', ledger: 'card', bankBatch: id });
+  await renderCashflow();
+  await click('#bankBatches');
+  return id;
+}
+function batchButton(id) { return [...document.querySelectorAll('#modal-root [data-delbatch]')].find(button => button.dataset.delbatch === id); }
+async function clickBatch(id) { assert.ok(batchButton(id)); batchButton(id).click(); await settle(); }
+
+for (const mainFails of [false, true]) for (const batchFails of [false, true]) {
+  test(`批次刪除｜兩域分開處理 main=${mainFails} batches=${batchFails}`, async () => {
+    const id = await seedBankBatchManager(), dialog = el('#modal-root .modal'), before = snapshot();
+    failReads = mainFails; failBatchReads = batchFails;
+    await clickBatch(id);
+    assert.equal(rows.some(row => row.importBatch === id), false, '受測POST確實移除本題資料');
+    assert.deepEqual(batchBodies, [{ batchId: id }]);
+    if (mainFails) { assert.deepEqual(snapshot(), before); assert.match(text('#cashflowReadError'), /資料已刪除，畫面尚未更新/); }
+    else { assert.equal(el('#cashflowReadError'), null); assert.equal(el(`[data-del="${serial}-a"]`), null); }
+    assert.equal(el('#modal-root .modal'), dialog, '批次更新不能重開shell');
+    if (batchFails) { assert.match(text('[data-bank-batch-notice]'), /資料已刪除，匯入紀錄尚未更新/); assert.ok(batchButton(id)); }
+    else { assert.equal(batchButton(id), undefined); assert.equal(el('[data-bank-batch-notice]').hidden, true); }
+  });
+}
+
+test('批次刪除｜兩個重試只讀自己的領域，不互代清提示或重送POST', async () => {
+  const id = await seedBankBatchManager({ second: false });
+  failReads = true; failBatchReads = true; await clickBatch(id);
+  const before = reads(); failBatchReads = false; await click('[data-retry-bank-batches]');
+  assert.equal(reads(), before); assert.equal(el('#modal-root .modal'), null);
+  assert.match(text('#cashflowReadError'), /資料已刪除，畫面尚未更新/);
+  const batchBefore = batchReads(); failReads = false; await click('#retryCashflowRead');
+  assert.equal(batchReads(), batchBefore); assert.equal(el('#cashflowReadError'), null);
+  assert.equal(el(`[data-del="${serial}-a"]`), null); assert.equal(batchBodies.length, 1);
+});
+
+test('批次刪除｜主列表成功不清批次窗pending，同批舊鈕不能重送或走單筆DELETE', async () => {
+  const id = await seedBankBatchManager();
+  failReads = true; failBatchReads = true; await clickBatch(id);
+  await clickBatch(id); await deleteRow();
+  assert.equal(batchBodies.length, 1); assert.equal(deleteCount(), 0);
+  failReads = false; await click('#retryCashflowRead');
+  assert.match(text('[data-bank-batch-notice]'), /資料已刪除，匯入紀錄尚未更新/);
+  await clickBatch(id); assert.equal(batchBodies.length, 1);
+  failBatchReads = false; await click('[data-retry-bank-batches]');
+  assert.equal(el('[data-bank-batch-notice]').hidden, true);
+});
+
+test('批次刪除｜原生確認逐字，取消不發POST且保留資料', async () => {
+  const id = await seedBankBatchManager({ linked: true });
+  const before = structuredClone(rows), messages = [];
+  window.confirm = message => { messages.push(message); return false; };
+  await clickBatch(id);
+  assert.deepEqual(messages, ['確定要刪除「整批 1 筆收支交易＋連帶記到卡片的 1 筆刷卡消費明細（2025-03-04~2025-03-04）——兩本帳一起刪」嗎？此動作無法復原。']);
+  assert.equal(batchBodies.length, 0); assert.deepEqual(rows, before);
+});
+
+test('批次刪除｜連帶卡片列與銀行列真正移除，手動撞號及其他批次保持', async () => {
+  const id = await seedBankBatchManager({ linked: true });
+  rows.push({ ...fixture()[0], id: `${serial}-manual-collision`, source: 'manual', importBatch: id });
+  await clickBatch(id);
+  assert.equal(rows.some(row => row.id === `${serial}-a` || row.id === `${serial}-linked`), false);
+  assert.ok(rows.some(row => row.id === `${serial}-manual-collision`));
+  assert.ok(rows.some(row => row.importBatch === `${serial}-batch-b`));
+  assert.match(text('#toast-root'), /已刪除 2 筆，可重新上傳/);
+});
+
+test('批次刪除｜同批同步連點只送一個POST', async () => {
+  const id = await seedBankBatchManager(), button = batchButton(id);
+  button.click(); button.click(); await settle();
+  assert.equal(rows.some(row => row.importBatch === id), false); assert.equal(batchBodies.length, 1);
+});
+
+for (const [label, response] of [['false', { ok: false }], ['string', { ok: 'true' }], ['missing', {}], ['null', null]]) {
+  test(`批次刪除｜${label}回音記未知，不自動重送或假稱成功`, async () => {
+    const id = await seedBankBatchManager(), mainBefore = reads(), batchBefore = batchReads();
+    batchReplyOverride = true; batchReply = response; await clickBatch(id);
+    assert.equal(rows.some(row => row.importBatch === id), false, '未知回音不保證未寫入');
+    assert.match(text('#cashflowReadError'), /刪除結果尚未確認，請重新讀取後確認資料/);
+    assert.match(text('[data-bank-batch-notice]'), /刪除結果尚未確認，請重新讀取後確認資料/);
+    assert.doesNotMatch(text('#toast-root'), /已刪除/);
+    assert.equal(reads(), mainBefore); assert.equal(batchReads(), batchBefore);
+    await clickBatch(id); assert.equal(batchBodies.length, 1);
+    await click('#retryCashflowRead'); assert.match(text('[data-bank-batch-notice]'), /刪除結果尚未確認/);
+    await click('[data-retry-bank-batches]'); assert.equal(el('[data-bank-batch-notice]').hidden, true);
+    assert.equal(batchBodies.length, 1);
+  });
+}
+
+for (const [label, removed] of [['missing', undefined], ['negative', -1], ['fraction', 1.5], ['string', '1'], ['null', null]]) {
+  test(`批次刪除｜確認成功而${label}筆數不撤銷事實或捏造數字`, async () => {
+    const id = await seedBankBatchManager(); failReads = true; failBatchReads = true;
+    batchReplyOverride = true; batchReply = { ok: true, removed }; await clickBatch(id);
+    assert.equal(rows.some(row => row.importBatch === id), false);
+    assert.match(text('#cashflowReadError'), /資料已刪除，畫面尚未更新/);
+    assert.match(text('[data-bank-batch-notice]'), /資料已刪除，匯入紀錄尚未更新/);
+    assert.match(text('#toast-root'), /資料已刪除，請重新讀取確認資料/);
+    assert.doesNotMatch(text('#toast-root'), /undefined|NaN|已刪除 -1 筆|已刪除 1\.5 筆/);
+  });
+}
+
+test('批次刪除｜ok真且removed零仍是確認，不當成失敗', async () => {
+  const id = await seedBankBatchManager(); assert.equal(removeBankBatchRows(id), 1);
+  failReads = true; failBatchReads = true; await clickBatch(id);
+  assert.equal(batchBodies.length, 1); assert.match(text('#toast-root'), /已刪除 0 筆，可重新上傳/);
+  assert.match(text('#cashflowReadError'), /資料已刪除，畫面尚未更新/);
+});
+
+test('批次刪除｜初開慢GET不接管等待期間的新視窗', async () => {
+  const id = `${serial}-initial-batch`; Object.assign(rows[0], { source: 'bank', importBatch: id }); await renderCashflow();
+  const gate = deferred(); batchReadQueue.push(() => gate.promise); await click('#bankBatches');
+  app.openInfo('本題較新視窗', '<input id="batch-new-input" value="未存輸入">'); const dialog = el('#modal-root .modal');
+  gate.resolve(json([{ batchId: id, count: 1 }])); await settle();
+  assert.equal(el('#modal-root .modal'), dialog); assert.equal(el('#batch-new-input').value, '未存輸入');
+  assert.equal(batchBodies.length, 0);
+});
+
+test('批次刪除｜確認後批次GET晚回不替換或清除新窗', async () => {
+  const id = await seedBankBatchManager(), gate = deferred(); batchReadQueue.push(() => gate.promise);
+  await clickBatch(id); assert.equal(rows.some(row => row.importBatch === id), false);
+  app.openInfo('本題較新視窗', '<input id="batch-late-input" value="保留此值">'); const dialog = el('#modal-root .modal');
+  gate.resolve(json([])); await settle();
+  assert.equal(el('#modal-root .modal'), dialog); assert.equal(el('#batch-late-input').value, '保留此值');
+});
+
+test('批次刪除｜關窗後重新開啟的同批控制項仍受在途鎖保護', async () => {
+  const id = await seedBankBatchManager(), gate = deferred();
+  batchDeleteQueue.set(id, [async () => { await gate.promise; return json({ ok: true, removed: removeBankBatchRows(id) }); }]);
+  await clickBatch(id); await click('#modal-root [data-close]'); await click('#bankBatches');
+  const dialog = el('#modal-root .modal'); await clickBatch(id); assert.equal(batchBodies.length, 1);
+  gate.resolve(); await settle();
+  assert.equal(rows.some(row => row.importBatch === id), false); assert.equal(el('#modal-root .modal'), dialog);
+  assert.match(text('[data-bank-batch-notice]'), /資料已刪除，匯入紀錄尚未更新/);
+});
+
+for (const label of ['http', 'network']) test(`批次刪除｜${label}失敗可能已寫入，記未知且不自動重試`, async () => {
+  const id = await seedBankBatchManager(), mainBefore = reads(), batchBefore = batchReads();
+  batchDeleteQueue.set(id, [() => {
+    assert.equal(removeBankBatchRows(id), 1);
+    if (label === 'network') throw new Error('本題網路中斷');
+    return json({ error: '本題HTTP失敗' }, 503);
+  }]);
+  await clickBatch(id);
+  assert.equal(batchBodies.length, 1); assert.equal(rows.some(row => row.importBatch === id), false);
+  assert.match(text('#cashflowReadError'), /刪除結果尚未確認/);
+  assert.match(text('[data-bank-batch-notice]'), /刪除結果尚未確認/);
+  assert.doesNotMatch(text('#toast-root'), /已刪除/);
+  assert.equal(reads(), mainBefore); assert.equal(batchReads(), batchBefore);
+});
+
+test('批次刪除｜不同批次獨立送出，舊ACK只記確認不接管新呈現', async () => {
+  const id = await seedBankBatchManager(), other = `${serial}-batch-b`, first = deferred(), second = deferred();
+  batchDeleteQueue.set(id, [async () => { await first.promise; return json({ ok: true, removed: removeBankBatchRows(id) }); }]);
+  batchDeleteQueue.set(other, [async () => { await second.promise; return json({ ok: true, removed: removeBankBatchRows(other) }); }]);
+  await clickBatch(id); await clickBatch(other); assert.equal(batchBodies.length, 2);
+  second.resolve(); await settle();
+  const mainBefore = reads(), batchBefore = batchReads(), dialog = el('#modal-root .modal');
+  assert.ok(batchButton(id)); first.resolve(); await settle();
+  assert.equal(rows.some(row => row.importBatch === id || row.importBatch === other), false);
+  assert.equal(reads(), mainBefore); assert.equal(batchReads(), batchBefore);
+  assert.equal(el('#modal-root .modal'), dialog);
+  assert.match(text('#cashflowReadError'), /資料已刪除，畫面尚未更新/);
+  assert.match(text('[data-bank-batch-notice]'), /資料已刪除，匯入紀錄尚未更新/);
+});
+
+test('批次刪除｜確認前啟動的主列表GET不能清批次事實或解除舊單筆保護', async () => {
+  const id = await seedBankBatchManager(), gate = deferred(); let started;
+  readQueue.push(snapshot => { started = snapshot; return gate.promise; });
+  const flight = renderCashflow(); await settle(); await clickBatch(id);
+  assert.equal(rows.some(row => row.importBatch === id), false);
+  assert.equal(batchButton(id), undefined, '批次域可獨立完成讀取');
+  gate.resolve(json(started)); await flight; await settle();
+  assert.ok(el(`[data-del="${serial}-a"]`)); assert.match(text('#cashflowReadError'), /資料已刪除，畫面尚未更新/);
+  await click('#modal-root [data-close]'); await deleteRow(); assert.equal(deleteCount(), 0);
+  await click('#retryCashflowRead'); assert.equal(el(`[data-del="${serial}-a"]`), null);
+});
+
+test('批次刪除｜舊批次重讀晚回不復活已由較新讀取關閉的窗', async () => {
+  const id = await seedBankBatchManager(), gate = deferred(); failBatchReads = true; await clickBatch(id);
+  batchReadQueue.push(snapshot => gate.promise.then(() => json(snapshot)));
+  await click('[data-retry-bank-batches]'); failBatchReads = false;
+  await clickBatch(`${serial}-batch-b`); assert.equal(batchBodies.length, 2); assert.equal(el('#modal-root .modal'), null);
+  gate.resolve(); await settle(); assert.equal(el('#modal-root .modal'), null);
+});
+
+test('批次刪除｜成功新批次清單可接受同id的新確認，不永久封鎖', async () => {
+  const id = await seedBankBatchManager(); failReads = true; failBatchReads = true; await clickBatch(id);
+  assert.equal(rows.some(row => row.importBatch === id), false);
+  rows.push({ ...fixture()[0], id: `${serial}-new-same-batch`, source: 'bank', importBatch: id });
+  failBatchReads = false; await click('[data-retry-bank-batches]');
+  await clickBatch(id); assert.equal(batchBodies.length, 2);
+  assert.equal(rows.some(row => row.id === `${serial}-new-same-batch`), false);
+});
+
+for (const label of ['away', 'return', 'modal-closed']) test(`批次刪除｜${label}接管後晚ACK不報舊通知或多發GET`, async () => {
+  const id = await seedBankBatchManager(), gate = deferred();
+  batchDeleteQueue.set(id, [async () => { await gate.promise; return json({ ok: true, removed: removeBankBatchRows(id) }); }]);
+  await clickBatch(id);
+  if (label === 'modal-closed') { app.openInfo('新窗', '<p>新窗已開過</p>'); await click('#modal-root [data-close]'); }
+  else { await navigate('#cards'); if (label === 'return') await navigate('#cashflow'); }
+  const mainBefore = reads(), batchBefore = batchReads(), rootBefore = el('#modal-root').innerHTML;
+  gate.resolve(); await settle();
+  assert.equal(rows.some(row => row.importBatch === id), false); assert.equal(reads(), mainBefore); assert.equal(batchReads(), batchBefore);
+  assert.equal(el('#modal-root').innerHTML, rootBefore); assert.doesNotMatch(text('#toast-root'), /已刪除/);
+  if (label === 'return') assert.match(text('#cashflowReadError'), /資料已刪除/);
+});
+
+test('批次刪除｜確認返回期間換窗，零POST且不覆蓋新輸入', async () => {
+  const id = await seedBankBatchManager(), before = structuredClone(rows);
+  window.confirm = () => { app.openInfo('確認期間接管', '<input id="batch-confirm-input" value="未存">'); return true; };
+  await clickBatch(id); assert.equal(batchBodies.length, 0); assert.deepEqual(rows, before);
+  assert.equal(el('#batch-confirm-input').value, '未存');
+});
+
+test('批次刪除｜重複批次控制項不猜要刪哪列', async () => {
+  const id = await seedBankBatchManager(), button = batchButton(id), row = button.closest('tr');
+  row.parentElement.append(row.cloneNode(true)); button.click(); await settle();
+  assert.equal(batchBodies.length, 0); assert.ok(rows.some(item => item.importBatch === id));
+});
+
+for (const [label, response] of [['object', {}], ['null', null], ['null-row', [null]], ['number-id', [{ batchId: 2 }]]]) {
+  test(`批次刪除｜初讀${label}不完整回應不造空批次窗`, async () => {
+    Object.assign(rows[0], { source: 'bank', importBatch: `${serial}-malformed` }); await renderCashflow();
+    batchReadQueue.push(() => json(response)); await click('#bankBatches');
+    assert.equal(el('#modal-root .modal'), null); assert.match(text('#toast-root'), /匯入紀錄回應不完整/);
+    assert.equal(batchBodies.length, 0);
+  });
+}
+
+test('批次刪除｜後續批次讀取不完整保留舊表，不冒稱已清空', async () => {
+  const id = await seedBankBatchManager(), dialog = el('#modal-root .modal'); batchReadQueue.push(() => json([null]));
+  await clickBatch(id); assert.equal(el('#modal-root .modal'), dialog); assert.ok(batchButton(id));
+  assert.match(text('[data-bank-batch-notice]'), /資料已刪除，匯入紀錄尚未更新.*匯入紀錄回應不完整/);
+});
+
+test('批次刪除｜批次錯誤文字跳脫，不注入圖片', async () => {
+  const id = await seedBankBatchManager(); failBatchReads = true; await clickBatch(id);
+  assert.match(text('[data-bank-batch-notice]'), /<img src=x onerror=alert\(1\)>/);
+  assert.equal(el('[data-bank-batch-notice] img'), null);
+});
+
+for (const confirmed of [false, true]) test(`批次刪除｜${confirmed ? '確認' : '未知'}結果使等待期間開的編輯快照失效`, async () => {
+  const id = await seedBankBatchManager(), gate = deferred();
+  batchDeleteQueue.set(id, [async () => { await gate.promise; const removed = removeBankBatchRows(id); return json(confirmed ? { ok: true, removed } : { ok: 'true' }); }]);
+  await clickBatch(id); await click(`tbody [data-edit="${serial}-b"]`); el('#f_summary').value = '本題保留輸入';
+  gate.resolve(); await settle();
+  const submitForm = async () => { el('#modal-root form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle(); };
+  await submitForm(); assert.equal(writes().filter(call => call.method === 'PUT').length, 0);
+  assert.equal(el('#f_summary').value, '本題保留輸入'); assert.match(text('#toast-root'), /資料已更新；請關閉編輯視窗，重新讀取後再編輯。/);
+  await renderCashflow(); await submitForm(); assert.equal(writes().filter(call => call.method === 'PUT').length, 0);
+  await click('#modal-root [data-cancel]'); await click(`tbody [data-edit="${serial}-b"]`); el('#f_summary').value = '本題新快照';
+  await submitForm(); assert.equal(writes().filter(call => call.method === 'PUT').length, 1);
+  assert.equal(rows.find(row => row.id === `${serial}-b`).summary, '本題新快照');
+});
+
+test('批次刪除｜重試在途確認取消回焦，但原GET仍完成且不重送', async t => {
+  retryFocusEnvironment(t);
+  const id = await seedBankBatchManager(), write = deferred(), read = deferred();
+  batchDeleteQueue.set(id, [async () => { await write.promise; return json({ ok: true, removed: removeBankBatchRows(id) }); }]);
+  await clickBatch(id); await click('#modal-root [data-close]'); failReads = true; await renderCashflow();
+  const button = el('#retryCashflowRead'); button.focus(); disableBlurs(button);
+  readQueue.push(snapshot => read.promise.then(() => json(snapshot)));
+  const before = reads(); button.click(); await settle(); write.resolve(); await settle();
+  assert.equal(el('#retryCashflowRead').disabled, true); assert.equal(reads(), before + 1);
+  read.resolve(); await settle();
+  assert.match(text('#cashflowReadError'), /資料已刪除/); assert.equal(document.activeElement, document.body);
+  assert.equal(batchBodies.length, 1); failReads = false; await click('#retryCashflowRead');
+  assert.equal(el('#cashflowReadError'), null);
+});
+
+test('批次刪除｜另一批確認取消不淘汰已接受作業的讀取', async () => {
+  const id = await seedBankBatchManager(), gate = deferred();
+  batchDeleteQueue.set(id, [async () => { await gate.promise; return json({ ok: true, removed: removeBankBatchRows(id) }); }]);
+  await clickBatch(id); window.confirm = () => false; await clickBatch(`${serial}-batch-b`);
+  const mainBefore = reads(), batchBefore = batchReads(); gate.resolve(); await settle();
+  assert.equal(batchBodies.length, 1); assert.equal(reads(), mainBefore + 1); assert.equal(batchReads(), batchBefore + 1);
+  assert.equal(batchButton(id), undefined);
+});
+
+test('批次刪除｜舊callback在兩域有效重讀及確認紀錄清理後不能復活', async () => {
+  const id = await seedBankBatchManager(), button = batchButton(id), callback = button.onclick;
+  failReads = true; failBatchReads = true; await clickBatch(id);
+  failReads = false; await click('#retryCashflowRead'); failBatchReads = false; await click('[data-retry-bank-batches]');
+  callback(); await settle(); assert.equal(batchBodies.length, 1); assert.equal(button.isConnected, false);
+  assert.equal(batchButton(id), undefined);
+});
+
+test('批次刪除｜失敗窗的重試鈕斷開後，保存callback不多發GET', async () => {
+  const id = await seedBankBatchManager(); failBatchReads = true; await clickBatch(id);
+  const button = el('[data-retry-bank-batches]'), callback = button.onclick, before = batchReads();
+  button.replaceWith(button.cloneNode(true)); callback(); await settle();
+  assert.equal(batchReads(), before); assert.equal(batchBodies.length, 1);
+});
+
+test('批次刪除｜pending通知同步開新窗，不啟動原作業的額外GET', async t => {
+  const id = await seedBankBatchManager(), node = el('.cashflow-workspace'), insert = node.insertBefore.bind(node);
+  let fired = false;
+  t.mock.method(node, 'insertBefore', function (child, anchor) {
+    const result = insert(child, anchor);
+    if (!fired && child.id === 'cashflowReadError') { fired = true; app.openInfo('本題接管', '<input id="batch-reentry-input" value="未存">'); }
+    return result;
+  });
+  const mainBefore = reads(), batchBefore = batchReads(); await clickBatch(id);
+  assert.equal(rows.some(row => row.importBatch === id), false); assert.equal(fired, true);
+  assert.equal(reads(), mainBefore); assert.equal(batchReads(), batchBefore); assert.equal(el('#batch-reentry-input').value, '未存');
+});
+
+test('批次刪除｜較新批次讀取失敗時，舊ACK仍不能多起讀取或通知', async () => {
+  const id = await seedBankBatchManager(), other = `${serial}-batch-b`, first = deferred(), second = deferred();
+  batchDeleteQueue.set(id, [async () => { await first.promise; return json({ ok: true, removed: removeBankBatchRows(id) }); }]);
+  batchDeleteQueue.set(other, [async () => { await second.promise; return json({ ok: true, removed: removeBankBatchRows(other) }); }]);
+  await clickBatch(id); await clickBatch(other); failReads = true; failBatchReads = true;
+  second.resolve(); await settle();
+  const mainBefore = reads(), batchBefore = batchReads(), toastBefore = text('#toast-root');
+  assert.ok(batchButton(id)); first.resolve(); await settle();
+  assert.equal(rows.some(row => row.importBatch === id || row.importBatch === other), false);
+  assert.equal(reads(), mainBefore); assert.equal(batchReads(), batchBefore); assert.equal(text('#toast-root'), toastBefore);
+});
+
+test('批次刪除｜較新批次GET失敗後，舊成功不得替換保留的表格', async () => {
+  const id = await seedBankBatchManager(), gate = deferred(); failBatchReads = true; await clickBatch(id);
+  batchReadQueue.push(snapshot => gate.promise.then(() => json(snapshot)));
+  await click('[data-retry-bank-batches]'); await clickBatch(`${serial}-batch-b`);
+  const table = el('[data-bank-batch-content]').innerHTML;
+  assert.equal(rows.some(row => row.importBatch === `${serial}-batch-b`), false);
+  gate.resolve(); await settle();
+  assert.equal(el('[data-bank-batch-content]').innerHTML, table);
+  assert.match(text('[data-bank-batch-notice]'), /資料已刪除，匯入紀錄尚未更新/);
+});
+
+test('批次刪除｜原生確認同步重入也只確認與送出一次', async () => {
+  const id = await seedBankBatchManager(), callback = batchButton(id).onclick; let confirms = 0;
+  window.confirm = () => { confirms++; if (confirms === 1) callback(); return true; };
+  await clickBatch(id);
+  assert.equal(confirms, 1); assert.equal(batchBodies.length, 1);
+  assert.equal(rows.some(row => row.importBatch === id), false);
+});
+
+test('批次刪除｜較新初開GET失敗，也不讓更舊回覆重新開窗', async () => {
+  const id = `${serial}-initial-overlap`; Object.assign(rows[0], { source: 'bank', importBatch: id }); await renderCashflow();
+  const gate = deferred(); batchReadQueue.push(snapshot => gate.promise.then(() => json(snapshot)), () => readError());
+  await click('#bankBatches'); await click('#bankBatches'); assert.equal(el('#modal-root .modal'), null);
+  gate.resolve(); await settle(); assert.equal(el('#modal-root .modal'), null); assert.equal(batchBodies.length, 0);
+});
+
+test('批次刪除｜另一批完成只解自己的鎖，不能重送仍在途的批次', async () => {
+  const id = await seedBankBatchManager(), other = `${serial}-batch-b`, first = deferred(), second = deferred();
+  batchDeleteQueue.set(id, [async () => { await first.promise; return json({ ok: true, removed: removeBankBatchRows(id) }); }]);
+  batchDeleteQueue.set(other, [async () => { await second.promise; return json({ ok: true, removed: removeBankBatchRows(other) }); }]);
+  try {
+    await clickBatch(id); await clickBatch(other); second.resolve(); await settle();
+    assert.ok(batchButton(id)); await clickBatch(id); assert.equal(batchBodies.length, 2);
+  } finally { first.resolve(); second.resolve(); await settle(); }
+});
+
+test('批次刪除｜批次GET開始修訂不足時，主列表先完成也不能代清或解除舊批次保護', async () => {
+  const id = await seedBankBatchManager(), other = `${serial}-batch-b`, first = deferred(), second = deferred(), batchRead = deferred();
+  let snapshot;
+  batchDeleteQueue.set(id, [async () => { await first.promise; return json({ ok: true, removed: removeBankBatchRows(id) }); }]);
+  batchDeleteQueue.set(other, [async () => { await second.promise; return json({ ok: true, removed: removeBankBatchRows(other) }); }]);
+  batchReadQueue.push(data => { snapshot = data; return batchRead.promise; });
+  try {
+    await clickBatch(id); await clickBatch(other); second.resolve(); await settle(); first.resolve(); await settle();
+    assert.equal(rows.some(row => row.importBatch === id || row.importBatch === other), false);
+    await renderCashflow(); assert.equal(el('#cashflowReadError'), null);
+    batchRead.resolve(json(snapshot)); await settle();
+    assert.ok(batchButton(id)); assert.match(text('[data-bank-batch-notice]'), /資料已刪除，匯入紀錄尚未更新/);
+    await clickBatch(id); assert.equal(batchBodies.length, 2);
+  } finally { first.resolve(); second.resolve(); batchRead.resolve(json([])); await settle(); }
 });
