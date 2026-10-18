@@ -66,6 +66,30 @@ async function reviewRun(options = {}) {
   return { result, observed, repo, box, iso, logs };
 }
 
+test('專案未登記掃描者時，正式複審仍使用 reviewers 與隔離流程', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const settingsFile = new URL('../settings.json', import.meta.url);
+  const settings = JSON.parse(readFileSync(settingsFile, 'utf8'));
+  assert.equal(settings.scanner.tool, '無');
+  const reviewer = settings.reviewers.find((row) => row.participant === settings.defaultDivision.reviewer);
+  assert.ok(reviewer);
+  let probes = 0;
+  const { result, observed, repo, box } = await reviewRun({
+    args: { model: reviewer.strongest, effort: reviewer.maxEffort },
+    deps: { settingsFile: settingsFile.pathname, runCanary: async () => { probes++; return { code: 0, lines: ['synthetic review canary'] }; } },
+  });
+  assert.equal(probes, 1, '複審仍須走掃前檢查；此替身不證明真隔離有效');
+  assert.equal(result.code, 0, result.summary.join('\n'));
+  assert.ok(observed, '合成模型須收到本題新建的正式材料');
+  assert.equal(result.review?.head, repo.head);
+  assert.equal(result.review?.model, reviewer.strongest);
+  assert.equal(result.review?.effort, reviewer.maxEffort);
+  assert.equal(result.review?.reply, 'FAKE-REPLY');
+  assert.ok(result.review);
+  const launch = JSON.parse(readFileSync(join(result.review.resultsDir, 'launch.json'), 'utf8'));
+  assert.equal(launch.profileSha256, hash(readFileSync(new URL('../scripts/grok-sandbox.sb', import.meta.url))));
+  assert.equal(existsSync(box), false);
+});
+
 test('複審非零仍拒收並清理，轉送診斷只留下經驗證的固定資料', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
   const record = { route: 'responses', status: 429, phase: 'complete', error: 'none' };
   for (const item of [record, { ...record, privateField: 'PRIVATE-DIAGNOSTIC' }]) {

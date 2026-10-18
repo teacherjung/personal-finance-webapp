@@ -171,7 +171,7 @@ test('ready 沿用 claim challenge 時不產生 permit；不同 challenge 才授
   }
 });
 
-test('正式入口只接受數值精確等於完整容量的資格收據', () => {
+test('正式入口核完整容量收據；停用的專案登記在建目錄前拒絕', () => {
   const runner = new URL('../scripts/gemini-browser-runner.js', import.meta.url).href;
   const protocol = new URL('../scripts/gemini-browser-protocol.js', import.meta.url).href;
   const fixture = new URL('./helpers/gemini-browser-fixture.js', import.meta.url).href;
@@ -184,7 +184,9 @@ test('正式入口只接受數值精確等於完整容量的資格收據', () =>
     import {material as makeMaterial} from ${JSON.stringify(fixture)};
     const material=makeMaterial(), context=vm.createContext({Buffer,TextDecoder,process,setTimeout,clearTimeout});
     const node=realpathSync(process.execPath), nodeSha='1'.repeat(64), sourceSha='2'.repeat(64), head='3'.repeat(40);
-    let receiptBytes, reached=0;
+    const projectSettings=readFileSync(new URL('../settings.json',${JSON.stringify(runner)}));
+    const activeSettings=Buffer.from(JSON.stringify({scanner:{strongest:protocol.MODEL,maxEffort:protocol.EFFORT,tool:'gemini-browser-runner.js'}}));
+    let receiptBytes, settingsBytes=activeSettings, reached=0;
     const module=new vm.SourceTextModule(readFileSync(new URL(${JSON.stringify(runner)}),'utf8'),
       {context,identifier:${JSON.stringify(runner)},initializeImportMeta(meta,m){meta.url=m.identifier;}});
     await module.link(async (specifier,ref)=>{
@@ -193,7 +195,7 @@ test('正式入口只接受數值精確等於完整容量的資格收據', () =>
       if(specifier==='node:fs')value.mkdirSync=()=>{reached++;throw Error('PREFLIGHT_ACCEPTED');};
       if(specifier==='./gemini-browser-files.js')Object.assign(value,{
         sourceDigest:()=>({sha256:sourceSha}),
-        readBoundedFile:p=>p.endsWith('settings.json')?Buffer.from(JSON.stringify({scanner:{strongest:protocol.MODEL,maxEffort:protocol.EFFORT,tool:'gemini-browser-runner.js'}})):receiptBytes
+        readBoundedFile:p=>p.endsWith('settings.json')?settingsBytes:receiptBytes
       });
       if(specifier==='./gemini-native-runner.js')value.snapshotPinnedSources=()=>[];
       if(specifier==='./gemini-scan.js')Object.assign(value,{
@@ -203,7 +205,8 @@ test('正式入口只接受數值精確等於完整容量的資格收據', () =>
     });
     await module.evaluate();
     const cap=protocol.PROMPT_CAP;
-    for(const [label,promptBytes] of [['good',cap],['missing',undefined],['object',{}],['string',String(cap)],['below',cap-1],['above',cap+1],['fraction',cap+0.5]]){
+    for(const [label,promptBytes] of [['good',cap],['missing',undefined],['object',{}],['string',String(cap)],['below',cap-1],['above',cap+1],['fraction',cap+0.5],['cancelled',cap]]){
+      settingsBytes=label==='cancelled'?projectSettings:activeSettings;
       receiptBytes=Buffer.from(JSON.stringify({purpose:'qualification',status:'PUBLISHED',sourceSha256:sourceSha,
         providerHead:head,promptBytes,sourcePins:[{name:'node',sha256:nodeSha}]}));
       reached=0;
@@ -214,7 +217,7 @@ test('正式入口只接受數值精確等於完整容量的資格收據', () =>
         base:material.base,head:material.head,promptFile:'/synthetic/prompt',pins,
         qualification:{path:'/synthetic/receipt',sha256:protocol.sha256(receiptBytes)}});}
       catch(error){message=error.message;}
-      assert.equal(message,label==='good'?'PREFLIGHT_ACCEPTED':'GEMINI_BROWSER_QUALIFICATION',label);
+      assert.equal(message,label==='good'?'PREFLIGHT_ACCEPTED':label==='cancelled'?'GEMINI_BROWSER_REGISTRATION':'GEMINI_BROWSER_QUALIFICATION',label);
       assert.equal(reached,label==='good'?1:0,label);
     }
     process.stdout.write('QUALIFICATION-CAPACITY-OK');
