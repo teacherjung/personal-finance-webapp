@@ -66,6 +66,11 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
   assert.equal(tierOf('scripts/grok-review.js').tier, tierId('E'), '正式複審入口不在 App 啟動路徑；同族工具依程序與考題驗證');
   assert.deepEqual(tierOf('scripts/grok-review-projection.js'), { path: 'scripts/grok-review-projection.js', tier: tierId('E'), known: true }, '公開投影依收件程序與考題驗證；不在 App 啟動路徑');
   assert.deepEqual(tierOf('scripts/grok-review-projection-future.js'), { path: 'scripts/grok-review-projection-future.js', tier: settings.acceptance.unknownTier, known: false });
+  for (const file of ['gemini-review.js', 'gemini-review-protocol.js']) {
+    const path = `scripts/${file}`;
+    assert.deepEqual(tierOf(path), { path, tier: tierId('E'), known: true }, '複審候選及離線收件不在 App 啟動路徑；工具安全驗證另依施工計畫');
+  }
+  assert.deepEqual(tierOf('scripts/gemini-review-future.js'), { path: 'scripts/gemini-review-future.js', tier: settings.acceptance.unknownTier, known: false });
   assert.deepEqual(tierOf('scripts/grok-final-reply.js'), { path: 'scripts/grok-final-reply.js', tier: tierId('E'), known: true }, '完整結論接線依程序與考題驗證；不在 App 啟動路徑');
   for (const name of ['gemini-auth', 'gemini-client', 'gemini-relay', 'gemini-scan']) {
     assert.deepEqual(tierOf(`scripts/${name}.js`), { path: `scripts/${name}.js`, tier: tierId('E'), known: true }, '隔離掃描腳本依程序與考題驗證；不在 App 啟動路徑');

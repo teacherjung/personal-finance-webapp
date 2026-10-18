@@ -913,7 +913,7 @@
     "tier": "E（不需驗收）"
    },
    {
-    "pattern": "^scripts/(audit-grok-scan|grok-scan|grok-review|grok-review-projection|grok-final-reply|grok-bump|grok-relay|grok-auth-refresh|grok-sandbox-canary|gemini-auth|gemini-client|gemini-relay|gemini-scan|c6-adversarial)\\.js$",
+    "pattern": "^scripts/(audit-grok-scan|grok-scan|grok-review|grok-review-projection|grok-final-reply|grok-bump|grok-relay|grok-auth-refresh|grok-sandbox-canary|gemini-auth|gemini-client|gemini-relay|gemini-scan|gemini-review|gemini-review-protocol|c6-adversarial)\\.js$",
     "tier": "E（不需驗收）"
    },
    {
