@@ -80,6 +80,7 @@ async function attachmentState(s) {
   fields(result, ['count', 'selectedFiles', 'name', 'ready']);
   if (!Number.isSafeInteger(result.count) || result.count < 0 || !Number.isSafeInteger(result.selectedFiles) || result.selectedFiles < 0
     || typeof result.ready !== 'boolean' || (result.name !== null && typeof result.name !== 'string')) browserError('ATTACHMENT_UI');
+  if (result.selectedFiles > 1) browserError('ATTACHMENT_UI');
   return result;
 }
 async function attachmentReady(s) {

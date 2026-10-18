@@ -21,6 +21,8 @@
 
 `uploadBrowserScan` 再核來源、頁面與空附件，發新 upload challenge；runner 核本場 instance、tab、組合雜湊及附件後給一次許可。CUA 先不可逆消耗，先訂閱 filechooser 再點已觀測的本機 Upload files，僅 `setFiles([本場固定路徑])` 一次。事件、click 與 setFiles 明確設時限；不使用隱藏狀態、DOM 寫入、網路 API 或 Drive。上傳本身就可能傳送資料，因此許可必須在檔案選擇器之前。setFiles 返回只記 UPLOADED，不當成附件可用證據。
 
+依 [Sol 補正裁示](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6244205523)，既有附件摘要的 selectedFiles 大於 1 即拒收；0 或 1 仍須通過唯一就緒預覽與完整檔名核對。選擇器可能在上傳後清空，因此不要求固定為 1，也不把此摘要當成遠端附件內容證明。假身的矛盾摘要題只證明送出分支拒收，不證明官方頁面能形成該狀態。
+
 `submitBrowserScan` 檢查唯一 `uploader-file-preview`、其唯一 `.file-preview-container` 的單一 `aria-describedby` 直接描述，完整檔名必須一致。可用狀態依已觀測的 TXT 標籤、非 loading 內容、無進度條及可用送出按鈕；縮短顯示的檔名或 FileList 本身不算完整核對。固定短提示填入後與送出前，各在同一 textbox 內對完整 textContent 作逐字比較，只回傳有限摘要。再取得另一個新 challenge 的 Submit 許可、消耗、重核附件／提示／模型／臨時／零回覆，才送出一次。
 
 `browser-codeblock-ui/v1` 分列本機附件雜湊與 UI 名稱／可用性觀測；不宣稱已量得 Google 遠端檔案雜湊。唯一完整封閉 JSON、尾端挑戰、官方模型明細及 `receiverConsumptionVerified:false` 保留。輸出、上傳事件、掃前後隔離、來源／材料重建及程序／分頁清理均須通過。

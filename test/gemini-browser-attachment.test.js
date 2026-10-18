@@ -151,3 +151,21 @@ test('未消耗上傳許可，runner 不簽發 Submit；成功上傳不能省略
     assert.throws(() => j.lease.tick()); assert.equal(mailExists(j.dir, 'permit.json'), false);
   } finally { j.cleanup(); }
 });
+
+// 假身只核矛盾摘要的處置；不證明官方頁面會形成此狀態，也不量遠端附件內容。
+test('唯一就緒預覽但選擇器多檔即零 Submit，零或一檔保留正常送出', async () => {
+  for (const selectedFiles of [0, 1, 2]) {
+    const j = jobFixture(), b = browserFixture(j); j.serve();
+    try {
+      await beginBrowserScan(b.browser, j.runId); await uploadBrowserScan(j.runId);
+      assert.equal(b.state.uploads, 1); b.state.selectedFiles = selectedFiles;
+      if (selectedFiles > 1) {
+        await assert.rejects(submitBrowserScan(j.runId), /GEMINI_BROWSER_ATTACHMENT_UI/);
+        assert.equal(b.state.sent, 0); assert.equal(mailExists(j.dir, 'permit.json'), false); assert.equal(b.state.closed, true);
+      } else {
+        assert.equal((await submitBrowserScan(j.runId)).state, 'SUBMITTED'); assert.equal(b.state.sent, 1);
+        await cancelBrowserScan(j.runId);
+      }
+    } finally { j.cleanup(); }
+  }
+});

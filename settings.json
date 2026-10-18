@@ -120,7 +120,7 @@
  },
  "mainBranch": "main",
  "scanner": {
-  "tool": "Gemini 官方網頁：固定盒外 launcher 呼叫 scripts/gemini-browser-runner.js，配合同一提供者的固定 CUA loader；操作者先核對獨立保存的 launcher、Node 與 loader 指紋，依 docs/gemini-browser-formal-plan.md 的固定交接順序執行。裸腳本不是發射入口；每場部署固定受掃 repo、base/head、提示與同版資格收據。完整請求上限 32 KiB，超量整份拒收；不直接起 CLI、不交出登入憑證。",
+  "tool": "Gemini 官方網頁：固定盒外 launcher 呼叫 scripts/gemini-browser-runner.js，配合同一提供者的固定 CUA loader；操作者先核對獨立保存的 launcher、Node 與 loader 指紋，依 docs/gemini-browser-formal-plan.md 的固定交接順序執行。裸腳本不是發射入口；每場部署固定受掃 repo、base/head、提示與同版資格收據。單一 UTF-8 文字附件上限 2 MiB（2,097,152 bytes），固定短提示另計、上限 4 KiB（4,096 bytes）；超量整份拒收、不截斷、不分批；不直接起 CLI、不交出登入憑證。",
   "assignedBy": "掃描發射者＝起得了掃描者的那一方（RULES A1、G4）；本輪登記 Codex，能力證據限 #701 的固定 Gemini 網頁入口、完整資格及正式用途合成驗收，不延伸到其他宿主或原生 CLI。William 掃描者改 Gemini、維持隔離的指示見 AGENTS.md；設定操作化見 #701 的 GPT-6.1 Sol 技術裁示。來源換版須重新固定及驗證。",
   "tieBreak": "實作者（裁示者 2026-09-25 第二輪 A1）：兩方都完成同一入口的能力驗證時，預設由實作者發射；沒有驗證證據的協作者不因角色登記而取得能力資格。",
   "fallback": "實作者（RULES G4）：沒有掃描者或沒有任何一方起得了時，記錄未執行並轉正式；已具能力但本場掃不成時，由掃描發射者在 PR 說明的「### 複審後掃」寫「未執行：<原因>」並按 G4 轉正式。不得另開 Grok 或原生通道代替已登記入口。",

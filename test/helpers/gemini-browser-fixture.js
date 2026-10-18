@@ -130,7 +130,7 @@ export function browserFixture(job, options = {}) {
       const element = { ownerDocument: { getElementById: id => { assertKey(id === 'synthetic-description'); return { textContent: state.attachmentName ?? job.packet.manifest.attachment.name }; } },
         querySelectorAll: selector => {
           if (selector === 'uploader-file-preview') return Array.from({ length: state.attachmentCount ?? state.uploads }, () => preview);
-          if (selector === 'input[type=file]') return [{ files: Array.from({ length: state.uploads }) }];
+          if (selector === 'input[type=file]') return [{ files: Array.from({ length: state.selectedFiles ?? state.uploads }) }];
           throw Error('unexpected composer selector ' + selector);
         } };
       return fn(element, expected);
