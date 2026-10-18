@@ -50,6 +50,7 @@ const API = {
 let app;
 let lastWrite;
 let legacyDropCashflowText = false;
+let legacyDropCardNoteSync = false;
 let failedGetPath = '';
 async function boot() {
   if (app) return app;
@@ -73,7 +74,8 @@ async function boot() {
       const appliedText = lastWrite.body.applySameSummary || lastWrite.body.applySameRemark
         ? { summary: Number(Boolean(lastWrite.body.applySameSummary)), remark: Number(Boolean(lastWrite.body.applySameRemark)) }
         : undefined;
-      return new Response(JSON.stringify({ ...updated, ...(appliedText ? { appliedText } : {}) }),
+      const appliedNote = lastWrite.body.applySameNote && !legacyDropCardNoteSync ? { changed: 1, learned: 1 } : undefined;
+      return new Response(JSON.stringify({ ...updated, ...(appliedText ? { appliedText } : {}), ...(appliedNote ? { appliedNote } : {}) }),
         { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
     const body = Object.hasOwn(API, path) ? API[path] : {};
@@ -925,4 +927,213 @@ test('只有帶完整帳單原文的編輯提示才宣稱未來相同原文匯�
   const manualToast = text('#toast-root .toast:last-child');
   assert.match(manualToast, /摘要同步 1 筆/);
   assert.doesNotMatch(manualToast, /未來相同帳單原文匯入也適用/);
+});
+
+
+test('信用卡消費日：桌機只顯示月日，編輯仍保留完整日期', async () => {
+  await boot();
+  const { renderTransactions, setMonthFilter } = await import('../public/modules/transactions.js');
+  const original = API['/api/transactions'];
+  try {
+    API['/api/transactions'] = [{ ...FIXTURE[0], date: '2026-08-03' }];
+    setMonthFilter('2026-08');
+    await renderTransactions();
+    const row = document.querySelector('[data-edit="c1"]').closest('tr');
+    assert.equal(row.cells[0].querySelector('.credit-desktop-only').textContent, '8/3');
+    assert.equal(row.cells[0].querySelector('.credit-mobile-only').textContent, '2026-08-03');
+    assert.equal(row.cells[0].title, '2026-08-03');
+    row.querySelector('[data-edit]').click();
+    assert.equal(document.querySelector('#f_date').value, '2026-08-03');
+    document.querySelector('#modal-root .x-close').click();
+  } finally {
+    API['/api/transactions'] = original;
+    setMonthFilter(MONTH);
+    await renderTransactions();
+  }
+});
+
+
+test('信用卡說明選擇：同名跨月計數、預設不同步，分類與說明各自送出', async () => {
+  await boot();
+  const { renderTransactions, setMonthFilter } = await import('../public/modules/transactions.js');
+  const original = API['/api/transactions'];
+  const fixture = { ...FIXTURE[0], storeKey: '星巴克', stmtRef: 'c|2026-08-03|100|星巴克', note: '下午咖啡' };
+  try {
+    for (const [noteSync, categorySync] of [[false, false], [true, false], [false, true], [true, true]]) {
+      API['/api/transactions'] = [fixture,
+        { ...fixture, id: 'old-month', date: '2026-07-03', storeKey: '另一品牌' },
+        { ...fixture, id: 'other-note', note: '其他說明' },
+        { ...fixture, id: 'bank-note', ledger: 'cashflow', source: 'bank' }];
+      setMonthFilter(MONTH);
+      await renderTransactions();
+      document.querySelector('[data-edit="c1"]').click();
+      const select = document.querySelector('#f_applySameNote');
+      assert.equal(select.value, 'false');
+      assert.equal(select.getAttribute('aria-describedby'), 'credit-note-sync-help');
+      assert.match(text('#credit-note-sync-help'), /其他月份與卡片/);
+      assert.match(text('#credit-note-sync-help'), /未來名稱，即使其他明細為 0 筆/);
+      assert.match(text('#credit-note-sync-help'), /同步清空.*保留分類規則/);
+      assert.equal(select.closest('.full').querySelector('label').textContent, '同時套用「消費說明」到其他相同的說明（共 1 筆）');
+      assert.equal(document.querySelector('#f_applyAll').closest('.full').querySelector('label').textContent, '同時套用「分類」「子分類」到其他相同的店家（共 1 筆）');
+      assert.equal(document.querySelector('#f_applyAll').value, 'false');
+      select.value = String(noteSync);
+      document.querySelector('#f_applyAll').value = String(categorySync);
+      document.querySelector('#f_note').value = '聚會咖啡';
+      lastWrite = null;
+      document.querySelector('#modalForm').dispatchEvent(new globalThis.Event('submit', { bubbles: true, cancelable: true }));
+      await settleRender();
+      assert.equal(lastWrite.path, '/api/transactions/c1');
+      assert.equal(lastWrite.body.note, '聚會咖啡');
+      assert.equal(lastWrite.body.applySameNote, noteSync ? true : undefined);
+      assert.equal(lastWrite.body.expectedNote, noteSync ? '下午咖啡' : undefined);
+      assert.equal(lastWrite.body.applyAll, categorySync ? true : undefined);
+      assert.equal(document.querySelector('#modalForm'), null, '成功儲存才關閉表單');
+      if (noteSync) assert.match(text('#toast-root .toast:last-child'), /未來相同帳單原文也會套用/);
+    }
+  } finally {
+    API['/api/transactions'] = original;
+    setMonthFilter(MONTH);
+    await renderTransactions();
+  }
+});
+
+test('信用卡說明選擇：只有單筆仍可記住未來，伺服器未回同步結果須保留表單提示待核對', async () => {
+  await boot();
+  const { renderTransactions, setMonthFilter } = await import('../public/modules/transactions.js');
+  const original = API['/api/transactions'];
+  try {
+    API['/api/transactions'] = [{ ...FIXTURE[0], stmtRef: 'c|2026-08-03|100|測試商家', note: '單一說明' }];
+    setMonthFilter(MONTH);
+    await renderTransactions();
+    document.querySelector('[data-edit="c1"]').click();
+    assert.equal(document.querySelector('#f_applySameNote').closest('.full').querySelector('label').textContent, '同時套用「消費說明」到其他相同的說明（共 0 筆）');
+    document.querySelector('#f_note').value = '新說明';
+    document.querySelector('#f_applySameNote').value = 'true';
+    legacyDropCardNoteSync = true;
+    document.querySelector('#modalForm').dispatchEvent(new globalThis.Event('submit', { bubbles: true, cancelable: true }));
+    await settleRender();
+    assert.equal(lastWrite.body.applySameNote, true);
+    assert.ok(document.querySelector('#modalForm'));
+    assert.match(text('#toast-root .toast:last-child'), /資料可能已儲存/);
+    document.querySelector('#modal-root .x-close').click();
+  } finally {
+    legacyDropCardNoteSync = false;
+    API['/api/transactions'] = original;
+    setMonthFilter(MONTH);
+    await renderTransactions();
+  }
+});
+function installRecoveryRows() {
+  const card = (id, date) => ({ ...FIXTURE[0], id, date });
+  API['/api/transactions'] = [card('recovery-aug', '2026-08-01'), card('recovery-mar', '2026-03-01'), card('recovery-old', '2025-08-01'), card('recovery-old-mar', '2025-03-01')];
+}
+function selectRecovery(id, value) {
+  const el = document.getElementById(id); el.value = value;
+  el.dispatchEvent(new globalThis.Event('change', { bubbles: true }));
+}
+function assertRecoveryPeriod(year, month, ids) {
+  assert.equal(document.getElementById('creditYearSel').value, year);
+  assert.equal(document.getElementById('creditMonthSel').value, month);
+  assert.deepEqual(rowIds(), ids);
+}
+
+test('信用卡載入回復｜切年失敗後排序成功仍停在已顯示月份', async () => {
+  await boot();
+  const { renderTransactions, setMonthFilter } = await import('../public/modules/transactions.js');
+  const original = API['/api/transactions'];
+  try {
+    installRecoveryRows(); setMonthFilter('2026-08'); await renderTransactions();
+    document.getElementById('toast-root').replaceChildren();
+    failedGetPath = '/api/accounts';
+    selectRecovery('creditYearSel', '2025'); await settleRender();
+    assert.match(text('#toast-root'), /測試載入失敗/);
+    assertRecoveryPeriod('2026', '08', ['recovery-aug']);
+    failedGetPath = '';
+    document.querySelector('[data-sort="amount"]').click(); await settleRender();
+    assertRecoveryPeriod('2026', '08', ['recovery-aug']);
+  } finally { failedGetPath = ''; API['/api/transactions'] = original; setMonthFilter(MONTH); await renderTransactions(); }
+});
+
+test('信用卡載入回復｜新成功月份之後失敗再成功保留新回復點', async () => {
+  await boot();
+  const { renderTransactions, setMonthFilter } = await import('../public/modules/transactions.js');
+  const original = API['/api/transactions'];
+  try {
+    installRecoveryRows(); setMonthFilter('2026-08'); await renderTransactions();
+    selectRecovery('creditMonthSel', '03'); await settleRender();
+    assertRecoveryPeriod('2026', '03', ['recovery-mar']);
+    document.getElementById('toast-root').replaceChildren();
+    failedGetPath = '/api/accounts';
+    document.querySelector('[data-sort="amount"]').click(); await settleRender();
+    assert.match(text('#toast-root'), /測試載入失敗/);
+    assertRecoveryPeriod('2026', '03', ['recovery-mar']);
+    failedGetPath = '';
+    document.querySelector('[data-sort="amount"]').click(); await settleRender();
+    assertRecoveryPeriod('2026', '03', ['recovery-mar']);
+  } finally { failedGetPath = ''; API['/api/transactions'] = original; setMonthFilter(MONTH); await renderTransactions(); }
+});
+
+test('信用卡載入回復｜新請求失敗已呈現後舊失敗不再插入提示', async () => {
+  await boot();
+  const { renderTransactions, setMonthFilter } = await import('../public/modules/transactions.js');
+  const original = API['/api/transactions'], originalFetch = globalThis.fetch;
+  const pending = [];
+  try {
+    installRecoveryRows(); setMonthFilter('2026-08'); await renderTransactions();
+    document.getElementById('toast-root').replaceChildren();
+    globalThis.fetch = (url, init) => String(url).split('?')[0] === '/api/accounts'
+      ? new Promise(resolve => pending.push(resolve)) : originalFetch(url, init);
+    selectRecovery('creditYearSel', '2025');
+    selectRecovery('creditMonthSel', '03');
+    assert.equal(pending.length, 2);
+    pending[1](new Response(JSON.stringify({ error: '本題較新失敗' }), { status: 503, headers: { 'Content-Type': 'application/json' } }));
+    await settleRender();
+    assertRecoveryPeriod('2026', '08', ['recovery-aug']);
+    assert.match(text('#toast-root'), /本題較新失敗/);
+    const notices = [...document.getElementById('toast-root').children];
+    const before = text('#toast-root');
+    assert.equal(notices.length, 1);
+    pending[0](new Response(JSON.stringify({ error: '本題較舊失敗' }), { status: 503, headers: { 'Content-Type': 'application/json' } }));
+    await settleRender();
+    assertRecoveryPeriod('2026', '08', ['recovery-aug']);
+    assert.equal(text('#toast-root'), before);
+    assert.deepEqual([...document.getElementById('toast-root').children], notices);
+  } finally { globalThis.fetch = originalFetch; for (const resolve of pending) resolve(new Response('{}')); API['/api/transactions'] = original; setMonthFilter(MONTH); await renderTransactions(); }
+});
+
+
+test('信用卡同步回覆：斷線與壞計數保留表單，說明結果待核對且不自行重送', async () => {
+  await boot();
+  const { renderTransactions, setMonthFilter } = await import('../public/modules/transactions.js');
+  const original = API['/api/transactions'], originalFetch = globalThis.fetch;
+  try {
+    for (const result of [null, {}, { changed: -1, learned: 1 }, { changed: 0, learned: '1' }]) {
+      API['/api/transactions'] = [{ ...FIXTURE[0], stmtRef: 'c|2026-08-03|100|測試商家', note: '本題來源' }];
+      setMonthFilter(MONTH); await renderTransactions();
+      document.getElementById('toast-root').replaceChildren();
+      document.querySelector('[data-edit="c1"]').click();
+      assert.match(text('#credit-note-sync-help'), /即使其他明細為 0 筆/);
+      document.querySelector('#f_applySameNote').value = 'true';
+      document.querySelector('#f_note').value = '本題新名稱';
+      let writes = 0;
+      globalThis.fetch = async (url, init) => {
+        if (String(url) === '/api/transactions/c1' && init?.method === 'PUT') {
+          writes++;
+          assert.equal(JSON.parse(init.body).expectedNote, '本題來源');
+          if (result === null) throw new TypeError('本題連線中斷');
+          return new Response(JSON.stringify({ appliedNote: result }), { headers: { 'Content-Type': 'application/json' } });
+        }
+        return originalFetch(url, init);
+      };
+      document.querySelector('#modalForm').dispatchEvent(new globalThis.Event('submit', { bubbles: true, cancelable: true }));
+      await settleRender();
+      assert.equal(writes, 1);
+      assert.ok(document.querySelector('#modalForm'));
+      assert.match(text('#toast-root'), /重新載入/);
+      assert.match(text('#toast-root'), /結果待核對|資料可能已儲存/);
+      assert.doesNotMatch(text('#toast-root'), /已儲存消費說明|並更新其他/);
+      document.querySelector('#modal-root .x-close').click();
+      globalThis.fetch = originalFetch;
+    }
+  } finally { globalThis.fetch = originalFetch; API['/api/transactions'] = original; setMonthFilter(MONTH); await renderTransactions(); }
 });

@@ -957,15 +957,15 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
   }
   .cashflow-stat-action[aria-pressed="true"] > .ic { opacity: 1; transform: scale(1); }
   .cashflow-ledger th:nth-child(1) { width: 8%; }
-  .cashflow-ledger th:nth-child(2) { width: 14%; }
-  .cashflow-ledger th:nth-child(3) { width: 32%; }
+  .cashflow-ledger th:nth-child(2) { width: 16%; }
+  .cashflow-ledger th:nth-child(3) { width: 23%; }
   .cashflow-ledger th:nth-child(4) { width: 9%; }
-  .cashflow-ledger th:nth-child(5) { width: 16%; }
-  .cashflow-ledger th:nth-child(7) { width: 90px; }
+  .cashflow-ledger th:nth-child(5) { width: 12%; }
+  .cashflow-ledger th:nth-child(6) { width: 22%; }
+  .cashflow-ledger th:nth-child(7) { width: 10%; }
   .cashflow-ledger td:nth-child(2) { overflow: hidden; text-overflow: ellipsis; }
   .cashflow-ledger td:nth-child(4), .cashflow-ledger td:nth-child(5) { overflow-wrap: anywhere; }
-  .cashflow-ledger th:nth-child(6), .cashflow-ledger td:nth-child(6),
-  .cashflow-ledger th:nth-child(7), .cashflow-ledger td:nth-child(7) { padding-inline: 14px; }
+  .cashflow-ledger th, .cashflow-ledger td { padding-inline: clamp(6px, 1vw, 14px); }
   .cashflow-ledger .cf-note { min-width: 0; max-width: none; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1030,7 +1030,12 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
   }
   .cashflow-ledger-section .cashflow-ledger th { border-bottom: 2px solid var(--frame); }
   /* 欄寬只依表頭分配，避免篩選後的文字長度推動欄位。 */
-  .cashflow-ledger-section .cashflow-ledger table { table-layout: fixed; min-width: 1080px; }
+  .cashflow-ledger-section .cashflow-ledger table { table-layout: fixed; width: 100%; min-width: 0; }
+  .cashflow-ledger-section .cashflow-ledger th { white-space: normal; overflow-wrap: anywhere; }
+  .cashflow-ledger-section .cashflow-description-cell { min-width: 0; }
+  .cashflow-ledger .cf-note-summary, .cashflow-ledger .cf-note-remark { white-space: normal; overflow-wrap: anywhere; }
+  .cashflow-ledger td.num { white-space: nowrap; overflow-wrap: normal; }
+  .cashflow-ledger .row-actions { flex-wrap: wrap; }
 }
 .cashflow-ledger table { min-width: 760px; }
 .cashflow-ledger th { border-bottom: 2px solid var(--frame); }
@@ -1143,6 +1148,21 @@ th.sortable:hover .sort-tri { color: var(--text-dim); }
   .credit-stat h3 { font-size: 11.5px; }
   .credit-ledger th { border-bottom: 2px solid var(--frame); }
   .credit-ledger td { padding-top: 13px; padding-bottom: 13px; }
+  /* 依表頭固定欄寬，讓各月的文字長短不會推動欄位。 */
+  .credit-ledger table { table-layout: fixed; width: 100%; min-width: 0; }
+  .credit-ledger th:nth-child(1) { width: 8%; }
+  .credit-ledger th:nth-child(2) { width: 17%; }
+  .credit-ledger th:nth-child(3) { width: 22%; }
+  .credit-ledger th:nth-child(4) { width: 9%; }
+  .credit-ledger th:nth-child(5) { width: 12%; }
+  .credit-ledger th:nth-child(6) { width: 22%; }
+  .credit-ledger th:nth-child(7) { width: 10%; }
+  .credit-ledger td:nth-child(2) { overflow: hidden; text-overflow: ellipsis; }
+  .credit-ledger td:nth-child(3), .credit-ledger td:nth-child(4), .credit-ledger td:nth-child(5) { overflow-wrap: anywhere; }
+  .credit-ledger th, .credit-ledger td { padding-inline: clamp(6px, 1vw, 14px); }
+  .credit-ledger th { white-space: normal; overflow-wrap: anywhere; }
+  .credit-ledger td:nth-child(6) { white-space: nowrap; overflow-wrap: normal; }
+  .credit-ledger .row-actions { flex-wrap: wrap; }
   .credit-category-panel {
     margin-top: 24px; padding: 0; background: transparent; border: 0; border-radius: 0; box-shadow: none;
   }

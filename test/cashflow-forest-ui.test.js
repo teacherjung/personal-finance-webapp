@@ -226,14 +226,14 @@ test('銀行收支樣式：桌機四張可互動摘要卡、手機篩選、帳�
   assert.match(desktopSummaryStyle, /\.cashflow-period-month \{[^}]*flex: 2 1 0/);
   assert.match(desktopSummaryStyle, /\.cashflow-period-selects \.cashflow-select select \{[^}]*height: 43px/);
   assert.match(desktopSummaryStyle, /\.cashflow-summary-grid > \.cashflow-stat \{[^}]*box-shadow: var\(--shadow\)/);
-  for (const [column, width] of [[3, '32%'], [4, '9%'], [5, '16%'], [7, '90px']]) {
-    assert.match(desktopSummaryStyle, new RegExp(`\\.cashflow-ledger th:nth-child\\(${column}\\) \\{ width: ${width.replace('%', '\\%')}; \\}`));
+  for (const [column, width] of [[1, '8%'], [2, '16%'], [3, '23%'], [4, '9%'], [5, '12%'], [6, '22%'], [7, '10%']]) {
+    assert.match(desktopSummaryStyle, new RegExp(`\\.cashflow-ledger th:nth-child\\(${column}\\) \\{ width: ${width.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}; \\}`));
   }
   const desktopLedgerStyle = css.replace(/\/\*[\s\S]*?\*\//g, '')
     .match(/@media \(min-width: 821px\) \{\s*\.cashflow-ledger-section \{[\s\S]*?^\}/m)?.[0] || '';
   assert.match(desktopLedgerStyle,
-    /\.cashflow-ledger-section \.cashflow-ledger table \{ table-layout: fixed; min-width: 1080px; \}/,
-    '切換金流後明細欄寬由固定表格配置，不被資料列文字推動');
+    /\.cashflow-ledger-section \.cashflow-ledger table \{ table-layout: fixed; width: 100%; min-width: 0; \}/,
+    '明細按容器寬度分配固定比例，切換金流不被文字推寬，也不以最小寬度撐出視窗');
   assert.match(desktopSummaryStyle, /\.cashflow-stat-action \{[^}]*display: block/);
   assert.doesNotMatch(desktopSummaryStyle, /\.cashflow-period-desktop \.cashflow-flow-control/);
   assert.match(css, /@media \(min-width: 821px\) \{[\s\S]*\.cashflow-ledger-section \.cashflow-controls \{[^}]*display: none/);

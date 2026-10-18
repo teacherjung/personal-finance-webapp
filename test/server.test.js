@@ -1634,3 +1634,319 @@ test('丙｜設定頁清除美元匯率：先存 33 → 送 null → 讀回不�
     assert.equal(sum.assets, 10 * FX_DEFAULT_TWD.USD);
   } finally { await saveDb(snapshot); await getDb(); }
 });
+
+// 本組使用隔離資料庫；各題自行鋪資料並還原，保留單筆文字的題目會實際執行整理與分類傳播。
+async function withCardNotes(run) {
+  const before = await getDb();
+  const { storeKeyOf } = await import('../lib/statement.js');
+  const db = structuredClone(before);
+  db.cards = [{ id: 'note-card', name: '說明測試卡', type: 'credit' }];
+  db.transactions = [];
+  db.learnedCategories = {};
+  const make = (id, orig, note, extra = {}) => ({
+    id, date: '2026-08-01', type: 'expense', ledger: 'card', source: 'stmt',
+    account: '說明測試卡', amount: 100, category: '飲食', subcategory: '咖啡',
+    storeKey: storeKeyOf(orig), stmtRef: `note-card|2026-08-01|100|${orig}`, note, ...extra,
+  });
+  const future = async (orig, date = '2026-10-01') => {
+    const response = await POST('/cards/note-card/statement/import', { transactions: [{
+      desc: orig, date, amount: 100, category: '飲食', subcategory: '咖啡', stmtRef: 'server-rebuild',
+    }] });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.imported, 1, JSON.stringify(result));
+    return (await getDb()).transactions.find(t => t.stmtRef === `note-card|${date}|100|${orig}`);
+  };
+  try { await run({ db, make, future }); } finally { await saveDb(before); }
+}
+
+test('信用卡說明：只改單筆在分類傳播與整理後仍保留，既有同原文和未來匯入不受影響', async () => {
+  await withCardNotes(async ({ db, make, future }) => {
+    const orig = '星巴克內湖店';
+    db.transactions = [make('single', orig, '共用舊名稱'), make('sibling', orig, '共用舊名稱')];
+    db.learnedCategories = { [orig]: { name: '共用舊名稱' } };
+    await saveDb(db);
+    const r = await PUT('/transactions/single', { note: '這筆是生日聚餐', noteMode: 'auto' });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).note, '這筆是生日聚餐');
+    const { normalizeBranches, applyCategoryToStore } = await import('../lib/services/statement-import.js');
+    await applyCategoryToStore(db.transactions[0].storeKey, '交通', '停車費');
+    await normalizeBranches();
+    const saved = await getDb();
+    assert.equal(saved.transactions[0].category, '交通', '分類傳播必須真的執行');
+    assert.equal(saved.transactions[0].note, '這筆是生日聚餐');
+    assert.equal(saved.transactions[0].noteMode, 'custom', '前端不能覆寫服務欄位');
+    assert.equal(saved.transactions[1].note, '共用舊名稱');
+    assert.equal(saved.learnedCategories[orig].name, '共用舊名稱');
+    assert.equal((await future(orig)).note, '共用舊名稱');
+    assert.equal(saved.transactions[0].stmtRef, db.transactions[0].stmtRef);
+  });
+});
+
+test('信用卡說明：同步跨月同名與未來原文，排除銀行、不同說明及同品牌其他原文', async () => {
+  await withCardNotes(async ({ db, make, future }) => {
+    db.transactions = [
+      make('sync', '星巴克', '下午點心'),
+      make('other-month', '星巴克南港店', '下午點心', { date: '2026-09-01', account: '另一張卡' }),
+      make('different-note', '星巴克', '已另取名'),
+      make('other-branch', '星巴克內湖店', '內湖咖啡'),
+      make('bank', '星巴克', '下午點心', { ledger: 'cashflow', source: 'bank' }),
+    ];
+    await saveDb(db);
+    const response = await PUT('/transactions/sync', { note: '朋友聚餐', applySameNote: true, expectedNote: '下午點心' });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.deepEqual(result.appliedNote, { changed: 1, learned: 2 });
+    const rows = (await getDb()).transactions;
+    assert.deepEqual(rows.map(t => t.note), ['朋友聚餐', '朋友聚餐', '已另取名', '內湖咖啡', '下午點心']);
+    assert.deepEqual(rows.map(t => t.category), db.transactions.map(t => t.category));
+    assert.deepEqual(rows.map(t => t.stmtRef), db.transactions.map(t => t.stmtRef));
+    assert.ok(rows.every(t => !Object.hasOwn(t, 'applySameNote')));
+    const { applyLearned } = await import('../lib/services/learning.js');
+    const preview = applyLearned(await getDb(), [
+      { desc: '星巴克', store: '星巴克', storeKey: '星巴克' },
+      { desc: '星巴克內湖店', store: '內湖', storeKey: '星巴克' },
+    ]);
+    assert.equal(preview[0].store, '朋友聚餐');
+    assert.equal(preview[0].storeCustom, true);
+    assert.equal(preview[1].store, '內湖');
+    assert.equal((await future('星巴克')).note, '朋友聚餐');
+    assert.equal((await future('星巴克南港店')).note, '朋友聚餐');
+    assert.notEqual((await future('星巴克內湖店')).note, '朋友聚餐');
+    const { normalizeBranches } = await import('../lib/services/statement-import.js');
+    await normalizeBranches();
+    const after = await getDb();
+    assert.equal(after.transactions.find(t => t.id === 'different-note').note, '已另取名');
+    assert.equal(after.transactions.find(t => t.id === 'sync').note, '朋友聚餐');
+    assert.equal(after.learnedCategories['星巴克'].nameScope, 'original');
+    assert.equal((await future('星巴克內湖店', '2026-11-01')).note.includes('朋友聚餐'), false);
+  });
+});
+
+test('信用卡說明：只有布林 true 才同步，分類與說明可分開或同時選', async () => {
+  await withCardNotes(async ({ db, make, future }) => {
+    for (const flag of [undefined, false, 'false', 'true', 1, {}, true]) {
+      db.transactions = [make('flags', '星巴克內湖店', '同名咖啡'), make('peer', '星巴克南港店', '同名咖啡')];
+      db.learnedCategories = {};
+      await saveDb(db);
+      const response = await PUT('/transactions/flags', { note: '新名', category: '交通', subcategory: '停車費', applySameNote: flag, expectedNote: '同名咖啡', applyAll: true });
+      assert.equal(response.status, 200);
+      const result = await response.json();
+      assert.equal(result.note, '新名');
+      const peer = (await getDb()).transactions.find(t => t.id === 'peer');
+      assert.equal(peer.category, '交通', '分類選擇與說明旗標獨立');
+      assert.equal(peer.note === '新名', flag === true);
+      assert.equal(Boolean(result.appliedNote), flag === true);
+      assert.equal((await future('星巴克南港店')).note === '新名', flag === true);
+    }
+  });
+});
+
+test('信用卡說明：單筆清空回自動不清共用學習，同步清空才取消未來名稱', async () => {
+  await withCardNotes(async ({ db, make, future }) => {
+    const orig = '星巴克內湖店';
+    db.transactions = [make('reset', orig, '週末聚會'), make('keep', orig, '週末聚會')];
+    db.learnedCategories = { [orig]: { name: '週末聚會', nameScope: 'original' } };
+    await saveDb(db);
+    let response = await PUT('/transactions/reset', { note: '' });
+    assert.equal(response.status, 200);
+    let result = await response.json();
+    assert.equal(result.noteMode, 'auto');
+    assert.ok(result.note && result.note !== '週末聚會');
+    const { normalizeBranches } = await import('../lib/services/statement-import.js');
+    await normalizeBranches();
+    assert.equal((await getDb()).transactions.find(t => t.id === 'reset').note, result.note);
+    assert.equal((await future(orig)).note, '週末聚會');
+    response = await PUT('/transactions/keep', { note: '', applySameNote: true, expectedNote: '週末聚會' });
+    assert.equal(response.status, 200);
+    result = await response.json();
+    assert.equal(result.appliedNote.changed, 1, '同步要包含剛匯入的同名列');
+    assert.equal((await getDb()).learnedCategories[orig]?.name, undefined);
+    assert.notEqual((await future(orig, '2026-11-01')).note, '週末聚會');
+  });
+});
+
+test('信用卡說明：使用者明確取的名稱在整理與後續分類編輯後逐字保留', async () => {
+  await withCardNotes(async ({ db, make, future }) => {
+    const orig = '星巴克內湖店';
+    db.transactions = [make('literal', orig, '舊說明')];
+    await saveDb(db);
+    const r = await PUT('/transactions/literal', { note: '優食（UE）', applySameNote: true, expectedNote: '舊說明' });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).appliedNote.learned, 1);
+    const imported = await future(orig);
+    assert.equal(imported.note, '優食（UE）');
+    const { normalizeBranches } = await import('../lib/services/statement-import.js');
+    await normalizeBranches();
+    const edit = await PUT(`/transactions/${imported.id}`, { category: '交通', subcategory: '停車費' });
+    assert.equal(edit.status, 200);
+    assert.equal((await edit.json()).note, '優食（UE）');
+    assert.equal((await getDb()).learnedCategories[orig].name, '優食（UE）');
+  });
+});
+
+test('信用卡說明：同步不合法原文整筆回滾，空白來源不提供同步', async () => {
+  await withCardNotes(async ({ db, make }) => {
+    db.transactions = [make('safe', '星巴克', '同名'), make('unsafe', '__proto__', '同名')];
+    await saveDb(db);
+    const before = await getDb();
+    const r = await PUT('/transactions/safe', { note: '不可部分儲存', applySameNote: true, expectedNote: '同名' });
+    assert.equal(r.status, 400);
+    const saved = await getDb();
+    assert.deepEqual(saved.transactions, before.transactions);
+    assert.deepEqual(saved.learnedCategories, before.learnedCategories);
+    db.transactions = [make('blank', '星巴克', '')];
+    await saveDb(db);
+    assert.equal((await PUT('/transactions/blank', { note: '新名稱', applySameNote: true, expectedNote: '' })).status, 400);
+    assert.equal((await getDb()).transactions[0].note, '');
+  });
+});
+
+test('信用卡說明：手動卡帳與服務費同名可更新既有列，但不留下未來名稱規則', async () => {
+  await withCardNotes(async ({ db, make }) => {
+    for (const fields of [{ source: 'manual', stmtRef: '', storeKey: '' }, { storeKey: '國外交易服務費', stmtRef: 'c|2026-08-01|100|國外交易服務費' }]) {
+      db.transactions = [make('limited', '測試', '同名', fields), make('peer', '測試', '同名', fields)];
+      db.learnedCategories = {};
+      await saveDb(db);
+      const r = await PUT('/transactions/limited', { note: '本次費用', applySameNote: true, expectedNote: '同名' });
+      assert.equal(r.status, 200);
+      assert.deepEqual((await r.json()).appliedNote, { changed: 1, learned: 0 });
+      const saved = await getDb();
+      assert.deepEqual(saved.transactions.map(t => t.note), ['本次費用', '本次費用']);
+      assert.deepEqual(saved.learnedCategories, {});
+    }
+  });
+});
+
+
+test('信用卡說明：備份還原保留單筆選擇與未來規則，設定頁明確還原會解除單筆保留', async () => {
+  await withCardNotes(async ({ db, make, future }) => {
+    const orig = '星巴克內湖店';
+    db.transactions = [make('backup', orig, '備份舊名')];
+    await saveDb(db);
+    assert.equal((await PUT('/transactions/backup', { note: '全店名稱', applySameNote: true, expectedNote: '備份舊名' })).status, 200);
+    assert.equal((await PUT('/transactions/backup', { note: '單筆備註' })).status, 200);
+    const exported = await GET('/export');
+    assert.equal(exported.transactions[0].noteMode, 'custom');
+    assert.equal(exported.learnedCategories[orig].nameScope, 'original');
+    assert.equal((await PUT('/transactions/backup', { note: '本題還原前覆寫' })).status, 200);
+    assert.equal((await POST('/statement/rename-store', { orig, name: '本題還原前規則' })).status, 200);
+    assert.notEqual((await getDb()).transactions[0].note, '單筆備註');
+    assert.notEqual((await getDb()).learnedCategories[orig].name, '全店名稱');
+    const restored = await POST('/import', exported);
+    assert.equal(restored.status, 200);
+    const { normalizeBranches } = await import('../lib/services/statement-import.js');
+    await normalizeBranches();
+    assert.equal((await getDb()).transactions.find(t => t.id === 'backup').note, '單筆備註');
+    assert.equal((await future(orig)).note, '全店名稱');
+    const reset = await POST('/statement/rename-store', { orig, reset: true });
+    assert.equal(reset.status, 200);
+    const after = (await getDb()).transactions.find(t => t.id === 'backup');
+    assert.equal(after.noteMode, undefined);
+    assert.ok(after.note && after.note !== '單筆備註');
+    const invalid = structuredClone(exported);
+    invalid.transactions[0].noteMode = 'unexpected-mode';
+    assert.equal((await POST('/import', invalid)).status, 400);
+  });
+});
+
+test('信用卡說明：重送沿用來源條件，不能擴入原本就是新名稱的明細', async () => {
+  await withCardNotes(async ({ db, make }) => {
+    db.transactions = [make('replay', '星巴克', '本題舊群'), make('peer', '全聯福利中心', '本題舊群'), make('outsider', '星巴克內湖店', '本題新群')];
+    await saveDb(db);
+    const request = { note: '本題新群', applySameNote: true, expectedNote: '本題舊群' };
+    const first = await PUT('/transactions/replay', request);
+    assert.equal(first.status, 200);
+    assert.deepEqual((await first.json()).appliedNote, { changed: 1, learned: 2 });
+    const committed = await getDb();
+    assert.equal(committed.transactions.find(t => t.id === 'outsider').noteMode, undefined);
+    assert.equal(committed.learnedCategories['星巴克內湖店'], undefined);
+    assert.ok(committed.transactions.every(t => !Object.hasOwn(t, 'expectedNote')));
+    const repeated = await PUT('/transactions/replay', request);
+    assert.equal(repeated.status, 409);
+    assert.match((await repeated.json()).error, /重新載入/);
+    const after = await getDb();
+    assert.deepEqual(after.transactions, committed.transactions);
+    assert.deepEqual(after.learnedCategories, committed.learnedCategories);
+  });
+});
+
+test('信用卡說明：過期表單及缺少來源拒絕整筆寫入，未勾同步不要求來源', async () => {
+  await withCardNotes(async ({ db, make }) => {
+    db.transactions = [make('stale', '星巴克', '開窗時的文字'), make('peer', '全聯福利中心', '別次修改的文字')];
+    await saveDb(db);
+    const edit = await PUT('/transactions/stale', { note: '別次修改的文字' });
+    assert.equal(edit.status, 200);
+    assert.equal((await edit.json()).note, '別次修改的文字');
+    const before = await getDb();
+    for (const [expectedNote, status] of [['開窗時的文字', 409], [undefined, 400], [null, 400], [true, 400], [1, 400], [{}, 400]]) {
+      const r = await PUT('/transactions/stale', { note: '不該寫入', category: '交通', subcategory: '停車費', amount: 987, applyAll: true, applySameNote: true, expectedNote });
+      assert.equal(r.status, status, String(JSON.stringify(expectedNote)));
+      const after = await getDb();
+      assert.deepEqual(after.transactions, before.transactions);
+      assert.deepEqual(after.learnedCategories, before.learnedCategories);
+    }
+  });
+});
+
+test('信用卡說明：合成 PDF 正式預覽及匯入採原文名稱，預覽不新增交易', async () => {
+  await withCardNotes(async ({ db, make }) => {
+    db.cards[0].issuer = '台新銀行';
+    db.transactions = [make('pdf', '星巴克', '本題選取文字'), make('peer', '全聯福利中心', '本題選取文字'), make('other', '星巴克內湖店', '另一筆文字')];
+    await saveDb(db);
+    const edit = await PUT('/transactions/pdf', { note: '本題匯入名稱', applySameNote: true, expectedNote: '本題選取文字' });
+    assert.equal(edit.status, 200);
+    assert.deepEqual((await edit.json()).appliedNote, { changed: 1, learned: 2 });
+    const before = await getDb();
+    const data = Buffer.from(cjkPdf([['台新國際商業銀行 信用卡消費明細'], ['115/10/02', '115/10/04', '星巴克', '150'], ['115/10/05', '115/10/07', '全聯福利中心', '320'], ['115/10/08', '115/10/09', '星巴克內湖店', '500']], { fontSize: 8, colGap: 24 })).toString('base64');
+    const response = await POST('/cards/note-card/statement/preview', { data });
+    assert.equal(response.status, 200);
+    const preview = await response.json();
+    assert.equal(preview.transactions.length, 3);
+    assert.deepEqual(preview.transactions.slice(0, 2).map(t => t.store), ['本題匯入名稱', '本題匯入名稱']);
+    assert.notEqual(preview.transactions[2].store, '本題匯入名稱');
+    assert.deepEqual((await getDb()).transactions, before.transactions);
+    const imported = await POST('/cards/note-card/statement/import', { transactions: preview.transactions, statementMonth: '2026-10' });
+    assert.equal(imported.status, 200);
+    assert.equal((await imported.json()).imported, 3);
+    const rows = (await getDb()).transactions.filter(t => !['pdf', 'peer', 'other'].includes(t.id));
+    assert.equal(rows.length, 3);
+    assert.deepEqual(rows.slice(0, 2).map(t => t.note), ['本題匯入名稱', '本題匯入名稱']);
+    assert.notEqual(rows[2].note, '本題匯入名稱');
+    assert.ok(rows.every(t => t.stmtRef.startsWith('note-card|2026-10-')));
+  });
+});
+
+test('信用卡說明：原文名稱與同格品牌分類在鑰匙對齊後各守範圍', async () => {
+  await withCardNotes(async ({ db, make, future }) => {
+    const original = '舊品牌原文', name = '本題只給原文的名稱';
+    db.transactions = [make('remap', '星巴克內湖店', '既有明細', { storeKey: original })];
+    db.learnedCategories = { [original]: { name, nameScope: 'original', category: '交通', subcategory: '停車費' } };
+    await saveDb(db);
+    const { normalizeBranches } = await import('../lib/services/statement-import.js');
+    const preview = await normalizeBranches(true);
+    assert.ok(preview.keyChanged > 0);
+    assert.deepEqual((await getDb()).learnedCategories, db.learnedCategories);
+    await normalizeBranches();
+    const after = await getDb();
+    assert.equal(after.transactions[0].storeKey, '星巴克');
+    assert.equal(after.learnedCategories[original]?.name, name);
+    assert.equal(after.learnedCategories[original]?.nameScope, 'original');
+    assert.equal(after.learnedCategories['星巴克']?.category, '交通');
+    assert.equal(after.learnedCategories['星巴克']?.subcategory, '停車費');
+    assert.equal(after.learnedCategories['星巴克']?.name, undefined);
+    const data = Buffer.from(cjkPdf([['台新國際商業銀行 信用卡消費明細'], ['115/10/05', '115/10/07', '星巴克南港店', '320']], { fontSize: 8, colGap: 24 })).toString('base64');
+    const response = await POST('/cards/note-card/statement/preview', { data });
+    assert.equal(response.status, 200);
+    const previewRows = (await response.json()).transactions;
+    assert.equal(previewRows.length, 1);
+    assert.equal(previewRows[0].category, '交通');
+    const imported = await POST('/cards/note-card/statement/import', { transactions: previewRows });
+    assert.equal(imported.status, 200);
+    assert.equal((await imported.json()).imported, 1);
+    const next = (await getDb()).transactions.find(t => t.id !== 'remap');
+    assert.equal(next.category, '交通');
+    assert.notEqual(next.note, name);
+    assert.equal((await future(original)).note, name);
+  });
+});
