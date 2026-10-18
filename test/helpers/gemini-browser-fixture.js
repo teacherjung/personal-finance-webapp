@@ -63,6 +63,18 @@ export function browserFixture(job, options = {}) {
     async textContent() { assertKey(key.includes('textbox:Enter a prompt for Gemini')); return state.text.slice(0, options.textContentCap); },
     async evaluate(fn, expected) {
       if (key.includes('textbox:Enter a prompt for Gemini')) return fn({ textContent: state.text }, expected);
+      if (key.endsWith('model-response-content')) {
+        const node = (tagName, textContent, visible = true) => ({ tagName, textContent,
+          parentElement: null, childNodes: [{ nodeType: 3, textContent }],
+          getAttribute: () => null, getClientRects: () => visible ? [{}] : [] });
+        const root = node('MODEL-RESPONSE-CONTENT', '');
+        const codes = (state.codeTexts ?? [state.raw ?? raw]).map(text => node('CODE', text));
+        for (const code of codes) code.parentElement = root;
+        root.childNodes = codes; root.innerText = state.raw ?? raw;
+        root.querySelectorAll = selector => { assertKey(selector === '*'); return codes; };
+        calls.push(['response-dom-diagnostic', key]);
+        return fn(root, expected);
+      }
       assertKey(key.endsWith('input-area-v2'));
       const container = { getAttribute: name => { assertKey(name === 'aria-describedby'); return state.descriptionId ?? 'synthetic-description'; } };
       const content = { classList: { contains: name => { assertKey(name === 'loading'); return !!state.loading; } } };

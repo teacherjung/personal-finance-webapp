@@ -34,6 +34,12 @@
 
 ## 失敗與界線
 
+### 回覆來源診斷候選
+
+依 [GPT‑6.1 Sol 回覆來源裁示](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6243611259)，固定附件包裝與短提示要求唯一 JSON 程式碼區塊，區塊內只有符合 schema 的單一 object。診斷候選在唯一 `model-response-content` 保存有界呈現文字、DOM 結構與候選 code 的完整 `textContent`，分列雜湊；只留證，不把候選 code 當正式結果，也不修補原擷取內容。診斷候選不啟用正式掃描；正文邊界須先由這一場可見 DOM 證據確定。
+
+小附件診斷明記 `capture-diagnostic`、`qualificationEligible=false`、`formalScan=false`；內部 `purpose=qualification` 與實際 status 保留，小材料成功不算完整容量資格。沿用固定來源、一次上傳、一次送出、兩道許可與清理；失敗只列實際執行的掃前後檢查。不讀剪貼簿、私人側欄或隱藏應用狀態，不因未知尾文連續試提示。正式擷取修法完成後換固定來源，重做完整容量資格、正式用途合成驗收及後續審查與實際掃描；舊失敗不追認。
+
 文字方案的失敗與 DOM 比較量測保留，不推論為 Google 官方容量上限。單附件完整資格失敗時交 Sol 裁示，不自行縮小材料、加容量或放寬憑證政策。
 
 工具時限不保證涵蓋外層上傳授權等待，也不能原子取消已在途的 UI 動作。每個 await 返回後先核期限／取消／來源，晚到結果不採用、不補送；所有待決呼叫 settle 且自有分頁確實關閉後才記靜止。無法確認清場時保留鎖與證據，不能以 Promise.race 冒稱取消。原失敗收據不可覆寫成成功。

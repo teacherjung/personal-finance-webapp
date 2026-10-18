@@ -9,6 +9,9 @@ test('完整材料、尾碼與唯一場次綁定；純準備不預填 findings',
   assert.ok(p.attachmentText.endsWith(p.tailChallenge)); assert.ok(p.attachmentText.indexOf(p.tailChallenge) > p.attachmentText.indexOf(m.head));
   assert.notEqual(p.tailChallenge, q.tailChallenge); assert.notEqual(p.binding.scanId, q.binding.scanId);
   assert.equal(p.attachmentText.includes('\n'), false); assert.equal(p.manifest.attachment.bytes, Buffer.byteLength(p.attachmentText));
+  assert.ok(p.attachmentText.includes('exactly one fenced JSON code block'));
+  assert.ok(p.controlPrompt.includes('exactly one fenced JSON code block'));
+  assert.equal(p.attachmentText.includes('without Markdown'), false);
   const raw = Buffer.from(answer(p)), result = validateBrowserReply(raw, observation(p), p);
   assert.equal(result.answer.findings.length, 1); assert.equal(result.sourceKind, 'browser-attachment-ui/v1');
   assert.equal(result.receiverConsumptionVerified, false);

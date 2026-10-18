@@ -108,6 +108,30 @@ async function readback(s, key) {
   s.readbacks[key] = result;
   return result.match;
 }
+async function responseDiagnostic(s) {
+  // 診斷限本場回覆；候選 code 只留證，不替代正式回覆或修補解析失敗。
+  const value = await step(s, () => responses(s.tab).evaluate(element => {
+    const bounded = value => {
+      if (typeof value !== 'string' || value.length > 16384) throw Error('GEMINI_BROWSER_DIAGNOSTIC_SIZE');
+      return value;
+    };
+    const elements = [element, ...Array.from(element.querySelectorAll('*'))];
+    if (elements.length > 256) throw Error('GEMINI_BROWSER_DIAGNOSTIC_SIZE');
+    const nodes = elements.map(node => ({
+      tag: node.tagName, parent: elements.indexOf(node.parentElement), visible: node.getClientRects().length > 0,
+      role: node.getAttribute('role'), label: node.getAttribute('aria-label'), className: node.getAttribute('class'),
+      directText: bounded(Array.from(node.childNodes).filter(child => child.nodeType === 3).map(child => child.textContent).join('')),
+    }));
+    const codes = elements.flatMap((node, index) => node.tagName === 'CODE'
+      ? [{ index, visible: node.getClientRects().length > 0, text: bounded(node.textContent) }] : []);
+    return { renderedText: bounded(element.innerText), nodes, codes };
+  }), 'response-dom-diagnostic');
+  fields(value, ['renderedText', 'nodes', 'codes']);
+  if (!Array.isArray(value.nodes) || !Array.isArray(value.codes) || Buffer.byteLength(JSON.stringify(value)) > 65536) browserError('DIAGNOSTIC_SIZE');
+  writeOnce(s.dir, 'response-dom-diagnostic.json', { schema: 'response-dom-diagnostic/v1', diagnosticOnly: true,
+    renderedSha256: sha256(value.renderedText), ...value,
+    codes: value.codes.map(code => ({ ...code, sha256: sha256(code.text) })) });
+}
 async function failed(s, error) {
   const codes = ['UI_STATE', 'NO_LIVE_RUNNER', 'ACK', 'PRECONDITION', 'ORIGIN', 'NONEMPTY', 'ABORTED', 'SOURCE_CHANGED', 'READBACK_RESULT'];
   const code = codes.find(value => error instanceof Error && error.message === 'GEMINI_BROWSER_' + value) ?? 'other';
@@ -245,6 +269,7 @@ export async function captureBrowserScan(runId) {
     }
     if (await step(s, () => selected(s.tab)) !== SELECTED
       || !await step(s, () => main(s.tab).getByText('Temporary Chat', { exact: true }).isVisible())) browserError('POSTCONDITION');
+    await responseDiagnostic(s);
     const response = await step(s, () => responses(s.tab).innerText());
     if (typeof response !== 'string' || !/** @type {string & {isWellFormed(): boolean}} */ (response).isWellFormed()) browserError('REPLY_ENCODING');
     const raw = Buffer.from(response);

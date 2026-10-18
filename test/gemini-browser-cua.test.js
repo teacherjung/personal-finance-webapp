@@ -22,6 +22,30 @@ test('固定 CUA 完整路徑只建自有分頁、送一次、存原文及官方
     assert.equal(b.state.sent, 1); assert.equal(b.calls.filter(c => c[0] === 'new').length, 1);
   } finally { j.cleanup(); }
 });
+test('回覆診斷只保存本場容器與完整候選 code，跳脫字元不修補或採計', async () => {
+  const code = JSON.stringify({ text: 'quote " slash \\ newline\n tick ` entity &amp;' });
+  const j = jobFixture(), b = browserFixture(j, { codeTexts: [code, 'second candidate'] }); j.serve();
+  try {
+    await runBrowserScanUi(b.browser, j.runId);
+    await captureBrowserScan(j.runId);
+    const diagnostic = readMail(j.dir, 'response-dom-diagnostic.json');
+    assert.equal(diagnostic.diagnosticOnly, true);
+    assert.deepEqual(diagnostic.codes.map(c => c.text), [code, 'second candidate']);
+    assert.deepEqual(JSON.parse(diagnostic.codes[0].text), JSON.parse(code));
+    assert.equal(diagnostic.renderedText, readFileSync(join(j.dir, 'response.txt'), 'utf8'));
+    assert.notEqual(diagnostic.codes[0].text, diagnostic.renderedText);
+    assert.deepEqual(b.calls.filter(c => c[0] === 'response-dom-diagnostic'), [['response-dom-diagnostic', 'main:/model-response-content']]);
+  } finally { j.cleanup(); }
+});
+test('回覆診斷超出界線拒收並關自有分頁，不截短候選 code', async () => {
+  const j = jobFixture(), b = browserFixture(j, { codeTexts: ['x'.repeat(16385)] }); j.serve();
+  try {
+    await runBrowserScanUi(b.browser, j.runId);
+    await assert.rejects(captureBrowserScan(j.runId), /DIAGNOSTIC_SIZE/);
+    assert.equal(readMail(j.dir, 'quiescent.json').failed, true);
+    assert.equal(b.state.sent, 1); assert.equal(b.state.closed, true);
+  } finally { j.cleanup(); }
+});
 test('思考步驟入口只採同一回覆官方 metadata；自稱、缺失、重複及來源歧義拒收', async () => {
   for (const options of [{}, { details: 'Used Flash', selfReportedDetails: 'Used 4 Argon 高' },
     { metadataCount: 0, selfReportedDetails: 'Used 4 Argon 高' }, { metadataCount: 2 }, { sidebarCount: 2 }, { responseMenu: 'ambiguous' }]) {
