@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { URL as NodeURL } from 'node:url';
 import { isMainModule } from '../lib/is-main.js';
 import { SOURCE_ROOT, SOURCE_FILES, jobDirectory, readMail, readBoundedFile, writeOnce, mailExists, sourceDigest, browserError } from './gemini-browser-files.js';
-import { URL, ORIGIN, SELECTED, DETAILS, ATTACHMENT_CAP, CONTROL_CAP, OBSERVATION, REPLY_CAP, RENDERED_CAP, sha256, fields, validateDescriptor, leaseMessage } from './gemini-browser-protocol.js';
+import { URL, ORIGIN, SELECTED, DETAILS, ATTACHMENT_CAP, CONTROL_CAP, OBSERVATION, REPLY_CAP, RENDERED_CAP, sha256, responseSnapshotSha256, fields, validateDescriptor, leaseMessage } from './gemini-browser-protocol.js';
 
 const sessions = new Map();
 const pause = () => new Promise(resolve => setTimeout(resolve, 100));
@@ -170,15 +170,32 @@ export function visibleJsonCodeResponse(element, limits) {
       codeNodes: Array.from(code.childNodes).filter(child => child.nodeType !== 8).map(child => child.nodeType === 3
         ? [3, child.textContent.length] : [1, child.textContent.length, ['hljs-attr', 'hljs-string', 'hljs-number'].filter(name => child.classList.contains(name)).join(' ')]) } };
 }
+async function visibleResponseParts(s, highlightSpans) {
+  const container = responses(s.tab);
+  const targets = [container, container.locator('.code-block-decoration.header-formatted > span'),
+    container.locator('code.code-container.formatted[role="text"]')];
+  for (const target of targets) if (await step(s, () => target.count()) !== 1 || !await step(s, () => target.isVisible())) browserError('RESPONSE_VISIBILITY');
+  const spans = container.locator('code > span');
+  if (await step(s, () => spans.count()) !== highlightSpans) browserError('RESPONSE_VISIBILITY');
+  for (let i = 0; i < highlightSpans; i++) if (!await step(s, () => spans.nth(i).isVisible())) browserError('RESPONSE_VISIBILITY');
+}
 async function readVisibleResponse(s) {
-  const value = await step(s, () => responses(s.tab).evaluate(visibleJsonCodeResponse,
-    { reply: REPLY_CAP, rendered: RENDERED_CAP }), 'response-code');
-  fields(value, ['schema', 'codeText', 'renderedText', 'structure']);
-  if (value.schema !== 'visible-json-code/v1' || typeof value.codeText !== 'string' || typeof value.renderedText !== 'string'
-    || !/** @type {string & {isWellFormed(): boolean}} */ (value.codeText).isWellFormed() || !/** @type {string & {isWellFormed(): boolean}} */ (value.renderedText).isWellFormed()) browserError('REPLY_ENCODING');
-  const raw = Buffer.from(value.codeText), rendered = Buffer.from(value.renderedText);
-  if (!raw.length || raw.length > REPLY_CAP || !rendered.length || rendered.length > RENDERED_CAP) browserError('REPLY_SIZE');
-  return { raw, rendered, structure: value.structure, snapshotSha256: sha256(JSON.stringify(value)) };
+  const sample = async () => {
+    const value = await step(s, () => responses(s.tab).evaluate(visibleJsonCodeResponse,
+      { reply: REPLY_CAP, rendered: RENDERED_CAP }), 'response-code');
+    fields(value, ['schema', 'codeText', 'renderedText', 'structure']);
+    if (value.schema !== 'visible-json-code/v1' || typeof value.codeText !== 'string' || typeof value.renderedText !== 'string'
+      || !/** @type {string & {isWellFormed(): boolean}} */ (value.codeText).isWellFormed() || !/** @type {string & {isWellFormed(): boolean}} */ (value.renderedText).isWellFormed()) browserError('REPLY_ENCODING');
+    const raw = Buffer.from(value.codeText), rendered = Buffer.from(value.renderedText);
+    if (!raw.length || raw.length > REPLY_CAP || !rendered.length || rendered.length > RENDERED_CAP) browserError('REPLY_SIZE');
+    return { raw, rendered, structure: value.structure,
+      snapshotSha256: responseSnapshotSha256(value.schema, value.codeText, value.renderedText, value.structure) };
+  };
+  const before = await sample();
+  await visibleResponseParts(s, before.structure.highlightSpans);
+  const after = await sample();
+  if (before.snapshotSha256 !== after.snapshotSha256) browserError('REPLY_CHANGED');
+  return after;
 }
 async function failed(s, error) {
   const codes = ['UI_STATE', 'NO_LIVE_RUNNER', 'ACK', 'PRECONDITION', 'ORIGIN', 'NONEMPTY', 'ABORTED', 'SOURCE_CHANGED', 'READBACK_RESULT'];

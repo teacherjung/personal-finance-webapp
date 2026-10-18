@@ -42,6 +42,8 @@
 
 `response.txt` 保留可見 code 正文；`response-rendered.txt` 保留完整容器呈現文字；`response-dom.json` 保留已驗結構、code 內文字／highlight 配置與組合指紋。官方模型明細前後重讀並比對全部文字與結構，盒外再從兩份檔案及結構重算指紋，掃後洩漏檢查涵蓋這些證據。正文上限仍為 64 KiB，呈現容器上限為正文加 4 KiB 裝飾空間；超限不截斷。這些是 UI 可見證據，不稱模型原始傳輸文字。
 
+依 [Sol 編碼與可見性裁示](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6243844982)，快照使用 `visible-json-snapshot/v1` 固定陣列編碼，先嚴格驗欄位、型別、數值及字數，再依序納入 source、兩份完整字串、全部結構欄位與原序 codeNodes；中繼改變物件 keys 順序不改變摘要，不接受舊摘要備援。可見性另以 Playwright `isVisible` 核容器、JSON 標頭、code 及每個正文 span，兩側夾住結構／全文快照，官方明細後再跑同一路徑。此判準排除 visibility:hidden，但不排除 opacity:0，不證明未被遮擋或人眼可讀。
+
 來源 `browser-codeblock-ui/v1` 與收據 `browser-codeblock-scan/v1` 排除舊整容器捕獲；盒內外仍核嚴格 JSON、重複鍵、封閉 schema、材料綁定及尾端挑戰，`receiverConsumptionVerified:false` 保留。行為題與有效突變涵蓋字元保存、直接文字節點、額外／隱藏 code、區塊外內容、citation、明細前後變化、舊來源與整容器退化。
 
 前兩場格式失敗只證明當時 UI 擷取文字不能解析，不能據此斷言模型原始輸出錯誤。小附件診斷留作來源證據，不追認為資格或掃描；診斷場失敗收尾、post 未執行的事實保留。修法的最終新來源須重做完整容量資格、正式用途合成驗收，再獨立複審與實際掃描。

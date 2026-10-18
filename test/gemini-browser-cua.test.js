@@ -37,7 +37,7 @@ test('唯一可見 code 正文逐字保存直接文字與 highlight，另留容�
     assert.equal(observed.responseSha256, sha256(raw)); assert.equal(observed.renderedSha256, sha256(rendered));
     assert.equal(dom.structure.highlightSpans, 1); assert.deepEqual(dom.structure.codeNodes, [[3, 1], [1, raw.length - 2, 'hljs-string'], [3, 1]]);
     validateResponseArtifacts(code, rendered, dom, observed);
-    assert.equal(b.calls.filter(c => c[0] === 'response-code').length, 2);
+    assert.equal(b.calls.filter(c => c[0] === 'response-code').length, 4);
     assert.equal(b.calls.some(c => c[0] === 'click' && /Copy code|Download code/.test(c[1])), false);
     assert.equal(b.state.sent, 1); assert.equal(b.state.closed, true);
   } finally { j.cleanup(); }
@@ -55,6 +55,28 @@ test('活 lease 在接收時重核正文證據，檔案變造不能取得捕獲�
         assert.equal(j.lease.tick().raw.toString(), answer(j.packet));
         assert.equal(j.lease.state, 'CAPTURED');
       }
+    } finally { j.cleanup(); }
+  }
+});
+test('工具重排物件欄位後，整鏈用固定證據編碼仍保留正文與結構核對', async () => {
+  const j = jobFixture(), b = browserFixture(j, { highlight: true }); j.serve();
+  try {
+    await runBrowserScanUi(b.browser, j.runId); j.stop(); await captureBrowserScan(j.runId);
+    const dom = readMail(j.dir, 'response-dom.json');
+    assert.deepEqual(Object.keys(dom.structure), ['code', 'codeBlocks', 'codeNodes', 'elements', 'highlightSpans', 'pre']);
+    assert.equal(j.lease.tick().raw.toString(), answer(j.packet));
+    assert.equal(j.lease.state, 'CAPTURED');
+    assert.equal(readFileSync(join(j.dir, 'response-rendered.txt'), 'utf8'), 'JSON\n' + answer(j.packet));
+  } finally { j.cleanup(); }
+});
+test('rect 非空但 Playwright 判不可見的容器、標頭、code 或 highlight 均拒收', async () => {
+  for (const cssHidden of ['container', 'header', 'code', 'highlight']) {
+    const j = jobFixture(), b = browserFixture(j, { cssHidden, highlight: true }); j.serve();
+    try {
+      await runBrowserScanUi(b.browser, j.runId);
+      await assert.rejects(captureBrowserScan(j.runId), /RESPONSE_VISIBILITY/);
+      assert.equal(readMail(j.dir, 'quiescent.json').failed, true);
+      assert.equal(b.state.closed, true); assert.equal(b.state.sent, 1);
     } finally { j.cleanup(); }
   }
 });

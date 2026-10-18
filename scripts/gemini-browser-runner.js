@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 import { SOURCE_ROOT, SOURCE_FILES, JOB_ROOT, configureBrowserOwner, privateDirectory, readMail, readBoundedFile, writeOnce, mailExists, sourceDigest, browserError } from './gemini-browser-files.js';
-import { prepareBrowserPacket, validateBrowserReply, validateLease, fields, ATTACHMENT_CAP, CONTROL_CAP, FRAME_CAP, TRANSPORT, OBSERVATION, REPLY_CAP, RENDERED_CAP, MODEL, EFFORT, sha256, SELECTED } from './gemini-browser-protocol.js';
+import { prepareBrowserPacket, validateBrowserReply, validateLease, fields, ATTACHMENT_CAP, CONTROL_CAP, FRAME_CAP, TRANSPORT, OBSERVATION, REPLY_CAP, RENDERED_CAP, MODEL, EFFORT, sha256, responseSnapshotSha256, SELECTED } from './gemini-browser-protocol.js';
 import { parseUniqueJson } from './gemini-native-protocol.js';
 import { snapshotPinnedSources, verifyPinnedSourcesUnchanged } from './gemini-native-runner.js';
 import { buildScanMaterials, verifyProvider } from './gemini-scan.js';
@@ -182,27 +182,13 @@ export class BrowserLease {
 export function validateResponseArtifacts(raw, rendered, dom, observation) {
   fields(dom, ['bodySource', 'structure', 'snapshotSha256']);
   const s = dom.structure;
-  fields(s, ['elements', 'highlightSpans', 'codeBlocks', 'pre', 'code', 'codeNodes']);
-  if (dom.bodySource !== 'visible-json-code/v1' || observation.bodySource !== dom.bodySource
-    || !Number.isSafeInteger(s.highlightSpans) || s.highlightSpans < 0 || s.elements !== 29 + s.highlightSpans
-    || s.codeBlocks !== 1 || s.pre !== 1 || s.code !== 1 || !Array.isArray(s.codeNodes)) browserError('RESPONSE_DOM');
-  let length = 0, highlights = 0;
-  for (const node of s.codeNodes) {
-    if (!Array.isArray(node) || ![1, 3].includes(node[0]) || node.length !== (node[0] === 1 ? 3 : 2)
-      || !Number.isSafeInteger(node[1]) || node[1] < 0) browserError('RESPONSE_DOM');
-    if (node[0] === 1) {
-      if (typeof node[2] !== 'string' || !/^(?:hljs-attr|hljs-string|hljs-number)(?: (?:hljs-attr|hljs-string|hljs-number))*$/.test(node[2])) browserError('RESPONSE_DOM');
-      highlights++;
-    }
-    length += node[1];
-  }
+  if (observation.bodySource !== dom.bodySource) browserError('RESPONSE_DOM');
   const decode = bytes => new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   const value = { schema: dom.bodySource, codeText: decode(raw), renderedText: decode(rendered), structure: s };
   if (!raw.length || raw.length > REPLY_CAP || !rendered.length || rendered.length > RENDERED_CAP
-    || length !== value.codeText.length || highlights !== s.highlightSpans
     || observation.responseBytes !== raw.length || observation.responseSha256 !== sha256(raw)
     || observation.renderedBytes !== rendered.length || observation.renderedSha256 !== sha256(rendered)
-    || observation.snapshotSha256 !== dom.snapshotSha256 || dom.snapshotSha256 !== sha256(JSON.stringify(value))) browserError('RESPONSE_ARTIFACT');
+    || observation.snapshotSha256 !== dom.snapshotSha256 || dom.snapshotSha256 !== responseSnapshotSha256(dom.bodySource, value.codeText, value.renderedText, s)) browserError('RESPONSE_ARTIFACT');
 }
 
 function verifyRequestFiles(job, packet, identity) {

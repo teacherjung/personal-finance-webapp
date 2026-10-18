@@ -17,7 +17,7 @@ export function material() {
 export function answer(packet) { return JSON.stringify({ ...packet.binding, tailChallenge: packet.tailChallenge, findings: [finding()] }); }
 export function responseArtifacts(raw) {
   const rendered = 'JSON\n' + raw, structure = { elements: 29, highlightSpans: 0, codeBlocks: 1, pre: 1, code: 1, codeNodes: [[3, raw.length]] };
-  const snapshotSha256 = sha256(JSON.stringify({ schema: 'visible-json-code/v1', codeText: raw, renderedText: rendered, structure }));
+  const snapshotSha256 = sha256(JSON.stringify(['visible-json-snapshot/v1', 'visible-json-code/v1', raw, rendered, [29, 0, 1, 1, 1, [[3, raw.length]]]]));
   return { rendered, dom: { bodySource: 'visible-json-code/v1', structure, snapshotSha256 } };
 }
 export function observation(packet, raw = answer(packet)) {
@@ -91,10 +91,13 @@ export function browserFixture(job, options = {}) {
     getByRole: (role, opt = {}) => locator(`${key}/${role}:${String(opt.name ?? '')}`),
     getByText: text => locator(`${key}/text:${text}`),
     locator: selector => locator(`${key}/${selector}`),
+    nth: i => locator(`${key}/nth:${i}`),
     async getAttribute(name) { assertKey(name === 'aria-label' && key.includes('Open mode picker')); return state.selected; },
     async allTextContents() { assertKey(key === 'menu:'); return state.menu ? ['synthetic response menu'] : []; },
     async count() {
       if (key.endsWith('model-response-content')) return state.responses;
+      if (key.endsWith('.code-block-decoration.header-formatted > span') || key.endsWith('code.code-container.formatted[role="text"]')) return 1;
+      if (key.endsWith('code > span')) return state.highlight ? 1 : 0;
       if (key.endsWith('input-area-v2')) return state.composerCount ?? 1;
       if (key === 'menu:Upload file options' || key.endsWith('menuitem:Upload files. Documents, data, code files')) return 1;
       if (key === 'context-sidebar') return state.sidebarCount ?? 1;
@@ -108,7 +111,11 @@ export function browserFixture(job, options = {}) {
       if (key.endsWith('model-response-content')) {
         const { root, close } = responseDom(state.raw ?? raw, state);
         calls.push(['response-code', key]);
-        try { return fn(root, expected); } finally { close(); }
+        try {
+          const reorder = value => Array.isArray(value) ? value.map(reorder) : value && typeof value === 'object'
+            ? Object.fromEntries(Object.keys(value).sort().map(key => [key, reorder(value[key])])) : value;
+          return reorder(fn(root, expected));
+        } finally { close(); }
       }
       assertKey(key.endsWith('input-area-v2'));
       const container = { getAttribute: name => { assertKey(name === 'aria-describedby'); return state.descriptionId ?? 'synthetic-description'; } };
@@ -137,6 +144,10 @@ export function browserFixture(job, options = {}) {
     },
     async isEnabled() { assertKey(key.endsWith('button:Send message')); return !state.sendDisabled; },
     async isVisible() {
+      if (key.endsWith('model-response-content')) return state.cssHidden !== 'container';
+      if (key.endsWith('.code-block-decoration.header-formatted > span')) return state.cssHidden !== 'header';
+      if (key.endsWith('code.code-container.formatted[role="text"]')) return state.cssHidden !== 'code';
+      if (key.endsWith('code > span/nth:0')) return state.cssHidden !== 'highlight';
       if (key === 'menu:Upload file options') return state.menu === 'upload';
       if (key === 'dialog:') return state.dialog;
       if (key.includes('Temporary chat')) return true;

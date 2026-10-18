@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareBrowserPacket, validateBrowserReply, ATTACHMENT_CAP, sha256 } from '../scripts/gemini-browser-protocol.js';
+import { prepareBrowserPacket, validateBrowserReply, responseSnapshotSha256, ATTACHMENT_CAP, sha256 } from '../scripts/gemini-browser-protocol.js';
 import { material, answer, observation } from './helpers/gemini-browser-fixture.js';
 
 test('完整材料、尾碼與唯一場次綁定；純準備不預填 findings', () => {
@@ -38,4 +38,26 @@ test('只收完整嚴格 JSON：前後文、串接、重複鍵、UTF-8 破損、
     good.replace('"line":1', '"line":90000')];
   for (const text of bad) assert.throws(() => validateBrowserReply(Buffer.from(text), observation(p, text), p));
   assert.throws(() => validateBrowserReply(Buffer.from([255]), observation(p, 'x'), p));
+});
+
+
+test('固定快照編碼不受物件欄位排列影響，缺值與壞型別不變成 null，正文節點不排序', () => {
+  const source = 'visible-json-code/v1', code = 'ab', rendered = 'JSON\nab';
+  const structure = { elements: 31, highlightSpans: 2, codeBlocks: 1, pre: 1, code: 1, codeNodes: [[1, 1, 'hljs-attr'], [1, 1, 'hljs-string']] };
+  const expected = responseSnapshotSha256(source, code, rendered, structure);
+  const reverseKeys = Object.fromEntries(Object.entries(structure).reverse());
+  assert.equal(responseSnapshotSha256(source, code, rendered, reverseKeys), expected);
+  assert.notEqual(responseSnapshotSha256(source, code, rendered, { ...structure, codeNodes: [...structure.codeNodes].reverse() }), expected);
+  assert.notEqual(responseSnapshotSha256(source, 'ba', rendered, structure), expected);
+  assert.notEqual(responseSnapshotSha256(source, code, 'JSON\nba', structure), expected);
+  for (const mutate of [s => { delete s.pre; }, s => { s.pre = undefined; }, s => { s.pre = '1'; },
+    s => { s.highlightSpans = null; }, s => { s.codeNodes[0][1] = -1; }, s => { s.codeNodes[0][1] = 0.5; },
+    s => { s.codeNodes[0][1] = '1'; }, s => { s.codeNodes[0] = undefined; }, s => { s.codeNodes[0].push('extra'); },
+    s => { s.codeNodes[0][2] = 'unobserved'; }, s => { s.elements = 30; }, s => { s.unknown = 1; }]) {
+    const value = structuredClone(structure); mutate(value);
+    assert.throws(() => responseSnapshotSha256(source, code, rendered, value));
+  }
+  assert.throws(() => responseSnapshotSha256('old', code, rendered, structure));
+  assert.throws(() => responseSnapshotSha256(source, undefined, rendered, structure));
+  assert.throws(() => responseSnapshotSha256(source, code, null, structure));
 });

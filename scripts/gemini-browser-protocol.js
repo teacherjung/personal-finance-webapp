@@ -23,6 +23,29 @@ const fail = code => { throw Error(`GEMINI_BROWSER_${code}`); };
 export function fields(value, keys) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).sort().join(',') !== [...keys].sort().join(',')) fail('FIELDS');
 }
+// UI 工具可能重排物件欄位；固定陣列只標準化證據編碼，正文仍逐字參與摘要。
+export function responseSnapshotSha256(bodySource, codeText, renderedText, structure) {
+  fields(structure, ['elements', 'highlightSpans', 'codeBlocks', 'pre', 'code', 'codeNodes']);
+  if (bodySource !== 'visible-json-code/v1' || typeof codeText !== 'string' || typeof renderedText !== 'string'
+    || !/** @type {string & {isWellFormed(): boolean}} */ (codeText).isWellFormed()
+    || !/** @type {string & {isWellFormed(): boolean}} */ (renderedText).isWellFormed()
+    || !codeText.length || Buffer.byteLength(codeText) > REPLY_CAP || !renderedText.length || Buffer.byteLength(renderedText) > RENDERED_CAP
+    || !Number.isSafeInteger(structure.highlightSpans) || structure.highlightSpans < 0 || structure.elements !== 29 + structure.highlightSpans
+    || structure.codeBlocks !== 1 || structure.pre !== 1 || structure.code !== 1 || !Array.isArray(structure.codeNodes)) fail('RESPONSE_DOM');
+  let length = 0, highlights = 0;
+  for (const node of structure.codeNodes) {
+    if (!Array.isArray(node) || ![1, 3].includes(node[0]) || node.length !== (node[0] === 1 ? 3 : 2)
+      || !Number.isSafeInteger(node[1]) || node[1] < 0) fail('RESPONSE_DOM');
+    if (node[0] === 1) {
+      if (typeof node[2] !== 'string' || !/^(?:hljs-attr|hljs-string|hljs-number)(?: (?:hljs-attr|hljs-string|hljs-number))*$/.test(node[2])) fail('RESPONSE_DOM');
+      highlights++;
+    }
+    length += node[1];
+  }
+  if (length !== codeText.length || highlights !== structure.highlightSpans) fail('RESPONSE_DOM');
+  return sha256(JSON.stringify(['visible-json-snapshot/v1', bodySource, codeText, renderedText,
+    [structure.elements, structure.highlightSpans, structure.codeBlocks, structure.pre, structure.code, structure.codeNodes]]));
+}
 export function validateManifest(m) {
   fields(m, ['transport', 'scanId', 'materialSha256', 'base', 'head', 'attachment', 'control']);
   fields(m.attachment, ['name', 'mediaType', 'bytes', 'sha256']); fields(m.control, ['bytes', 'sha256']);
