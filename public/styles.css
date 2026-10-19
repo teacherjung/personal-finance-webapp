@@ -1287,3 +1287,9 @@ tr.sec-detail > td { background: var(--card-2); font-size: 12.5px; }
   /* 帳務體檢的行內寬度上限須留出箭頭空間，避免裁掉預設選項。 */
   .health-acts select { max-width: calc(9em + 24px) !important; }
 }
+
+/* 手填換算只在桌面螢幕提供，整塊隱藏避免窄版或列印留下輸入說明。 */
+.portfolio-dividend-equivalence { display: none; }
+@media screen and (min-width: 901px) {
+  .portfolio-dividend-equivalence { display: block; }
+}

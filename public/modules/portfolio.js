@@ -5,7 +5,8 @@ import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, ope
 import { buildPortfolioModel } from './portfolio-model.js';
 import { buildPortfolioPageState } from './portfolio-state.js';
 import { buildPortfolioReport } from './portfolio-report.js';
-import { incomeActivityHtml, tradesActivityHtml } from './portfolio-activity.js';
+import { incomeActivityHtml, tradesActivityHtml, dividendActivityHtml } from './portfolio-activity.js';
+import { bindDividendActions } from './portfolio-dividend-actions.js';
 import {
   companiesSection,
   disciplineSection,
@@ -134,6 +135,7 @@ export async function renderPortfolio() {
     ${disciplineSection(rows, regionMap, eqV, netWorth, leverage, CAPS, ibValTwd, loanTwd, visualFormatters())}
     ${fxSection(rows, accounts, fx, visualFormatters())}
     ${incomeActivityHtml(settings, activityOptions())}
+    ${dividendActivityHtml(settings, { escapeHtml: esc, formatCurrency: moneyCur })}
     ${tradesActivityHtml(ibTrades, settings, activityOptions())}
     ${regionSection(regionMap, eqV, visualFormatters())}
     ${companiesSection(rows, eqV, visualFormatters())}
@@ -147,6 +149,8 @@ export async function renderPortfolio() {
 
     ${researchSectionHtml(rows, research, { escapeHtml: esc, formatPercent })}
   `;
+
+  bindDividendActions({ income: settings.ib?.income, getElement: byId, isCurrentRender });
 
   // ---- handlers ----
   byId('addHolding').onclick = () => editors.openHolding(null);

@@ -65,7 +65,7 @@
 | **D3 書籤＋差異引擎** ✅ | `insightState`；`lib/services/insights.js`（自上次 Δ／固定窗 Δ／🆕／✓已解除／跳檔／平靜判定）；`GET /api/insights`；`signal-tiers.js` 共用模組（portfolio.js 改 import）；後端自呼 market-data 算 ECY tier | 上述＋schema sanitizer＋types＋test（新增/解除/跳檔/首次/平靜五情境） | 隔離 DB 考題全過；真資料**唯讀**驗證（只看計數／布林） | **大** | 要（合併後建議 Codex 審一輪） |
 | **D4 總覽新聞牆** ✅ | 總覽改版：動態三段區、Δ chips、跳檔卡＋白話彈窗、平靜行、KPI Δ 小字 | `public/modules/dashboard.js`、`public/styles.css` | 8 頁 reload 零 console error；瀏覽器唯讀實測＋截圖 | 中 | 不用（純前端） |
 
-**D5（之後的擴充，不在本輪）**：有感解讀第二批——股息換算（「本月股息 ≈ 多買 Y 股」）、大盤基準比較（需加基準資料）、目標追蹤（「照這速度離目標 N 個月」）。
+**D5（D0–D4 之外的擴充）**：配息解讀、大盤基準比較（需加基準資料）、目標追蹤（「照這速度離目標 N 個月」）。[#721](https://github.com/teacherjung/personal-finance-webapp/pull/721) 先做[單報表配息參考換算](dividend-equivalence-plan.md)：依完整報表期間，以股息加替代股息的稅前合計除以手填 USD 單價，顯示中性的參考單位。這不表示「本月多買幾股」，也不完成月別／逐檔事件或投組對大盤比較。
 
 ## 六、邊界情境（先想好，別等 Codex 抓）
 

@@ -274,10 +274,13 @@
 - `public/modules/accounts-model.js`（`portfolio-exposure.js` 的 `fxExposure` 讀它的 `LIABILITY_TYPES` 把負債帳戶翻成負的現金曝險——收支那一列早就明寫「與投資多重命中」，硬規則②要求投資這一列也要點名它，否則只讀投資契約的人不會被導過去）〔#409 補宣告〕
 - `public/modules/categories.js`（僅作為「後端 import public/modules」前例被點名）
 - `public/modules/fx-rates.js`
+- `public/modules/ib-income-period.js`
 - `public/modules/portfolio-activity.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕
 - `public/modules/portfolio-calculations.js`
 - `public/modules/portfolio-chart.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕
 - `public/modules/portfolio-details.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕
+- `public/modules/portfolio-dividend-actions.js`
+- `public/modules/portfolio-dividend.js`
 - `public/modules/portfolio-editors.js`（凍結標的的編輯入口）
 - `public/modules/portfolio-exposure.js`（門檻單一真相）
 - `public/modules/portfolio-format.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕
@@ -324,6 +327,8 @@
 - `test/portfolio-calculations.test.js`
 - `test/portfolio-chart.test.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕〔模組分工節點名的 17 支同名考題〕
 - `test/portfolio-details.test.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕〔模組分工節點名的 17 支同名考題〕
+- `test/portfolio-dividend-actions.test.js`
+- `test/portfolio-dividend.test.js`
 - `test/portfolio-editors.test.js`
 - `test/portfolio-exposure.test.js`
 - `test/portfolio-format.test.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕〔模組分工節點名的 17 支同名考題〕
@@ -385,6 +390,8 @@
 - `lib/store.js`
 - `lib/types.js`
 - `public/modules/backup-alert.js`
+- `public/modules/calendar-date.js`
+- `public/modules/ib-income-period.js`
 - `scripts/check-node-version.js`
 - `server.js`
 - `test-doubles/fake-supabase.js`
@@ -398,6 +405,8 @@
 - `test/hosted-store-pg.test.js`
 - `test/repo-async.test.js`
 - `test/server.test.js`
+- `test/settings-roundtrip.test.js`
+- `test/settings-value-kinds.test.js`
 - `test/store-file-permissions.test.js`
 - `test/store-guidance.test.js`
 - `test/vault-and-backup-integrity.test.js`（寫入櫃檯 fail-loud／備份的原子替換與殘骸清理／**「不得再長出操作前自動備份」的裁決題**／損毀 fail-closed）

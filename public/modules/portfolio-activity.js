@@ -2,6 +2,8 @@
 // 投資組合 IBKR 活動卡：把現金流與交易摘要格式化成 HTML，不碰 DOM、API 或頁面狀態。
 
 import { tradeSummary } from './portfolio-calculations.js';
+import { incomePeriodLabel } from './ib-income-period.js';
+import { dividendBasis, dividendReason } from './portfolio-dividend.js';
 import { formatK, formatWan } from './portfolio-format.js';
 import { FX_INFO_TITLE, FX_INFO_HTML } from './portfolio-info.js';   // 匯率說明（丙）與總覽共用同一份
 
@@ -34,7 +36,7 @@ function tradeMoney(value, { viewCurrency, usdRate }) {
 }
 
 /**
- * IBKR 現金流（股息 vs 融資利息，近一年）。
+ * IBKR 現金流（股息 vs 融資利息，依報表期間）。
  * @param {Settings} settings
  * @param {ActivityOptions} options
  */
@@ -50,7 +52,7 @@ export function incomeActivityHtml(settings, options) {
   </div>`;
   const infoBtn = (key, text) => `<button type="button" class="info-link" data-info="${key}">${text}</button>`;
   return `<div class="chart-card" style="margin-bottom:16px">
-    <h3>IB 現金流 <span class="stat-sub" style="font-weight:400;margin:0">（${fmtD(inc.from)}–${fmtD(inc.to)}）</span></h3>
+    <h3>IB 現金流 <span class="stat-sub" style="font-weight:400;margin:0">（${esc(incomePeriodLabel(inc))}）</span></h3>
     <div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:12px">
       ${item(`股息（含${infoBtn('pil', '替代股息')}）`, divTotal, 'pos')}
       ${item(infoBtn('interestPaid', '融資利息'), inc.interestPaid || 0, 'neg')}
@@ -61,6 +63,36 @@ export function incomeActivityHtml(settings, options) {
     ${Number(inc.skippedNoFx) > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.skippedNoFx} 筆現金交易的幣別系統不支援、無法換算，未計入上列金額。</p>` : ''}
     ${defaultUsdNoteHtml(options)}
     ${Number(inc.skippedNoCurrency) > 0 ? `<p class="muted small" style="margin-top:8px">註：${inc.skippedNoCurrency} 筆現金交易的報表沒有幣別欄，未計入上列金額。請到 IBKR 的 Flex Query 在 Cash Transactions 勾選 Currency 欄後重新同步。</p>` : ''}
+  </div>`;
+}
+
+/** 手填價格只屬於本次頁面，不放入 settings 或報表。
+ * @param {Settings} settings
+ * @param {{escapeHtml:(value:any)=>string,formatCurrency:(amount:number,currency:string)=>string}} options */
+export function dividendActivityHtml(settings, { escapeHtml: esc, formatCurrency }) {
+  const income = settings.ib?.income;
+  if (!income) return '';
+  const basis = dividendBasis(income);
+  return `<div class="chart-card portfolio-dividend-equivalence" id="dividendEquivalence" style="margin-bottom:16px">
+    <h3>報表配息等值換算</h3>
+    <p class="muted small">${esc(incomePeriodLabel(income))}</p>
+    ${basis.ok
+      ? `<p>稅前配息合計：<b>${esc(formatCurrency(basis.gross, 'USD'))}</b>${basis.estimated ? '（含匯率估算）' : ''}</p>`
+      : `<p>${esc(dividendReason(basis.reason))}</p>`}
+    <form>
+      <label for="dividendReferencePrice">本次參考單價（USD／單位）</label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+        <input id="dividendReferencePrice" type="text" inputmode="decimal" autocomplete="off" aria-describedby="dividendExplanation" />
+        <button class="btn btn-sm" type="submit">換算</button>
+        <button class="btn btn-sm" type="button" data-dividend-clear>清空</button>
+      </div>
+      <p><output for="dividendReferencePrice" aria-live="polite">${esc(basis.ok ? dividendReason('price-missing') : dividendReason(basis.reason))}</output></p>
+    </form>
+    <div id="dividendExplanation" class="muted small">
+      <p>用本報表的股息加替代股息稅前合計，除以你輸入的參考單價。替代股息是券商借出股票時代付的現金，稅務處理可能不同。這裡不扣稅、不加減利息，也沒有核算可動用現金；參考單位不是可買股數或買賣建議。</p>
+      <p>畫面金額依既有格式四捨五入；換算使用記錄的未經顯示四捨五入金額，以及你本次輸入的參考單價。結果為約數。</p>
+      <p>單價由你自行提供，沒有帶入市場報價。輸入與結果只留在本次頁面，重新整理或切換頁面後清空；不加入列印報表。</p>
+    </div>
   </div>`;
 }
 

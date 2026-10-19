@@ -2,6 +2,7 @@
 // 投資組合列印報表：只把已算好的資料整理成 A4 HTML，不碰 DOM、API 或資料庫。
 
 import { tradeSummary } from './portfolio-calculations.js';
+import { incomePeriodLabel } from './ib-income-period.js';
 import { fxExposure } from './portfolio-exposure.js';
 import { formatPercent as fmtPct, formatPortfolioMoney } from './portfolio-format.js';
 
@@ -10,8 +11,6 @@ import { formatPercent as fmtPct, formatPortfolioMoney } from './portfolio-forma
 /** @typedef {{ label:string, min:number, max:number }} ReportLayer */
 /** @typedef {{ value:number, percentile:number, label:string }|null} CapeInfo */
 
-/** @param {unknown} d */
-const fmtD = (d) => d ? `${String(d).slice(0, 4)}/${String(d).slice(4, 6)}` : '';
 /** @param {unknown} p @param {unknown} cur */
 const fmtPrice0 = (p, cur) => {
   const n = Number(p || 0);
@@ -104,7 +103,7 @@ export function buildPortfolioReport(data, options) {
   const income = settings.ib?.income;
   const divTotal = income ? (income.dividends || 0) + (income.paymentInLieu || 0) : 0;
   const netFlow = income ? divTotal + (income.withholdingTax || 0) + (income.interestPaid || 0) + (income.interestReceived || 0) : 0;
-  const incomeHtml = income ? `<section><h2>IBKR 現金流 <span>${fmtD(income.from)}–${fmtD(income.to)}</span></h2>
+  const incomeHtml = income ? `<section><h2>IBKR 現金流 <span>${esc(incomePeriodLabel(income))}</span></h2>
     <table><thead><tr><th class="num">股息（含替代股息）</th><th class="num">融資利息</th><th class="num">利息收入</th><th class="num">淨現金流</th></tr></thead>
     <tbody><tr><td class="num">+${val(divTotal * rate)}</td><td class="num">−${val(Math.abs(income.interestPaid || 0) * rate)}</td>
     <td class="num">+${val((income.interestReceived || 0) * rate)}</td><td class="num">${netFlow >= 0 ? '+' : '−'}${val(Math.abs(netFlow) * rate)}</td></tr></tbody></table>

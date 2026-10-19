@@ -71,7 +71,7 @@ test('投資報表｜美元計價、IB 現金流與交易摘要使用同一換�
   });
 
   assert.match(report.html, /總市值<\/span><b>0\.1 K USD/);
-  assert.match(report.html, /IBKR 現金流 <span>2026\/01–2026\/06/);
+  assert.match(report.html, /IBKR 現金流 <span>期間資料不完整或無效，尚未核對/);
   assert.match(report.html, /交易摘要 <span>共 1 筆（買 0／賣 1）/);
   assert.match(report.html, /AAPL \+5 USD/);
 });
@@ -122,4 +122,13 @@ test('丙-2｜報表交易摘要：GBP 賣出沒抓到匯率 → 註記「GBP �
   assert.match(html, /GBP 交易以預設匯率估算/);
   assert.doesNotMatch(html, /GBP[^<]*未計入/);
   assert.match(html, /已實現損益（FIFO）[\s\S]*?<b>\+(4\.1 萬|41,000 元)<\/b>/, '「計入合計」要有斷言撐：合計必須是 1000×41 換成台幣（Codex #557 r5）');
+});
+
+test('投資報表｜完整日與舊紀錄未核對口徑，不帶入暫存參考單價或結果', () => {
+  for (const [periodBasis,label] of [['ib-flex-single-statement-v1','2026/01/15–2026/03/20'], [undefined,'2026/01/15–2026/03/20；單報表期間尚未核對']]) {
+    const income = {from:'20260115',to:'20260320',dividends:12.5,paymentInLieu:0,periodBasis,referencePrice:2,referenceUnits:6.25};
+    const report=buildPortfolioReport({...baseData,settings:{ib:{income}}},{viewCurrency:'USD',generated:'2026-10-20',sortKey:'value',sortDir:'desc',layers,layerOrder,escapeHtml});
+    assert.ok(report.html.includes('IBKR 現金流 <span>'+label+'</span>'));
+    assert.doesNotMatch(report.html,/參考單價|參考單位|dividendEquivalence|6\.25/);
+  }
 });

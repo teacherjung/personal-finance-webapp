@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { incomeActivityHtml, INCOME_INFO, tradesActivityHtml } from '../public/modules/portfolio-activity.js';
+import { incomeActivityHtml, INCOME_INFO, tradesActivityHtml, dividendActivityHtml } from '../public/modules/portfolio-activity.js';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -18,7 +18,7 @@ test('投資活動｜IB 現金流維持原本合計、正負號與雙計價格�
   const usdHtml = incomeActivityHtml(settings, usd);
 
   assert.match(twdHtml, /IB 現金流/);
-  assert.match(twdHtml, /（2025\/07–2026\/06）/);
+  assert.match(twdHtml, /（期間資料不完整或無效，尚未核對）/);
   assert.match(twdHtml, /股息[\s\S]*\+0\.38 萬/);
   assert.match(twdHtml, /融資利息[\s\S]*−0\.02 萬/);
   assert.match(twdHtml, /淨現金流[\s\S]*\+0\.34 萬/);
@@ -105,4 +105,28 @@ test('丙-2｜台幣計價時，美元匯率是預設值 → IB 現金流與交�
   assert.doesNotMatch(incomeActivityHtml(income, live), /預設值/);
   const usdView = { ...dflt, viewCurrency: 'USD' };
   assert.doesNotMatch(incomeActivityHtml(income, usdView), /預設值/, 'USD 計價不經台幣換算、不標');
+});
+
+test('配息參考卡｜完整期間與未格式化 G 注入 USD 格式器，說明計算口徑', () => {
+  const income = {periodBasis:'ib-flex-single-statement-v1',from:'20260115',to:'20260320',dividends:12.5,paymentInLieu:0,count:1,skippedNoFx:0,skippedNoCurrency:0,estimatedNoFx:1};
+  const calls=[];
+  const html=dividendActivityHtml({ib:{income}}, {escapeHtml,formatCurrency:(...args)=>{calls.push(args);return '<13 USD>';}});
+  assert.deepEqual(calls,[[12.5,'USD']]);
+  assert.match(html,/2026\/01\/15–2026\/03\/20/);
+  assert.match(html,/&lt;13 USD&gt;/);
+  assert.match(html,/含匯率估算/);
+  assert.match(html,/畫面金額依既有格式四捨五入/);
+  assert.match(html,/本次輸入的參考單價/);
+  assert.match(html,/不是可買股數或買賣建議/);
+  assert.match(html,/替代股息是券商借出股票時代付的現金/);
+  assert.match(incomeActivityHtml({ib:{income}},usd),/2026\/01\/15–2026\/03\/20/);
+  assert.equal(dividendActivityHtml({ib:{}},{escapeHtml,formatCurrency:()=>{throw Error('沒有收入不能格式化');}}),'');
+});
+
+test('配息參考卡｜缺金額不經格式器補零，舊紀錄與惡意日期皆不冒認期間', () => {
+  for (const income of [{from:'20260115',to:'20260320'}, {periodBasis:'ib-flex-single-statement-v1',from:'20260115',to:'20260320'}, {from:'<img src=x>',to:'20260131'}]) {
+    const html=dividendActivityHtml({ib:{income}}, {escapeHtml,formatCurrency:()=>{throw Error('無資格金額不可格式化');}});
+    assert.match(html,/尚未核對|金額不完整/);
+    assert.doesNotMatch(html,/<img|稅前配息合計：/);
+  }
 });
