@@ -684,15 +684,28 @@ test('架構｜執行期那道門：偽造環境值／目錄外／連結／目�
   }
 });
 
-test('架構｜正式程式碼碰接縫的**各種寫法**都要被 lint 擋下（regex 版曾漏掉三種普通寫法）', async () => {
-  // ⚠️ 這一題取代了原本自己寫 regex 逐行掃的架構題。那一版宣稱「加一個呼叫者就轉紅」，
-  //    但實測**別名 import／換行呼叫／`.call`** 三種都照樣全綠——同 xlsx 那條的教訓：
-  //    用正規表示式解析一門語言補不完，執法者要換成看語法樹的 ESLint。
-  //    本題的職責因此改成**盯著執法者真的會開火**（下面列舉的寫法只是證據，不是護欄本體）。
-  // ⚠️ 同上（r7 Medium）：唯一目錄、只刪自己建的
-  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
-  const probeDir = mkdtempSync(join(ROOT, 'lib', '_seam_probe_'));
-  const pubProbeDir = mkdtempSync(join(ROOT, 'public', '_seam_probe_'));
+test('架構｜正式程式碼碰接縫的**各種寫法**都要被 lint 擋下（regex 版曾漏掉三種普通寫法）', async (t) => {
+  // 真正的 AST 規則才是執法者；樣本只用來證明各種合法寫法有走到正式設定。
+  // 虛擬路徑保留 lib/public 角色，避免建立短命來源目錄與其他考題的複製交錯。
+  const { ESLint } = await import('eslint');
+  const { default: observedFs } = await import('node:fs');
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { tmpdir } = await import('node:os');
+  const privateRoot = observedFs.mkdtempSync(join(tmpdir(), 'pdf-seam-lint-observer-'));
+  /** @type {{method: string, path: string}[]} */
+  const writes = [];
+  // 只觀察舊 producer 的同步入口與字串目的地；不涵蓋其他程序或其他寫入 API。
+  const mkdir = observedFs.mkdtempSync;
+  const write = observedFs.writeFileSync;
+  t.mock.method(observedFs, 'mkdtempSync', (...args) => {
+    if (typeof args[0] === 'string') writes.push({ method: 'mkdtempSync', path: args[0] });
+    return mkdir(...args);
+  });
+  t.mock.method(observedFs, 'writeFileSync', (...args) => {
+    if (typeof args[0] === 'string') writes.push({ method: 'writeFileSync', path: args[0] });
+    return write(...args);
+  });
+  syncBuiltinESMExports();
   const IMP = "import { setPdfChildScriptForTest } from '../pdf-isolate.js';\n";
   const FORMS = [
     ['直接呼叫', `${IMP}export function a() { setPdfChildScriptForTest('/tmp/x.js'); }\n`],
@@ -711,41 +724,60 @@ test('架構｜正式程式碼碰接縫的**各種寫法**都要被 lint 擋下�
     ['re-export（把接縫轉手出去）', "export { setPdfChildScriptForTest } from '../pdf-isolate.js';\n"],
   ];
   try {
-    const paths = FORMS.map(([name, src], k) => {
+    const control = observedFs.mkdtempSync(join(privateRoot, 'control-'));
+    const controlFile = join(control, 'positive.js');
+    observedFs.writeFileSync(controlFile, 'export const positive = true;\n');
+    assert.equal(observedFs.readFileSync(controlFile, 'utf8'), 'export const positive = true;\n',
+      '正控寫入後須能逐字讀回；請核對 test/pdf-isolate.test.js 的架構題與 eslintSeamFindings、eslint.config.js；重跑 node --test test/pdf-isolate.test.js。');
+    const lint = new ESLint({ cwd: ROOT, overrideConfigFile: join(ROOT, 'eslint.config.js'), fix: false, cache: false });
+    const probeDir = join(ROOT, 'lib', '_seam_probe_virtual');
+    const pubProbeDir = join(ROOT, 'public', '_seam_probe_virtual');
+    for (const [k, [name, src]] of FORMS.entries()) {
       const f = join(probeDir, `p${k}.js`);
-      writeFileSync(f, src);
-      return [name, f, src];
-    });
-    // ⚠️ **前端也要有探針**：全部放 lib/ 的話，有人把護欄的 files 縮成只掃 lib/**，
-    //    這題仍然全綠、public/ 靜默失守（同 xlsx 那題踩過的坑）。
-    const pubFile = join(pubProbeDir, 'probe.js');
-    writeFileSync(pubFile, "import { setPdfChildScriptForTest } from '../../lib/pdf-isolate.js';\n"
-      + "export function k() { setPdfChildScriptForTest('/tmp/x.js'); }\n");
-    const byFile = new Map([...(await eslintSeamFindings(probeDir)), ...(await eslintSeamFindings(pubProbeDir))]);
-    for (const [name, f, src] of paths) {
-      assert.ok((byFile.get(f) || []).length > 0,
+      const { findings } = await eslintSeamFindings(lint, f, src);
+      assert.ok(findings.length > 0,
         `「${name}」這種寫法沒有被擋下——它是合法 JS，正式程式碼可以照這樣換掉 PDF 子行程腳本。\n原始碼：\n${src}`);
     }
-    assert.ok((byFile.get(pubFile) || []).length > 0,
+    const pubFile = join(pubProbeDir, 'probe.js');
+    const pubSrc = "import { setPdfChildScriptForTest } from '../../lib/pdf-isolate.js';\n"
+      + "export function k() { setPdfChildScriptForTest('/tmp/x.js'); }\n";
+    assert.ok((await eslintSeamFindings(lint, pubFile, pubSrc)).findings.length > 0,
       'public/ 底下碰接縫沒有被擋下——護欄的 files 範圍被縮窄了');
+    for (const dir of [probeDir, pubProbeDir]) {
+      assert.deepEqual(await eslintSeamFindings(lint, join(dir, 'normal.js'), 'export const normal = true;\n'), { findings: [], errorCount: 0 },
+        '正常文字不得由接縫規則拒收；請核對 test/pdf-isolate.test.js 的架構題與 eslintSeamFindings、eslint.config.js；重跑 node --test test/pdf-isolate.test.js。');
+    }
+    assert.ok(writes.some(x => x.method === 'mkdtempSync' && x.path === join(privateRoot, 'control-')),
+      '同步建立觀察器必須看到本題的真操作；請核對 test/pdf-isolate.test.js 的架構題與 eslintSeamFindings、eslint.config.js；重跑 node --test test/pdf-isolate.test.js。');
+    assert.ok(writes.some(x => x.method === 'writeFileSync' && x.path === controlFile),
+      '同步寫入觀察器必須看到本題的真操作；請核對 test/pdf-isolate.test.js 的架構題與 eslintSeamFindings、eslint.config.js；重跑 node --test test/pdf-isolate.test.js。');
+    const shared = [join(ROOT, 'lib') + '/', join(ROOT, 'public') + '/'];
+    assert.deepEqual(writes.filter(x => shared.some(dir => x.path.startsWith(dir))), [],
+      '接縫 lint 探針不得寫入共用來源目錄；請核對 test/pdf-isolate.test.js 的架構題與 eslintSeamFindings、eslint.config.js；重跑 node --test test/pdf-isolate.test.js。');
   } finally {
-    rmSync(probeDir, { recursive: true, force: true });
-    rmSync(pubProbeDir, { recursive: true, force: true });
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    observedFs.rmSync(privateRoot, { recursive: true, force: true });
   }
 });
 
-/** 跑真的 eslint，只收接縫護欄報的那些。（一次掃一個目錄——一個樣本 spawn 一次太慢） @param {string} dir */
-async function eslintSeamFindings(dir) {
-  const { execFile } = await import('node:child_process');
-  const { promisify } = await import('node:util');
-  const run = promisify(execFile);
-  const stdout = await run('npx', ['eslint', '--format', 'json', dir], { cwd: ROOT, maxBuffer: 16 * 1024 * 1024 })
-    .then((r) => r.stdout, (/** @type {any} */ e) => String(e?.stdout || '[]'));
-  const out = new Map();
-  for (const r of JSON.parse(stdout)) {
-    out.set(r.filePath, (r.messages || []).filter((m) => /setPdfChildScriptForTest/.test(String(m.message || ''))));
-  }
-  return out;
+/**
+ * 使用正式設定與虛擬角色路徑；忽略、解析錯誤或其他規則不可冒充接縫拒收。
+ * @param {import('eslint').ESLint} lint
+ * @param {string} filePath
+ * @param {string} src
+ */
+async function eslintSeamFindings(lint, filePath, src) {
+  assert.equal(await lint.isPathIgnored(filePath), false, '探針的虛擬路徑不可被忽略；請核對 test/pdf-isolate.test.js 的架構題與 eslintSeamFindings、eslint.config.js；重跑 node --test test/pdf-isolate.test.js。');
+  const results = await lint.lintText(src, { filePath });
+  assert.equal(results.length, 1, '每份文字必須得到一份正式 lint 結果；請核對 test/pdf-isolate.test.js 的架構題與 eslintSeamFindings、eslint.config.js；重跑 node --test test/pdf-isolate.test.js。');
+  const result = results[0];
+  assert.equal(result.filePath, filePath, 'lint 結果必須對應受測角色路徑；請核對 test/pdf-isolate.test.js 的架構題與 eslintSeamFindings、eslint.config.js；重跑 node --test test/pdf-isolate.test.js。');
+  assert.equal(result.fatalErrorCount, 0, '解析失敗不能算接縫拒收；請核對 test/pdf-isolate.test.js 的架構題與 eslintSeamFindings、eslint.config.js；重跑 node --test test/pdf-isolate.test.js。');
+  assert.equal(result.warningCount, 0, '忽略或警告不能算接縫拒收；請核對 test/pdf-isolate.test.js 的架構題與 eslintSeamFindings、eslint.config.js；重跑 node --test test/pdf-isolate.test.js。');
+  const findings = result.messages.filter(m => m.ruleId === 'no-restricted-syntax'
+    && m.severity === 2 && /setPdfChildScriptForTest/.test(m.message));
+  return { findings, errorCount: result.errorCount };
 }
 
 test('三個抽取器都真的呼叫了 extractPdfLines（架構題：不准有人繞過隔離層）', () => {
