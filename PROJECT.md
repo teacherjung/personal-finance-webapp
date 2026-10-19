@@ -124,6 +124,8 @@
 
 ## 重要決定（已拍板，勿重議）
 
+- **訂閱可空資訊保存（2026-10-19 UTC，Sol 技術裁示）**：依[實際裁示](https://github.com/teacherjung/personal-finance-webapp/pull/713#issuecomment-6259440487)，由 [#713](https://github.com/teacherjung/personal-finance-webapp/pull/713) 限定修復表單 category/card/email 的空項與未操作 PUT 省略；保留原缺席、null、空字串及信箱顯示投影前原文，新增仍為娛樂／Gmail／未指定卡片。詳見[計畫](docs/subscription-form-preservation-plan.md)；不改週期、日期、攤提、全域表單或實際付款，不以此結清原第 24 項其他列操作。
+
 - **本輪理財待辦與裁示接線（2026-10-18 UTC）**：依[本人本輪指派](https://github.com/teacherjung/personal-finance-webapp/pull/708#issuecomment-6253454472)與[實際 GPT‑6.1 Sol／xhigh 範圍裁示](https://github.com/teacherjung/personal-finance-webapp/pull/708#issuecomment-6253484711)，逐項核實後處理可自主完成的理財待辦，先補必要裁示制度同步，再接訂閱刪除回焦與既有信用卡草稿；其餘既定工程亦逐項核前提，不以未分配略過。較早[同步暫停原文](https://github.com/teacherjung/ai-collab-kit/pull/111#issuecomment-6252361888)保留，此順序是新指派下的技術解讀，不改寫成本人曾逐字撤銷延期。套件固定版本 `db48be894e7d3f9c9b1c6f607b7523d4a1741a98` 經官方整批同步，專案指派正本為 `settings.json`、人讀表為 `PROJECT-SETTINGS.md`；正式複審、合併與代驗狀態見 [#708](https://github.com/teacherjung/personal-finance-webapp/pull/708)。不將推薦代選當本人實看，不恢復手機、雲端或理財 Gemini／掃描線，不結清外部前提與原安裝待補。
 
 - **模型工作線（2026-10-18）**：本人說「算了，這條線結束掉。目前就Codex實作Grok複審就好」（[原話留痕](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6249335559)）；Codex實作、Grok正式複審，Gemini線停止且掃描跳過。共同規則與設定統一由本人另指派的工作線處理，本支批次修正不自行改接線或等待Gemini切換。

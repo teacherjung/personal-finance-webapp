@@ -68,6 +68,7 @@
 | **訂閱續費日自動推進**（使用者定 2026-07-26） | ——完整契約 → [契約：前端功能・訂閱續費日自動推進](contracts/frontend-features.md#訂閱續費日自動推進) |
 | 訂閱本月攤提（停用當月月繳不計、季/年繳按天數比例） | ——完整契約 → [契約：前端功能・訂閱本月攤提](contracts/frontend-features.md#訂閱本月攤提) |
 | 訂閱狀態（使用中/即將停用/已停用） | ——完整契約 → [契約：前端功能・訂閱狀態](contracts/frontend-features.md#訂閱狀態) |
+| `public/modules/subscriptions.js` 的 `openSubForm`。 | ——完整契約 → [契約：前端功能・訂閱表單可空資訊與保存](contracts/frontend-features.md#訂閱表單可空資訊與保存) |
 | YYYY-MM-DD 日期解析 | ——完整契約 → [契約：前端功能・YYYY-MM-DD 日期解析](contracts/frontend-features.md#yyyy-mm-dd-日期解析) |
 | `theme.js` 的 CHART.green/red | ——完整契約 → [契約：前端功能・圖表色與 CSS 狀態色](contracts/frontend-features.md#圖表色與-css-狀態色) |
 | settings 新增欄位 | ——完整契約 → [契約：共用底層・settings 新增欄位](contracts/shared-foundation.md#settings-新增欄位) |
