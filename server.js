@@ -237,6 +237,21 @@ if (isHosted()) {
   app.use('/finance', express.static(join(__dirname, 'public')));
 } else {
   installJsonBodyParsers(app);
+  app.get(/^\/favicon\.ico$/, (req, res, next) => {
+    res.sendFile(join(__dirname, 'lib/assets/local-favicon.ico'), error => {
+      if (!error) return;
+      const err = /** @type {any} */ (error);
+      console.error('[favicon error]', err.message || err);
+      // 中止或已送出的回應不能再寫第二份 JSON。
+      if (req.aborted || res.destroyed || res.writableEnded || err.code === 'ECONNABORTED' || err.syscall === 'write') return;
+      if (res.headersSent) return next(error);
+      const status = Number.isInteger(err.status) && err.status >= 400 && err.status <= 599 ? err.status : 500;
+      // sendFile 可能先設圖片標頭才遇到讀檔錯誤；錯誤表徵不可借用圖片的驗證值。
+      for (const header of ['ETag', 'Last-Modified', 'Accept-Ranges', 'Content-Length']) res.removeHeader(header);
+      if (status !== 416) res.removeHeader('Content-Range');
+      res.set('Cache-Control', 'no-store').status(status).type('json').json({ error: '圖示暫時無法載入' });
+    });
+  });
   // 單檔投影沿用靜態供應器的入口、快取與 Range；其他資產落回原 public。
   app.use(express.static(createLocalIndex(join(__dirname, 'public'))));
   app.use(express.static(join(__dirname, 'public')));
