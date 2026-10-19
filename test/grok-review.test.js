@@ -4,13 +4,14 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import launcher from '../tools/review-launch.js';
 import { parseReviewArgs, prepareReview, projectPublicBody, promptValues, publicMaterial, publicReply, reviewGit, runReview, validateReply } from '../scripts/grok-review.js';
 import { runScan } from '../scripts/grok-scan.js';
+import { captureDiskSnapshot, finishDiskLedger, diskLedgerSha256 } from '../scripts/grok-disk-snapshots.js';
 import { cleanupTempRoots, fakeGrok, fakeRelay, isolated, SANDBOX_OK, SKIP_AFTER_CANARY, tinyRepo, withGrok } from './helpers/grok-scan-flow-fixtures.js';
 import { assertChildGitEnvClean, injectDirtyGitEnv } from './helpers/dirty-git-env.js';
 
@@ -87,8 +88,10 @@ function fixture(t, versions = { head: HEAD, base: BASE, repo: undefined }) {
   const runner = async (input) => {
     runnerCalls.push({ ...input, material: readFileSync(input.promptFile, 'utf8') });
     const reply = replyOf();
+    const diskLedger = finishDiskLedger('runner', ['before-box', 'before-relay-spawn', 'before-runner-result'].map(phase => captureDiskSnapshot('runner', phase)));
     return { code: 0, review: { ...selectedReply(reply), manifestSha256: 'c'.repeat(64), base: BASE, head: HEAD,
       source: 'Grok CLI', model: args.model, effort: args.effort, observedModels: ['grok-4.7'], modelFloor: '4.6', modelQualified: true,
+      diskLedger, diskLedgerSha256: diskLedgerSha256(diskLedger, 'runner'),
       recipe: '合成配方', resultsDir: join(dir, 'results') } };
   };
   return { dir, args, record, settings, values, write, current, comments, allComments, changedFiles, git, ask, runner, runnerCalls };
@@ -653,4 +656,92 @@ test('正式發審依指定裁示設定重算，與送審索引同列來源；�
     g.write(); const result = await runReview(g.args, g);
     assert.equal(result.code, 2, kind); assert.equal(g.runnerCalls.length, 0); absent(g);
   }
+});
+
+
+const providerHint = "核對 scripts/grok-review.js 的 runReview 與來源帳接線；重跑 node --test test/grok-review.test.js";
+test('provider 承接 runner 同份有限磁碟來源帳，另列自身前後觀測', async t => {
+  const f = fixture(t);
+  let received;
+  const runner = async input => { const result = await f.runner(input); received = result.review.diskLedger; return result; };
+  const result = await runReview(f.args, { git: f.git, ask: f.ask, runner });
+  assert.equal(result.code, 0, (result.lines.join('\n')) + '；' + providerHint);
+  assert.deepEqual(result.receipt.runnerDiskLedger, received, providerHint);
+  assert.equal(result.receipt.runnerDiskLedgerSha256, diskLedgerSha256(received, 'runner'), providerHint);
+  assert.deepEqual(result.receipt.providerDiskLedger.snapshots.map(x => x.phase), ['before-preparation', 'before-provider-output'], providerHint);
+  assert.equal(Object.hasOwn(result.receipt, 'runnerSha256'), false, providerHint);
+  assert.equal(Object.hasOwn(result.receipt, 'providerSha256'), false, providerHint);
+});
+
+for (const [label, mutate] of [
+  ['整份缺席', got => { delete got.diskLedger; }],
+  ['來源列缺席', got => { got.diskLedger.snapshots[0].files.pop(); }],
+  ['階段缺席', got => { got.diskLedger.snapshots.pop(); }],
+  ['後置變動', got => { got.diskLedger.snapshots[2].files[0].sha256 = 'a'.repeat(64); }],
+  ['來源帳雜湊不符', got => { got.diskLedgerSha256 = '0'.repeat(64); }],
+]) {
+  test('provider 拒收不完整或不符的有限來源帳：' + label, async t => {
+    const f = fixture(t);
+    const runner = async input => {
+      const result = await f.runner(input); mutate(result.review);
+      if (result.review.diskLedger && label !== '來源帳雜湊不符') result.review.diskLedgerSha256 = digest(JSON.stringify(result.review.diskLedger));
+      return result;
+    };
+    const result = await runReview(f.args, { git: f.git, ask: f.ask, runner });
+    assert.equal(f.runnerCalls.length, 1, providerHint);
+    assert.equal(result.code, 2, providerHint);
+    assert.ok(result.lines.join('\n').includes('磁碟來源'), providerHint);
+    assert.equal(existsSync(f.args.outFile), false, providerHint);
+    assert.equal(existsSync(f.args.outFile + '.receipt.json'), false, providerHint);
+  });
+}
+
+async function isolatedProvider(t) {
+  const root = mkdtempSync(join(tmpdir(), 'grok-provider-source-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const declared = captureDiskSnapshot('provider', 'before-preparation').files.map(x => x.path);
+  // 匯出夾具只複製具名程式；不把專案資料或版本控制目錄帶入。
+  const dependencies = ['tools/package.json', 'tools/settings-data.js', 'tools/git-env.js',
+    'tools/time-point.js', 'tools/acceptance-tier.js', 'tools/build-settings.js',
+    'tools/build-rules.js', 'tools/ruling-assignments.js', 'tools/markdown-effective.js'];
+  for (const path of [...declared, ...dependencies]) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    copyFileSync(join(ROOT, path), join(root, path));
+  }
+  writeFileSync(join(root, 'package.json'), '{"type":"module"}\n');
+  return { root, ...(await import(pathToFileURL(join(root, 'scripts/grok-review.js')).href)) };
+}
+
+test('provider 自身固定來源缺檔，平台查詢與 runner 均未開始', async t => {
+  const source = await isolatedProvider(t), f = fixture(t);
+  rmSync(join(source.root, 'scripts/grok-review.js'));
+  let asks = 0;
+  const ask = op => { asks++; return f.ask(op); };
+  const result = await source.runReview(f.args, { git: f.git, ask, runner: f.runner });
+  assert.equal(result.code, 2, providerHint);
+  assert.ok(result.lines.join('\n').includes('有限磁碟來源'), providerHint);
+  assert.equal(asks, 0, providerHint);
+  assert.equal(f.runnerCalls.length, 0, providerHint);
+  absent(f);
+  assert.equal(existsSync(f.args.outFile + '.receipt.json'), false, providerHint);
+});
+
+for (const phase of ['preparation', 'runner']) test('provider 自身來源變動拒收：' + phase, async t => {
+  const source = await isolatedProvider(t), f = fixture(t);
+  let changed = false;
+  const change = () => {
+    assert.equal(changed, false, providerHint);
+    const path = join(source.root, 'scripts/grok-review.js');
+    writeFileSync(path, readFileSync(path, 'utf8') + '\n// synthetic disk change\n');
+    changed = true;
+  };
+  const ask = op => { if (phase === 'preparation' && !changed) change(); return f.ask(op); };
+  const runner = async input => { const result = await f.runner(input); if (phase === 'runner') change(); return result; };
+  const result = await source.runReview(f.args, { git: f.git, ask, runner });
+  assert.equal(changed, true, providerHint);
+  assert.equal(f.runnerCalls.length, 1, providerHint);
+  assert.equal(result.code, 2, providerHint);
+  assert.ok(result.lines.join('\n').includes('有限磁碟來源'), providerHint);
+  absent(f);
+  assert.equal(existsSync(f.args.outFile + '.receipt.json'), false, providerHint);
 });

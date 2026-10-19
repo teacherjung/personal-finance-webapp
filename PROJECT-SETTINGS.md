@@ -176,7 +176,7 @@ default 是全專案預設路由；其餘識別值只供明列範圍。依裁示
 | \^\[\^\/\]\+\\\.md\$ | E（不需驗收） |
 | \^\\\.github\/ | E（不需驗收） |
 | \^data\/seed\\\.json\$ | E（不需驗收） |
-| \^scripts\/\(audit\-grok\-scan\|grok\-scan\|grok\-review\|grok\-final\-reply\|grok\-bump\|grok\-relay\|grok\-auth\-refresh\|grok\-sandbox\-canary\|gemini\-auth\|gemini\-client\|gemini\-relay\|gemini\-scan\|c6\-adversarial\)\\\.js\$ | E（不需驗收） |
+| \^scripts\/\(audit\-grok\-scan\|grok\-scan\|grok\-review\|grok\-final\-reply\|grok\-disk\-snapshots\|grok\-bump\|grok\-relay\|grok\-auth\-refresh\|grok\-sandbox\-canary\|gemini\-auth\|gemini\-client\|gemini\-relay\|gemini\-scan\|c6\-adversarial\)\\\.js\$ | E（不需驗收） |
 | \^scripts\/grok\-sandbox\\\.sb\$ | E（不需驗收） |
 | \^scripts\/git\-hooks\/ | E（不需驗收） |
 | \^\(eslint\\\.config\\\.js\|jsconfig\\\.json\|mutate\\\.sh\|\\\.gitignore\)\$ | E（不需驗收） |
