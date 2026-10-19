@@ -300,3 +300,75 @@ test('舊驗收名單｜保留其餘明確腳本的 E 分級', () => {
       '檢查 settings.json 的明確腳本 E 名單；用 node tools/build-settings.js 重產，再跑 node --test test/acceptance-table.test.js');
   }
 });
+
+// 安裝指路若落回單次裁示，會把當次取捨誤讀為後續義務；只釘本節明列的文件契約。
+const F_GENERAL_TITLE = '通用安裝驗收完成條件';
+const F_DATE_TITLE = '本次安裝與平台量測的界線（2026-10-14）';
+const F_GENERAL_LINK = '[通用安裝驗收完成條件](#通用安裝驗收完成條件)';
+const F_NEEDED_SENTENCES = [
+  "Claude 與 Codex 各自適用的安裝及驗收證據分列，一側成功或合成考題不代替另一側實機證據。",
+  "運行中的 Codex 不能自證全停，也不能先換組再關。",
+  "本人須在實際使用客戶端審閱並信任，不能以寫入信任雜湊或另一個客戶端的信任代替。",
+  "須看見該組拒絕理由含「在拒絕清單上」，且沒有 pong。",
+  "看到 pong 一律不算通過。",
+  "任何金融連接器真工具，連唯讀查詢也不能拿來試。",
+  "必要的停止、信任、來源對帳、測試鈕、放行面或舊複本引用／處置尚未核完，仍是安裝未完成，不寫成功。",
+  "適用規範或該次裁示要求的完成條件仍須滿足，缺項保留未完成；本節不創設免量測或替代證據。"
+];
+const F_DATE_RECORD_LINES = [
+  "- **登記安裝**：正式理財合併版本、固定套件版本、最終選取、兩側生成接線與固定複本指紋須對帳；外部執行者完成 Codex 全停簽認與換組，本人在實際客戶端重新信任；Claude 與 Codex 各以本次版本實際呼叫指定無害測試鈕 `mcp__guard_canary__ping`，都須拒絕、理由含「在拒絕清單上」、沒有 pong。再核已授權的非金融無副作用工具放行面，以及舊複本引用與處置，才可結清。本次只核被測工具當次可用，不宣稱全部登記工具已實呼。測試鈕只作拒絕驗收；任何金融連接器真工具，連唯讀查詢也不能拿來試。",
+  "- **直接量測仍未完成**：平台命令 shell、HOME／PATH、shell 選項、匯入函式、預載相關環境鍵、啟動哨兵，以及 runtime build 證明，沒有直接收據就維持未量／未證實。缺項與續作條件留在 `PROJECT.md` 永久待辦；本次不把前案第③項直接量測標成完成。信任、指紋及 canary 各只支持其觀測範圍，考題 shell 或清過環境後的判斷器輸出不能補成平台量測。",
+  "- **完成條件分開**：上述直接環境缺項本身不阻止結清已滿足條件的登記安裝；停止、信任、來源對帳、canary 或必要放行面核對尚未完成，仍是安裝未完成。遇失敗依工具正本回復並記「新版安裝未完成」，不能寫成功。"
+];
+
+/** @param {string} action @param {string} raw */
+function fGuidanceProblem(action, raw) {
+  if (!action.includes(`docs/money-guard-operations.md「${F_GENERAL_TITLE}」`)) return 'F 動作缺通用指路';
+  if (action.includes('docs/money-guard-operations.md「本次安裝與平台量測的界線」')) return 'F 動作仍以日期節作通用指路';
+  const text = visible(raw);
+  const generalAt = text.indexOf(`\n## ${F_GENERAL_TITLE}\n`);
+  const dateAt = text.indexOf(`\n## ${F_DATE_TITLE}\n`);
+  if (generalAt < 0 || dateAt <= generalAt) return '缺通用節或日期紀錄';
+  const before = text.slice(0, generalAt);
+  for (const prefix of ['> - **Claude 側改清單的手續**', '> - **Codex 側**']) {
+    const line = before.split('\n').find((l) => l.startsWith(prefix));
+    if (!line || !line.includes(F_GENERAL_LINK) || line.includes('下方「本次安裝與平台量測的界線」')) return `${prefix} 沒有改指通用節`;
+  }
+  const general = text.slice(generalAt, dateAt);
+  for (const sentence of F_NEEDED_SENTENCES) if (!general.includes(sentence)) return `通用條件缺句：${sentence}`;
+  const dated = text.slice(dateAt);
+  for (const line of F_DATE_RECORD_LINES) if (!dated.includes(line)) return '日期裁示或未量原文缺失';
+  if (!dated.includes('本節是 2026-10-14 的裁示及狀態紀錄')) return '日期紀錄缺範圍標示';
+  return null;
+}
+
+test('F 指引｜通用完成條件與日期證據分開，兩側指路及未量原文保留', () => {
+  const action = settings.acceptance.tiers.find((t) => t.id === tierId('F')).action;
+  const doc = read('docs/money-guard-operations.md');
+  assert.equal(fGuidanceProblem(action, doc), null);
+});
+
+test('F 指引｜反例仍拒絕舊指路、缺條件與日期未知項被刪', () => {
+  const action = settings.acceptance.tiers.find((t) => t.id === tierId('F')).action;
+  const doc = read('docs/money-guard-operations.md');
+  assert.equal(fGuidanceProblem(action, doc), null);
+  assert(action.includes(`「${F_GENERAL_TITLE}」`));
+  assert.ok(fGuidanceProblem(action.replaceAll(`「${F_GENERAL_TITLE}」`, '「本次安裝與平台量測的界線」'), doc));
+  for (const prefix of ['> - **Claude 側改清單的手續**', '> - **Codex 側**']) {
+    const line = doc.split('\n').find((l) => l.startsWith(prefix));
+    assert(line?.includes(F_GENERAL_LINK));
+    const reverted = line.replace(F_GENERAL_LINK, '下方「本次安裝與平台量測的界線」');
+    assert.ok(fGuidanceProblem(action, doc.replace(line, reverted)));
+  }
+  for (const sentence of F_NEEDED_SENTENCES) {
+    assert(doc.includes(sentence));
+    assert.ok(fGuidanceProblem(action, doc.replace(sentence, '本句保護已移除。')));
+  }
+  const rejection = '看到 pong 一律不算通過。';
+  assert(doc.includes(rejection));
+  assert.ok(fGuidanceProblem(action, doc.replace(rejection, '看到 pong 一律算通過。')));
+  for (const line of F_DATE_RECORD_LINES) {
+    assert(doc.includes(line));
+    assert.ok(fGuidanceProblem(action, doc.replace(line, '本次已完成。')));
+  }
+});
