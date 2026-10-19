@@ -58,8 +58,8 @@ npm run test:coverage
 
 ## 誠實缺口（已知、有記錄，非疏漏）
 
-1. **pdfjs 抽字層三胞胎**：`statement.js extractLines`／`bank-statement.js extractBankLines`／`taishin-securities.js extractSecuritiesLines` 逐字或近似重複、所有解析考題都從「合成座標列」進場——pdfjs 升級只會在使用者實際上傳時暴露。三份為**刻意分工**（docs/sync-index.md 同步點有列），日後若歸戶可一併補一條合成 PDF 端到端考題，順帶蓋住 `parseTaishinSecuritiesPdf` 的 async 包裝。
-2. **匯入落盤薄殼**：`applyBankStatement`／`importTaishinPdf` 這種「解析→套用→saveDb」的接線零直測（純函式層全測過）；接線回歸＝按匯入回 ok 但資料沒落盤。需要合成 PDF 端到端，與第 1 條同根因、留待歸戶時一併補。
+1. **PDF 抽字層的覆蓋邊界**：`statement.js extractLines`／`bank-statement.js extractBankLines`／`taishin-securities.js extractSecuritiesLines` 刻意各自對應帳單型態。合庫 `test/tcb-transfer-statement.test.js` 已以合成 PDF 走正式抽字入口，不能再概稱所有解析題只從合成座標列進場。其他版型與證券 async 包裝須逐路徑核對；本次未全面盤點，也不以合庫題推定 pdfjs 升級對其他版型皆有保障。
+2. **匯入落盤接線的覆蓋邊界**：合庫 `applyBankStatement` 已有合成 PDF 經預覽／套用、repo 讀回、重匯及拒收後舊值保存的服務層題，見 `test/tcb-transfer-statement.test.js`。其他銀行分支與證券 `importTaishinPdf` 的解析至落盤接線須逐路徑核對；本次未全面盤點，不據合庫推定整族已覆蓋，也不將證券薄殼標為已完成。
 3. **證券兩個 POST 路由殼**（import／batch-delete）缺的是**成功路徑**的 HTTP 煙霧測（服務層有完整直測；失敗與防線路徑已有 HTTP 級考題打到 `/api/securities/import`——大檔分流 `test/request-limits.test.js`、未登入 401 `test/hosted-auth.test.js`、名額 back-pressure `test/heavy-admission.test.js`）；漏的是「成功時路由接線」一類錯，價值中等。
 
 ## 維護規則
