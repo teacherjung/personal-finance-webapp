@@ -284,3 +284,75 @@ test('合庫短名既有帳戶：正式 PDF 匯入不裂戶，重匯不增加交
   assert.equal((await applyBankStatement(encoded)).transactions.imported, 0);
   assert.deepEqual((await getDb()).transactions, after.transactions);
 });
+
+
+// 先讓同題的完整合成 PDF 成功，再只破壞目標條件，避免拿抽字失敗代替拒收證據。
+async function assertTcbReference(p) {
+  const parsed = await parseBankStatement(pdf(p));
+  assert.equal(parsed.bank, '合作金庫銀行');
+  assert.equal(parsed.referenceDate, '2026-09-30');
+  assert.deepEqual(parsed.transactions, [expected]);
+  assert.equal(parsed.accounts[0].balance, 7890.12);
+}
+const refusal = reason => ({ status: 400, code: 'bank_unrecognized', message: '合庫電子化轉帳明細：' + reason });
+
+for (const [label, mutate, reason] of [
+  ['摘要種類', p => change(p, '網銀轉帳', { s: '合成其他摘要' }), '交易摘要或轉出帳戶尚未支援'],
+  ['存款種類', p => change(p, '綜合存款', { s: '合成其他存款' }), '台幣帳戶種類或帳號尚未支援'],
+  ['缺基準日', p => {
+    assert.equal(p[0].filter(c => c.s === '對帳單基準日：115/09/30').length, 1);
+    p[0] = p[0].filter(c => c.s !== '對帳單基準日：115/09/30');
+    return p;
+  }, '找不到唯一的對帳單基準日'],
+  ['不同行重複基準日', p => { p[0].push(cell(330, 650, 115, '對帳單基準日：115/09/30')); return p; }, '找不到唯一的對帳單基準日'],
+  ['只重複轉帳區標記', p => { p[0].push(cell(35, 65, 180, '【網路銀行(含行動網銀)轉帳交易明細】')); return p; }, '轉帳區重複出現'],
+  ['必要表頭齊全但多未知字樣', p => { p[1].push(cell(550, 771, 18, '額外欄')); return p; }, '轉帳表頭不完整'],
+]) test('合庫有限拒收｜' + label, async () => {
+  const p = pages();
+  await assertTcbReference(p);
+  await assert.rejects(() => parseBankStatement(pdf(mutate(p))), refusal(reason));
+});
+
+for (const [label, text, value, accepted, field] of [
+  ['概要正上界', '7,890.12', 100000000, true, 'balance'],
+  ['概要負上界', '7,890.12', -100000000, true, 'balance'],
+  ['概要正超界', '7,890.12', 100000000.01, false, 'balance'],
+  ['概要負超界', '7,890.12', -100000000.01, false, 'balance'],
+  ['交易正上界', '$1,234.56', 100000000, true, 'amount'],
+  ['交易正超界', '$1,234.56', 100000000.01, false, 'amount'],
+]) test('合庫有限金額邊界｜' + label, async () => {
+  const p = pages();
+  await assertTcbReference(p);
+  change(p, text, { s: value.toFixed(2) });
+  if (accepted) {
+    const parsed = await parseBankStatement(pdf(p));
+    assert.equal(parsed.accounts.length, 1); assert.equal(parsed.transactions.length, 1);
+    if (field === 'balance') {
+      assert.equal(parsed.accounts[0].balance, value);
+      assert.deepEqual(parsed.transactions, [expected]);
+    } else {
+      assert.deepEqual(parsed.transactions, [{ ...expected, amount: value }]);
+      assert.equal(parsed.accounts[0].balance, 7890.12);
+    }
+  } else await assert.rejects(() => parseBankStatement(pdf(p)), refusal('金額超出可匯入範圍'));
+});
+
+test('合庫有限拒收｜跨頁交易只缺續頁表頭', async () => {
+  const p = [summary(), [...headers(), ...row()], [...headers(), ...row(749, '09:12:34'), end()]];
+  const parsed = await parseBankStatement(pdf(p));
+  assert.deepEqual(parsed.transactions, [expected, { ...expected, note: expected.note.replace('08:', '09:') }]);
+  p[2] = [...row(749, '09:12:34'), end()];
+  await assert.rejects(() => parseBankStatement(pdf(p)), refusal('跨頁交易表缺少表頭'));
+});
+
+for (const [label, text] of [
+  ['單獨已知表頭', '交易日期'],
+  ['單獨民國日期', '115/09/11'],
+  ['單獨遮罩帳號', source],
+  ['單獨網銀摘要', '網銀轉帳'],
+]) test('合庫有限拒收｜結尾後' + label, async () => {
+  const p = pages();
+  await assertTcbReference(p);
+  p[1].push(cell(38, 700, 120, text));
+  await assert.rejects(() => parseBankStatement(pdf(p)), refusal('結尾標記後仍有交易欄位'));
+});
