@@ -201,3 +201,7 @@
 
 ---
 *本檔 2026-07-24 由三方共建（沿革見[完工紀錄](docs/archive/project-completion-log.md)）。之後誰完成階段，誰更新「目前狀態／待辦」（標題不寫日期，更新時間以 git 紀錄為準）；技術規則仍只更新 AGENTS.md 指定的正本。*
+
+## 交付狀態與有限 UI 證據對帳計畫（2026-10-19）
+
+預約 PROJECT.md、docs/ui-acceptance-matrix.md 與 docs/engineering-stage-evidence.md；逐項核對已合併的限定交付、合庫拒收補題與 IAB／Chrome 固定樣本。保留 #692 單次免再複審、歷史失敗、未量範圍及手機／雲端／Gemini 停線，不改產品、權限或驗收門檻；正式結果留對應 PR。
