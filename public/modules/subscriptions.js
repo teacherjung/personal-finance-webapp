@@ -1193,9 +1193,10 @@ function drawBreakdown(activeThis, curMk) {
 
 function openSubForm(sub, creditCards = []) {
   const seq = currentRouteSeq();
-  const cardOptions = creditCards.map(n => ({ value: n, label: cardLabel(n) }));
+  const cardOptions = [{ value: '', label: '未指定' }, ...creditCards.map(n => ({ value: n, label: cardLabel(n) }))];
   if (sub && sub.card && !creditCards.includes(sub.card)) cardOptions.unshift({ value: sub.card, label: cardLabel(sub.card) + '（已失效，請更新）' });
-  if (!cardOptions.length) cardOptions.push({ value: '', label: '（請先到「卡片追蹤」新增信用卡）' });
+  // 顯示投影不是改寫原資料的意圖；送出比較以開窗基準為準，失敗重試也沿用。
+  const optionalValues = { category: sub?.category ?? '', card: sub?.card ?? '', email: normEmail(sub?.email) };
   const initStatus = sub ? subStatus(sub) : 'active';
   const dateLabel = (st, cycle) => cycle === 'lifetime' ? '終身（不需續費日）' : st === 'active' ? '下次續費日' : '停用日（這天起不再續費）';
   const whenVal = sub ? (isLifetimeSub(sub) ? '' : (subStatus(sub) === 'active' ? sub.nextCharge : sub.endsOn)) : '';
@@ -1203,16 +1204,16 @@ function openSubForm(sub, creditCards = []) {
     title: sub ? '編輯訂閱' : '新增訂閱',
     fields: [
       { key: 'name', label: '服務名稱', type: 'text', required: true, placeholder: '例：Netflix' },
-      { key: 'category', label: '類別', type: 'select', options: CATEGORIES, default: '娛樂' },
+      { key: 'category', label: '類別', type: 'select', options: [{ value: '', label: '未分類' }, ...CATEGORIES], default: '娛樂' },
       { key: 'card', label: '續費信用卡', type: 'select', options: cardOptions },
       { key: 'amount', label: '費用', type: 'number', required: true },
       { key: 'cycle', label: '週期', type: 'select', options: [{ value: 'monthly', label: '月繳' }, { value: 'quarterly', label: '季繳' }, { value: 'semiannual', label: '半年' }, { value: 'yearly', label: '年繳' }, { value: 'lifetime', label: '終身' }] },
       { key: 'status', label: '狀態', type: 'select', options: [{ value: 'active', label: '使用中' }, { value: 'ending', label: '即將停用' }, { value: 'ended', label: '已停用' }], default: 'active' },
       { key: 'whenDate', label: dateLabel(initStatus, sub?.cycle), type: 'date' },
       { key: 'expiryDate', label: '訂閱停用日', type: 'date', full: true },
-      { key: 'email', label: '使用的信箱', type: 'select', options: EMAIL_OPTIONS, default: 'Gmail' }
+      { key: 'email', label: '使用的信箱', type: 'select', options: [{ value: '', label: '未指定' }, ...EMAIL_OPTIONS], default: 'Gmail' }
     ],
-    values: sub ? { ...sub, status: initStatus, email: normEmail(sub.email), whenDate: whenVal } : { status: 'active' },
+    values: sub ? { ...sub, ...optionalValues, status: initStatus, whenDate: whenVal } : { status: 'active' },
     onMount: (/** @type {any} */ root) => {
       // 狀態切換時，把日期欄的標籤在「下次續費日 / 停用日」之間切換
       const statusSel = root.querySelector('#f_status');
@@ -1254,7 +1255,10 @@ function openSubForm(sub, creditCards = []) {
       else { data.endsOn = date; data.nextCharge = date; }   // 停用日 = 不再續費的那天
       data.active = data.status !== 'ended';
       if (!data.since) data.since = (sub && sub.since) || monthKey();   // 新訂閱從「當月」起算，避免回填先前月份歷史
-      if (sub) await api('/subscriptions/' + sub.id, { method: 'PUT', body: data });
+      if (sub) {
+        for (const key of ['category', 'card', 'email']) if (data[key] === optionalValues[key]) delete data[key];
+        await api('/subscriptions/' + sub.id, { method: 'PUT', body: data });
+      }
       else await api('/subscriptions', { method: 'POST', body: data });
       const message = sub ? '訂閱資料已更新' : '訂閱已新增';
       rerenderSubscriptionsAfterAction(seq, message);
