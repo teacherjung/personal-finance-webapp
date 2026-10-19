@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -40,8 +40,10 @@ async function fixture(t) {
 }
 
 function entryFixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'disk-entry-test-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const allocated = mkdtempSync(join(tmpdir(), 'disk-entry-test-'));
+  t.after(() => rmSync(allocated, { recursive: true, force: true }));
+  // 從實體根派生路徑，讓模組讀取的精確比對不受暫存根別名影響。
+  const root = realpathSync(allocated);
   for (const name of ['scripts/grok-disk-snapshots.js', 'lib/is-main.js']) {
     mkdirSync(dirname(join(root, name)), { recursive: true });
     writeFileSync(join(root, name), readFileSync(new URL('../' + name, import.meta.url)));
@@ -65,15 +67,47 @@ test('來源帳 helper 的直接與連結入口以固定診斷拒絕啟動', t =
 
 test('來源帳 helper 載入保持靜默，匯出可用且不自動觀測來源', t => {
   const f = entryFixture(t), importer = join(f.root, 'importer.mjs');
-  // 缺其他宣告來源的副本使提前觀測會失敗；計數另辨識被吞掉的檔案讀取。
-  writeFileSync(importer, "import fs from 'node:fs';\nimport { syncBuiltinESMExports } from 'node:module';\n"
-    + "let reads = 0; for (const name of ['readFileSync', 'lstatSync']) { const original = fs[name]; fs[name] = (...args) => { reads++; return original(...args); }; }\n"
-    + 'syncBuiltinESMExports();\nconst api = await import(' + JSON.stringify(pathToFileURL(f.entry).href) + ');\n'
-    + "console.log(JSON.stringify({ reads, exports: ['captureDiskSnapshot', 'verifyDiskProgress', 'verifyDiskLedger', 'finishDiskLedger', 'diskLedgerSha256', 'diskFileSha256'].map(name => typeof api[name]) }));\n");
+  const control = join(f.root, 'source-read-control.txt'), value = 'fixture source read control';
+  writeFileSync(control, value);
+  // 模組載入也可能經 readFileSync；精確排除程式載入，保留採集使用的 lstatSync 與其他來源讀取。
+  // 此觀察無法區分相同模組路徑的主動重讀；真採集、其他讀取與 metadata 正控制限定本題射程。
+  writeFileSync(importer, `import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const modulePaths = new Set(${JSON.stringify([f.entry, join(f.root, 'lib/is-main.js')])});
+let reads = 0;
+for (const name of ['readFileSync', 'lstatSync']) {
+  const original = fs[name];
+  fs[name] = (...args) => {
+    const target = args[0] instanceof URL ? fileURLToPath(args[0]) : args[0];
+    if (name !== 'readFileSync' || !modulePaths.has(target)) reads++;
+    return original(...args);
+  };
+}
+syncBuiltinESMExports();
+const api = await import(${JSON.stringify(pathToFileURL(f.entry).href)});
+const importedReads = reads;
+let captureRejected = false;
+try { api.captureDiskSnapshot('provider', 'before-preparation'); } catch { captureRejected = true; }
+const captureReads = reads - importedReads;
+const beforeFile = reads, fileValue = fs.readFileSync(${JSON.stringify(control)}, 'utf8');
+const fileReads = reads - beforeFile, beforeMetadata = reads;
+fs.lstatSync(${JSON.stringify(f.entry)});
+const metadataReads = reads - beforeMetadata;
+console.log(JSON.stringify({ reads: importedReads,
+  exports: ['captureDiskSnapshot', 'verifyDiskProgress', 'verifyDiskLedger', 'finishDiskLedger', 'diskLedgerSha256', 'diskFileSha256'].map(name => typeof api[name]),
+  controls: { captureRejected, captureReads, fileReads, fileValue, metadataReads } }));
+`);
   const result = spawnSync(process.execPath, [importer], { env: f.env, cwd: f.root, encoding: 'utf8', timeout: 10_000 });
   assert.equal(result.status, 0, diskHint); assert.equal(result.signal, null, diskHint);
   assert.equal(result.stderr, '', diskHint);
-  assert.deepEqual(JSON.parse(result.stdout), { reads: 0, exports: Array(6).fill('function') }, diskHint);
+  const { controls, ...imported } = JSON.parse(result.stdout);
+  assert.deepEqual(imported, { reads: 0, exports: Array(6).fill('function') }, diskHint);
+  assert.equal(controls.captureRejected, true, diskHint);
+  assert.ok(controls.captureReads > 0, '真採集須被觀察；' + diskHint);
+  assert.equal(controls.fileValue, value, diskHint);
+  assert.ok(controls.fileReads > 0, '非排除路徑讀取須被觀察；' + diskHint);
+  assert.ok(controls.metadataReads > 0, '模組 metadata 讀取須被觀察；' + diskHint);
 });
 
 test('有限磁碟帳來自記帳模組所在來源，列名、角色及自身位元組可核', async t => {

@@ -102,3 +102,13 @@ f16b3ac9 的正常推送被入口守門擋下：新 helper 直接執行為空輸
 來源帳考題的實際 is-main 依賴使用真來源；新行為題走直接兩次、連結一次及真檔案 import，並在私有子程序觀察已用 readFileSync／lstatSync 接縫。此觀察不代表所有檔案 API、網路或任意背景副作用已受監控。移除拒絕分支、讓 import 也執行拒絕、錯回退出0及載入時真呼叫採集的有限反控須各自先綠、斷言紅、還原綠。新 helper／考題 hash 與直接組、反控另留，舊版證據不改寫成新版本重跑。
 
 [K5 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/720#issuecomment-6277506973)的 PROJECT 容量待辦補正一併完成，保留共用整輪拒收旗標的真實設計。新 HEAD 仍需正常三關、最新 CI、Grok 全審、F7 與合併後適用核收；本節不是交付證明。
+
+## 前瞻 Node 匯入觀察器修正（2026-10-19 UTC）
+
+1d26eb24 的正常推送三關通過，CI run 39328278707 的上線 Node 成功，前瞻 Node 26.12.0 則有一題來源觀測計數2對0失敗。便攜26.12.0同型重現與合成探針定位兩次均為讀入 helper、is-main 模組；26.0.0同探針無這兩次事件。原CI、原題及重現證據保留，overall success 不當作失敗 job 通過。
+
+依[實際Sol完整裁示](https://github.com/teacherjung/personal-finance-webapp/pull/720#issuecomment-6278087958)及[配對](https://github.com/teacherjung/personal-finance-webapp/pull/720#issuecomment-6278089088)同支修正測試，只排除自有夾具兩個精確模組路徑的 readFileSync，其他讀取與全部 lstatSync 仍計數。匯入階段先固定觀測值，之後真呼叫採集、讀取本題專屬合成檔、讀取模組 metadata，分段確認觀察器有效。相同模組路徑的主動重讀無法由此計數區分，因此不宣稱任意檔案副作用皆受監控。
+
+自動採集並吞錯、整族排除 readFileSync、停止記錄 lstatSync 的反控須分別先綠、斷言紅、還原綠；兩顆Node的相關直接結果及當版hash另留。產品helper、入口守門、workflow與CI核對不變；本節不是已完成新CI或全審的證明。
+
+首次精確排除候選在26.0直接65題通過且三組反控有效，26.12基準仍紅，該輪不能採計為26.12有效反控。自有根別名探針確認URL參數只在實體根派生的相同兩檔精確命中；依[Sol補充全文](https://github.com/teacherjung/personal-finance-webapp/pull/720#issuecomment-6278154289)及[配對](https://github.com/teacherjung/personal-finance-webapp/pull/720#issuecomment-6278155307)，夾具分配後先登記清理，再對該已存在根取一次realpath，全部子路徑由此派生。wrapper不加IO、不擴排除，真連結入口操作保留；新題目hash與兩版直接、有效反控另留，舊失敗不覆寫。
