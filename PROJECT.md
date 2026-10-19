@@ -80,7 +80,9 @@
 
 - （合庫名稱範圍，#678 r3 發現 4）合庫正式全名、英文名、簡稱「合庫」及中間帶空白的寫法不在已核准別名中，遇到此類機構戳可能另建帳戶；三碼本人證據門檻也用同一把身分尺認合庫，這些寫法會沿用主幹的短末碼判斷，裁別名時須一併檢查分類影響（#678 r4 發現 1）／`lib/bank-alias.js`、`lib/services/bank-import.js`、`test/bank-alias.test.js` 與 `test/tcb-transfer-statement.test.js`／首次出現這類機構戳時，核對法人同一性並請 William 裁示是否增列；本支不增列名稱 — **未分配**
 
-- （來源複製隔離，#718 計畫版 CI 失敗）store-guidance 的來源遞迴複製遇到共享瞬時目錄消失，來源支持與 PDF 架構 lint 探針交錯的風險，尚未證實唯一根因／`test/store-guidance.test.js` 與 `test/pdf-isolate.test.js`／依 [Sol 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/718#issuecomment-6272464670)立即準備獨立隔離修補，接 #718 後優先交付；本支 contained 判讀修正不結清此項，原 CI 失敗保留。
+- （來源複製隔離，#718 計畫版 CI 失敗）store-guidance 的來源遞迴複製遇到共享瞬時目錄消失，來源支持與 PDF 架構 lint 探針交錯的風險，尚未證實唯一根因／`test/store-guidance.test.js` 與 `test/pdf-isolate.test.js`／依 [Sol 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/718#issuecomment-6272464670)由 [#719](https://github.com/teacherjung/personal-finance-webapp/pull/719) 承接指定 producer 的記憶體 lint 與有限寫入觀察，範圍見[計畫](docs/test-source-isolation-plan.md)；正式驗證、複審及合併核收以該支紀錄為準，不預先結清，也不把舊 CI 的唯一根因寫成已證實。
+
+- （生命週期斷言指路，#718 r1 發現 1）`verifyLifecycle` 的 `failureTarget`、`later.observerRestored` 與 contained 私有父根的兩則 `assert.throws` 缺少自訂修法指路；判斷本身未被證明失效／`test/scan-fixture-cleanup.test.js`／下次實際修改這些斷言、或需依其失敗輸出排障時，依 [Sol 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/718#issuecomment-6275029271)只補核對位置與重跑命令，不改判斷、不另開純訊息 PR — **屬實・進待辦**
 
 - （暫存覆蓋，#683 r1 發現 1）當時生命週期考題未納入 grok-scan-flow-repo 與 grok-scan-flow-redaction；後續建立及收尾改動已觸發補覆蓋／`test/scan-fixture-cleanup.test.js`、`test/grok-scan-flow-repo.test.js` 與 `test/grok-scan-flow-redaction.test.js`／本輪由 [#718](https://github.com/teacherjung/personal-finance-webapp/pull/718) 承接兩檔的實際建立根、正常與指定故障場及有效突變，範圍見[計畫](docs/fixture-lifecycle-plan.md)；正式複審及合併核收以該支紀錄為準，不預先結清。
 - （暫存觀察器射程，#683 掃描發現 3）直接建立視界仍限本行程 mkdtempSync／`test/helpers/temp-root-lifecycle-observer.js`、`test/scan-fixture-cleanup.test.js` 及受影響考題／[#718](https://github.com/teacherjung/personal-finance-webapp/pull/718) 只承接已知 contained 子程序的私有父根、實際執行及內外空目錄反控，不聲稱直接觀察 child 每次建立。非同步 mkdtemp、mkdir 自建獨立根或 child 在既有父根外另建根時，再對實際路徑擴觀察與有效突變；這些條件仍保留。
