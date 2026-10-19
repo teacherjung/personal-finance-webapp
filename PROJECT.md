@@ -80,9 +80,11 @@
 
 - （合庫名稱範圍，#678 r3 發現 4）合庫正式全名、英文名、簡稱「合庫」及中間帶空白的寫法不在已核准別名中，遇到此類機構戳可能另建帳戶；三碼本人證據門檻也用同一把身分尺認合庫，這些寫法會沿用主幹的短末碼判斷，裁別名時須一併檢查分類影響（#678 r4 發現 1）／`lib/bank-alias.js`、`lib/services/bank-import.js`、`test/bank-alias.test.js` 與 `test/tcb-transfer-statement.test.js`／首次出現這類機構戳時，核對法人同一性並請 William 裁示是否增列；本支不增列名稱 — **未分配**
 
-- （暫存覆蓋，#683 r1 發現 1）生命週期考題未納入 grok-scan-flow-repo 與 grok-scan-flow-redaction；這兩支既有建立點已登記，尚未有生命週期回歸題／`test/scan-fixture-cleanup.test.js`、`test/grok-scan-flow-repo.test.js` 與 `test/grok-scan-flow-redaction.test.js`／下次修改這兩支考題的建立或收尾時，補實際根觀察及有效突變 — **未分配**
-- （暫存觀察器射程，#683 掃描發現 3）建立視界只含本行程 mkdtempSync，未涵蓋非同步建立、mkdir 自建根與子行程根／`test/helpers/temp-root-lifecycle-observer.js`、`test/scan-fixture-cleanup.test.js` 及受影響的掃描考題／受影響考題改用上述建立方式時，擴觀察器並補真行為及有效突變 — **未分配**
-- （暫存回報解析，#683 r2 發現）子行程 stdout 空白時先在 JSON.parse 報 SyntaxError，沒有到缺摘要斷言；仍擋下、不構成假綠／`test/scan-fixture-cleanup.test.js`／下次修改摘要解析時，先濾空行再由缺摘要斷言說明原因 — **未分配**
+- （來源複製隔離，#718 計畫版 CI 失敗）store-guidance 的來源遞迴複製遇到共享瞬時目錄消失，來源支持與 PDF 架構 lint 探針交錯的風險，尚未證實唯一根因／`test/store-guidance.test.js` 與 `test/pdf-isolate.test.js`／依 [Sol 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/718#issuecomment-6272464670)立即準備獨立隔離修補，接 #718 後優先交付；本支 contained 判讀修正不結清此項，原 CI 失敗保留。
+
+- （暫存覆蓋，#683 r1 發現 1）當時生命週期考題未納入 grok-scan-flow-repo 與 grok-scan-flow-redaction；後續建立及收尾改動已觸發補覆蓋／`test/scan-fixture-cleanup.test.js`、`test/grok-scan-flow-repo.test.js` 與 `test/grok-scan-flow-redaction.test.js`／本輪由 [#718](https://github.com/teacherjung/personal-finance-webapp/pull/718) 承接兩檔的實際建立根、正常與指定故障場及有效突變，範圍見[計畫](docs/fixture-lifecycle-plan.md)；正式複審及合併核收以該支紀錄為準，不預先結清。
+- （暫存觀察器射程，#683 掃描發現 3）直接建立視界仍限本行程 mkdtempSync／`test/helpers/temp-root-lifecycle-observer.js`、`test/scan-fixture-cleanup.test.js` 及受影響考題／[#718](https://github.com/teacherjung/personal-finance-webapp/pull/718) 只承接已知 contained 子程序的私有父根、實際執行及內外空目錄反控，不聲稱直接觀察 child 每次建立。非同步 mkdtemp、mkdir 自建獨立根或 child 在既有父根外另建根時，再對實際路徑擴觀察與有效突變；這些條件仍保留。
+- （暫存回報解析，#683 r2 發現）當時子行程 stdout 空白會先在 JSON.parse 報 SyntaxError，未到缺摘要斷言；原行為仍擋下、不構成假綠／`test/scan-fixture-cleanup.test.js`／本輪 [#718](https://github.com/teacherjung/personal-finance-webapp/pull/718) 同目的補空行過濾與缺摘要明確拒收，非空壞 JSON 仍拒收；正式核收以該支紀錄為準。
 - （暫存整組跳過，#683 r3 發現 2）整個 describe 帶 skip 時，回報器把 suite 的跳過也收進明細，與官方個別題數不合而往安全方向紅；[原探針及處置](https://github.com/teacherjung/personal-finance-webapp/pull/683#issuecomment-6132842497)／`test/helpers/temp-root-lifecycle-reporter.js`、`test/scan-fixture-cleanup.test.js`／FILES 任一支開始使用 describe 時，帶事件 details.type 並區分 suite 明細，補真行為與有效突變 — **未分配**
 
 - （複審模型說明，#687 掃描第 2 項；本次說明修改已觸發）`second` 供發審者依 F11 選用；產生器只代入 `strongest`，不是 CLI 自動 fallback／`docs/project-collaboration.md`「複審模型」及設定模型表的操作說明／下次修改複審降檔說明時，維持角色選用與 CLI 能力的界線／**該次一行說明已隨 [#692](https://github.com/teacherjung/personal-finance-webapp/pull/692) 合併，依本節的 #692 合併界線保留驗證射程；該次未改模型資格與命令**；依「本次待辦觸發裁示（2026-10-16）」。本人原 Opus 耗盡改 Fable 的決定留作沿革，暫用 Grok 仍依本人新指示。
