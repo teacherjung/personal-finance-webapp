@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { after, afterEach } from 'node:test';
-import { join, sep } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 
 const log = process.env.FIXTURE_LIFECYCLE_LOG;
 const scope = process.env.FIXTURE_LIFECYCLE_SCOPE;
@@ -26,24 +26,32 @@ if (log && scope && process.env.NODE_TEST_CONTEXT?.startsWith('child')) {
     record({ root });
     return result;
   };
+  const observeRoot = fs.mkdtempSync;
   syncBuiltinESMExports();
 
   let failed = false;
   fs.writeFileSync = (path, data, options) => {
     const name = String(path);
-    if (process.env.FIXTURE_LIFECYCLE_FAIL === 'victim-write'
-      && name.startsWith(join(scope, 'victim-')) && name.endsWith(sep + 'store.db') && !failed) {
+    const mode = process.env.FIXTURE_LIFECYCLE_FAIL;
+    const victim = mode === 'victim-write' && name.startsWith(join(scope, 'victim-')) && name.endsWith(sep + 'store.db');
+    const settings = mode === 'settings-write' && roots.includes(dirname(name))
+      && name.startsWith(join(scope, 'fake-scan-settings-')) && name.endsWith(sep + 'settings.json');
+    if ((victim || settings) && !failed) {
       failed = true;
-      record({ failureAfterRoots: roots.filter((p) => fs.existsSync(p)).length });
+      record({ failureAfterRoots: roots.filter((p) => fs.existsSync(p)).length,
+        failureMode: mode, failureRoot: dirname(name), failureTarget: name, targetRootPresent: fs.existsSync(dirname(name)) });
       throw new Error('Deliberate fixture lifecycle failure after creation');
     }
     return originalWrite(path, data, options);
   };
   syncBuiltinESMExports();
-  afterEach(() => {
+  let observedCount = 0;
+  afterEach((t) => {
     // 能力探測可能先建立又立即收掉根；故意失敗要等受測夾具確實在場。
     const present = roots.filter((root) => root.startsWith(scope + sep) && fs.existsSync(root));
-    record({ afterEachObserved: true, fixtureRootsPresent: present.length });
+    record({ afterEachObserved: true, fixtureRootsPresent: present.length, testName: t.name,
+      createdRoots: roots.slice(observedCount), observerRestored: fs.mkdtempSync === observeRoot });
+    observedCount = roots.length;
     if (process.env.FIXTURE_LIFECYCLE_FAIL === '1' && present.length && !failed) {
       failed = true;
       record({ failureAfterRoots: present.length });
