@@ -6,7 +6,6 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { gitEnv } from '../lib/git-env.js';
 import { isMainModule } from '../lib/is-main.js';
 import launcher from '../tools/review-launch.js';
@@ -17,6 +16,7 @@ import riskTier from '../tools/risk-tier.js';
 import reviewVerdicts from '../tools/gates/check-review-verdicts.js';
 import { repoLabelFrom, REVIEW_MODEL_FLOOR, reviewModelsQualified, runScan } from './grok-scan.js';
 import { verifyFinalSelection } from './grok-final-reply.js';
+import { captureDiskSnapshot, finishDiskLedger, verifyDiskLedger, diskLedgerSha256 } from './grok-disk-snapshots.js';
 
 const SHA = /^[a-f0-9]{40}$/u;
 const MODEL = /^[A-Za-z0-9._-]+$/u;
@@ -252,6 +252,7 @@ export function validateReply(reply, expected) {
 export async function runReview(args, { git = reviewGit, ask = platform.ask, runner = runScan } = {}) {
   let temp;
   try {
+    const providerBefore = captureDiskSnapshot('provider', 'before-preparation');
     const ready = prepareReview(args, { git, ask });
     temp = mkdtempSync(join(dirname(resolve(args.promptFile)), 'grok-review-'));
     const material = join(temp, 'materials.md');
@@ -264,16 +265,19 @@ export async function runReview(args, { git = reviewGit, ask = platform.ask, run
       && got.model === args.model && got.effort === args.effort && /^[a-f0-9]{64}$/u.test(got.manifestSha256)
       && typeof got.recipe === 'string' && got.recipe.length > 0 && typeof got.resultsDir === 'string' && got.resultsDir.length > 0, '安全 runner 的複審收據不符');
     demand(got.modelFloor === REVIEW_MODEL_FLOOR && got.modelQualified === true && reviewModelsQualified(got.observedModels), '安全 runner 的模型資格收據不符');
+    verifyDiskLedger(got.diskLedger, 'runner');
+    demand(got.diskLedgerSha256 === diskLedgerSha256(got.diskLedger, 'runner'), '安全 runner 的有限磁碟來源帳雜湊不符；請核對 scripts/grok-review.js 的 runReview 與 scripts/grok-disk-snapshots.js 的 diskLedgerSha256，重備材料後依產生器的本輪完整啟動指令重跑；合成重驗 node --test test/grok-review.test.js');
     try { verifyFinalSelection(got); }
     catch { stop('安全 runner 的完整 stdout／final 雜湊或選取收據不符'); }
     publicReply(got.stdout, 'stdout');
     const reply = validateReply(got.reply, { head: ready.record.head, round: ready.record.round });
     demand(got.replySha256 === hash(reply), '安全 runner 原文雜湊不符');
+    const providerDiskLedger = finishDiskLedger('provider', [providerBefore, captureDiskSnapshot('provider', 'before-provider-output')]);
     const receipt = { project: args.project, change: String(args.change), head: ready.record.head, base: ready.record.base,
       reviewer: 'Grok', source: 'Grok CLI', round: ready.record.round, model: args.model, effort: args.effort,
       observedModels: [...got.observedModels], modelFloor: got.modelFloor, modelQualified: got.modelQualified,
-      providerSha256: hash(readFileSync(fileURLToPath(import.meta.url))),
-      runnerSha256: hash(readFileSync(new URL('./grok-scan.js', import.meta.url))),
+      providerDiskLedger, providerDiskLedgerSha256: diskLedgerSha256(providerDiskLedger, 'provider'),
+      runnerDiskLedger: got.diskLedger, runnerDiskLedgerSha256: got.diskLedgerSha256,
       originalPromptSha256: ready.originalSha256, materialSha256: hash(ready.prompt), publicContextSha256: ready.contextSha256,
       replySha256: got.replySha256, stdoutSha256: got.stdoutSha256, selection: got.selection, manifestSha256: got.manifestSha256, runnerRecipe: got.recipe, resultsDir: got.resultsDir, posted: false };
     writeFileSync(`${args.outFile}.receipt.json`, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx', mode: 0o600 });

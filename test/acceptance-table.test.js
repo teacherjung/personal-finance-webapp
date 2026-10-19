@@ -85,6 +85,17 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
   assert.deepEqual(tierOf('scripts/check-runtime-health.js'), { path: 'scripts/check-runtime-health.js', tier: settings.acceptance.unknownTier, known: false });
 });
 
+test('來源帳 helper：精確新檔登記為 E', () => {
+  const path = 'scripts/grok-disk-snapshots.js';
+  assert.deepEqual(tierOf(path), { path, tier: tierId('E'), known: true }, '核對 settings.json 的 acceptance 精確名稱；執行 node tools/build-settings.js 重產，再跑 node --test test/acceptance-table.test.js');
+});
+
+test('來源帳 helper：近名路徑仍回退未知 C', () => {
+  for (const path of ['scripts/grok-disk-snapshots-future.js', 'scripts/grok-disk-snapshots.mjs', 'scripts/grok-disk-snapshots.js.bak', 'other/scripts/grok-disk-snapshots.js']) {
+    assert.deepEqual(tierOf(path), { path, tier: tierId('C'), known: false }, '收窄 settings.json 的 acceptance 至精確檔名；執行 node tools/build-settings.js 重產，再跑 node --test test/acceptance-table.test.js');
+  }
+});
+
 test('⭐ 級別順序照 William 裁示：F（工具安全設定）排第一（搬家第 3 題 a：錢的邊界不可以排在最後被略過）；沒列到的路徑當 C；B 的動作含 C 全文', () => {
   const ids = settings.acceptance.tiers.map((t) => t.id);
   assert.equal(ids[0], tierId('F'), `acceptance.tiers 第一級是 ${ids[0]}，裁示是 F 印在第一行`);

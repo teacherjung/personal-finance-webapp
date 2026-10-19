@@ -149,7 +149,9 @@
 
 ### Grok（本專案）
 
-- **配方雜湊的射程**：`scanScriptSha256` 是建盒前從本機磁碟讀取的 `scripts/grok-scan.js` 檔案雜湊，不表示已載入的程式映像或完整相依的執行身分；配方也不能用它作完整身分證明。固定 provider 的前後清單只支持各次核對所列檔案的範圍，載入時釘值及全部相依記帳另排，見[本次待辦觸發裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6208198145)。
+- **配方與有限磁碟來源帳的射程**：正式複審使用 `grok-disk-snapshots/v1`，固定集合由 [來源帳 helper](../scripts/grok-disk-snapshots.js) 宣告，包含專案來源及另標角色的套件入口；套件入口不代表全部間接相依。provider 在準備前與正式輸出前觀測，runner 在建盒前、實際 relay 啟動前與正式結果前觀測，實際 relay 的磁碟快照另列。固定來源缺失、讀取失敗、集合／角色／階段不符或前後變動即拒收；provider 承接 runner 的同一份帳，另保留自身觀測。
+- **相容欄位與限制**：正式用途的 `scanScriptSha256` 是 runner 建盒前快照中 `scripts/grok-scan.js` 的相容欄位，`profileSha256` 沿同張快照取值；人讀配方標明磁碟快照時點。歷史 scan 配方與舊收據維持其原來的磁碟讀值射程，不回填新帳。前後相同不能證明已載入映像、全部遞迴相依、每次 profile 的讀取映像或排除中途替換與競態；受審 repo 的同名檔也不是執行來源。原完整身分待辦的再啟動條件及驗證見[施工計畫](runner-source-output-plan.md)，沿革見[原觸發裁示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6208198145)。
+- **正式複審輸出上限**：stdout 與 stderr 各以解碼後的 UTF‑16 碼元計數，恰等上限可收；最後一段跨線當下即標記超限，該段不接入，後續排空而不累加，任一通道超限使本輪無效並清理。這個保留上限與 final 選取的 UTF‑8 位元組範圍不同；relay 診斷收取仍有自己的既有射程，有限來源帳不宣稱保存 relay 的全部輸出。
 
 - **用量回報**：Grok 帳號的額度、429 回應與用量細節只留本機；公開 PR 的未執行紀錄只寫概略原因，不附帳號或原始回應。
 - **模型與推理的角色分離**：Grok 正式複審使用 `settings.json` 的 reviewers 登記及產生器的明確參數，沿用 Grok profile、中繼、前後檢查與 formal review 入口；scanner 登記「無」不撤除這條複審隔離鏈。歷史 scan 用途不能作為替代掃描入口。

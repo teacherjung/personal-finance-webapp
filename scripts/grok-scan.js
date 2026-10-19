@@ -62,6 +62,7 @@ import { refreshSandboxAuth, authNeedles, authNeedleFields } from './grok-auth-r
 import { REFUSED_PREFIX, isToleratedRefusal, summarizeRelayDiagnostics } from './grok-relay.js';
 import { finalSelectionFailureCode, finalSelectionRootDiagnostic, selectFinalReply } from './grok-final-reply.js';
 import { isMainModule } from '../lib/is-main.js';
+import { captureDiskSnapshot, verifyDiskProgress, finishDiskLedger, diskLedgerSha256, diskFileSha256 } from './grok-disk-snapshots.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..');
@@ -92,6 +93,29 @@ const CP_CLONE = process.platform === 'darwin' ? ['-c'] : [];
  * 憑證續期由 scripts/grok-auth-refresh.js 的父程序處理，盒內不增加 refresh 權限。
  */
 export const GROK_WALL_MS = 60 * 60_000;
+
+/**
+ * 避免整場拒收後仍持續累積受控輸出；正式結果的拒收由呼叫端負責。
+ * @param {number} cap
+ */
+export function collectDecodedOutput(cap) {
+  if (!Number.isSafeInteger(cap) || cap < 1) throw new TypeError('輸出容量參數不符；請查 scripts/grok-scan.js 的 OUT_CAP 並重跑本輪發審');
+  let stdout = '', stderr = '', truncated = false;
+  return {
+    /** @param {'stdout'|'stderr'} channel @param {string} chunk */
+    append(channel, chunk) {
+      if (channel !== 'stdout' && channel !== 'stderr') throw new TypeError('輸出通道不符；請查 scripts/grok-scan.js 的收集器接線並重跑本輪發審');
+      if (typeof chunk !== 'string') throw new TypeError('輸出尚未解碼；請查 scripts/grok-scan.js 的串流解碼接線並重跑本輪發審');
+      if (truncated) return;
+      const current = channel === 'stdout' ? stdout : stderr;
+      if (current.length + chunk.length > cap) { truncated = true; return; }
+      if (channel === 'stdout') stdout += chunk;
+      else stderr += chunk;
+    },
+    snapshot() { return { stdout, stderr, truncated }; },
+  };
+}
+
 
 /** sessions 單趟讀取的上限（r6 #3）：超過任何一項＝退 2、不保存 */
 export const SESSION_CAPS = Object.freeze({ files: 4000, depth: 12, fileBytes: 16 * 1024 * 1024, totalBytes: 64 * 1024 * 1024 });
@@ -152,7 +176,7 @@ function reviewSnapshotState(root) {
 }
 
 /** @typedef {{ project: string, change: string, reviewer: string, source: string, round: number, previousHead?: string }} ReviewIdentity */
-/** @typedef {import('./grok-final-reply.js').SelectedReply & { manifestSha256: string, base: string, head: string, source: string, model: string, effort: string, observedModels: string[], modelFloor: string, modelQualified: boolean, recipe: string, resultsDir: string }} ReviewResult */
+/** @typedef {import('./grok-final-reply.js').SelectedReply & { manifestSha256: string, base: string, head: string, source: string, model: string, effort: string, observedModels: string[], modelFloor: string, modelQualified: boolean, recipe: string, resultsDir: string, diskLedger: ReturnType<typeof finishDiskLedger>, diskLedgerSha256: string }} ReviewResult */
 
 /**
  * 被掃倉庫的身分：只認 GitHub 的 https／ssh 遠端，解析成 `owner/name`；認不出就回 null（呼叫端換成固定字串）。
@@ -997,8 +1021,18 @@ export async function runScan(args, deps = {}) {
   const origin = spawnSync('git', ['--no-replace-objects', '-C', repo, 'config', '--get', 'remote.origin.url'], { encoding: 'utf8', env: gitEnv() });
   const repoLabel = (origin.status === 0 && repoLabelFrom(origin.stdout.trim())) || '（沒有可辨認的 GitHub 遠端）';
   /** @type {string} */ let scriptSha;
-  try { scriptSha = createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'); } catch (e) { return fail(`讀不出掃描程式本身（${errCode(e)}）`); }
-  log(`（受掃倉庫：${repoLabel}；掃描程式 sha256 ${scriptSha.slice(0, 12)}；指定模型 ${model}、推理 ${effort}）`);
+  const diskSnapshots = [];
+  try {
+    if (formal) {
+      diskSnapshots.push(captureDiskSnapshot('runner', 'before-box', relayScript));
+      scriptSha = diskFileSha256(diskSnapshots[0], 'scripts/grok-scan.js');
+    } else scriptSha = createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex');
+  } catch (error) {
+    return fail(formal ? '有限磁碟來源快照前置核對失敗；請核對 scripts/grok-disk-snapshots.js 的固定來源及 scripts/grok-scan.js 的觀測接線，依原入口重備並重跑本輪完整啟動指令；合成重驗 node --test test/grok-scan-flow-review.test.js'
+      : `讀不出掃描程式本身（${errCode(error)}）`);
+  }
+  const sourceHashLabel = formal ? 'runner 建盒前磁碟快照 sha256' : '掃描程式 sha256';
+  log(`（${formal ? '受審' : '受掃'}倉庫：${repoLabel}；${sourceHashLabel} ${scriptSha.slice(0, 12)}；指定模型 ${model}、推理 ${effort}）`);
 
   // ── 破口判準的「已在給盒子的東西裡」之一：head 樹的已 commit 原始碼（**不含超過單檔上限的大檔**）──
   // 位置在**建盒子之前**：①建不出來就此刻退 2，還沒建任何暫存路徑、也還沒燒掃描時間
@@ -1307,6 +1341,12 @@ export async function runScan(args, deps = {}) {
   writeFileSync(join(liveDir, 'store.db'), liveSecret + '\n');
 
   // ── ③ 轉送器（監看它的生死）──
+  if (formal) {
+    try {
+      diskSnapshots.push(captureDiskSnapshot('runner', 'before-relay-spawn', relayScript));
+      verifyDiskProgress('runner', diskSnapshots);
+    } catch { return failAndClean('有限磁碟來源快照在 relay 啟動前不一致；本輪不產生結果；請核對 scripts/grok-disk-snapshots.js 的固定來源及 scripts/grok-scan.js 的觀測接線，依原入口重備並重跑本輪完整啟動指令；合成重驗 node --test test/grok-scan-flow-review.test.js'); }
+  }
   const relayProc = spawn(process.execPath, [relayScript, String(relayPort), '--auth-dir', authDir, '--dummy-file', dummyFile], { stdio: ['ignore', 'pipe', 'pipe'] });   // broker：真 token 只在轉送器手上
   relay = relayProc;
   relayProc.once('close', () => { relayClosed = true; });
@@ -1342,9 +1382,11 @@ export async function runScan(args, deps = {}) {
   // 完整指令、env 白名單、版本、沙箱設定檔的雜湊。之後驗屍或重裁都有憑據，不靠回憶。
   writeFileSync(join(resultsDir, 'launch.json'), JSON.stringify({
     startedAt, base, head, repo: repoLabel, scanScriptSha256: scriptSha, model, reasoningEffort: effort,
+    ...(formal ? { beforeBoxDiskSnapshot: diskSnapshots[0] } : {}),
     ...(formal ? { purpose, review: args.review, manifestSha256: sha256(manifestText ?? '') } : {}),
     sandboxExec: '/usr/bin/sandbox-exec', sbArgv, grokArgv, env, grokVersion: verText, relayPort, ulimits,
-    profileSha256: createHash('sha256').update(readFileSync(PROFILE)).digest('hex'),
+    profileSha256: formal ? diskFileSha256(diskSnapshots[0], 'scripts/grok-sandbox.sb')
+      : createHash('sha256').update(readFileSync(PROFILE)).digest('hex'),
     materialsSha256: createHash('sha256').update(materials).digest('hex'),
   }, null, 2));
   // ⚠️ 不用 spawnSync：它卡住事件迴圈，轉送器的 exit 事件要等 grok 結束後才派發，
@@ -1355,26 +1397,26 @@ export async function runScan(args, deps = {}) {
   const grok = await new Promise((resolve) => {
     const child = spawn('/bin/sh', shArgv, { cwd: src, stdio: ['ignore', 'pipe', 'pipe'], env, detached: true });
     grokPgid = child.pid ?? null;
-    let stdout = '', stderr = '', truncated = false;
+    const output = collectDecodedOutput(OUT_CAP);
     // 先設編碼再收：管子一段一段送，一個中文字三個位元組可能被切在兩段之間；逐段 `+= Buffer` 會各自解碼、切開的字變成亂碼（U+FFFD），
     //   回覆是要逐字貼進 PR 說明的（掃描紀錄範本）。setEncoding 用的解碼器會把切開的字接回去。
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (d) => { if (stdout.length < OUT_CAP) stdout += d; else truncated = true; });
-    child.stderr.on('data', (d) => { if (stderr.length < OUT_CAP) stderr += d; else truncated = true; });
+    child.stdout.on('data', (d) => output.append('stdout', d));
+    child.stderr.on('data', (d) => output.append('stderr', d));
     const t = setTimeout(() => { if (grokPgid) try { process.kill(-grokPgid, 'SIGKILL'); } catch { /* 已死 */ } }, GROK_WALL_MS);
-    child.on('error', (e) => { clearTimeout(t); resolve({ status: null, signal: null, error: e, stdout, stderr, truncated }); });
-    child.on('close', (status, signal) => { clearTimeout(t); resolve({ status, signal, error: undefined, stdout, stderr, truncated }); });
+    child.on('error', (e) => { clearTimeout(t); resolve({ status: null, signal: null, error: e, ...output.snapshot() }); });
+    child.on('close', (status, signal) => { clearTimeout(t); resolve({ status, signal, error: undefined, ...output.snapshot() }); });
   });
   await killGroupAndWait(grokPgid);
   const swept = sweepEscapees(box, log);
   const endedAt = new Date().toISOString();
   const reply = grok.stdout || '';
-  log(`${formal ? '複審' : '掃描'}結束：${endedAt}；grok 退出碼 ${grok.status}；回覆 ${reply.length} 字；程序群組已收束${swept ? `、掃蕩 ${swept}` : ''}`);
+  log(`${formal ? '複審' : '掃描'}結束：${endedAt}；grok 退出碼 ${grok.status}；回覆 ${reply.length} UTF-16 碼元；程序群組已收束${swept ? `、掃蕩 ${swept}` : ''}`);
   // 只摘要此刻已收到的固定中繼資料；未完成請求或缺紀錄不能推成服務正常。
   log('轉送器固定診斷：' + JSON.stringify(summarizeRelayDiagnostics(relayErr)));
   // 轉送器在 grok 結束前死了＝一律 2（r2 #3：r1 寫成 `relayDead && grok.status !== 0`，grok 自己回 0 就放過了）
   // r5 #1：失敗＝**全丟棄**。Grok 可控的 stdout／stderr／sessions 一律不進結果包、不進 log（stderr 尾巴也是它可控的）。
-  if (grok.truncated) return failAndClean(`grok 輸出超過 ${OUT_CAP} bytes——丟棄`);
+  if (grok.truncated) return failAndClean(`grok stdout／stderr 任一通道超過 ${OUT_CAP} UTF-16 碼元——丟棄；請核對 scripts/grok-scan.js 的 collectDecodedOutput 與串流接線，依原入口重備並重跑本輪完整啟動指令；合成重驗 node --test test/grok-output-cap.test.js test/grok-scan-flow-review.test.js`);
   if (relayDead) return failAndClean(`轉送器在掃描結束前死了：${relayDead}；grok 退出碼 ${grok.status}（輸出已丟棄）`);
   if (grok.status === 97) return failAndClean('ulimit 設不上去——不在沒有資源上限的情況下跑');
   // r7（Codex #2）：轉送器的每次拒絕都記在 stderr；除了刻意擋的那幾個形狀，任何拒絕＝白名單漏記或盒內程式打了不該打的＝退 2（吵），
@@ -1650,7 +1692,7 @@ export async function runScan(args, deps = {}) {
   // 而紀錄裡看不出來；2026-10-11 起明確指定（配方聲明的「指定模型」），這一格照舊記實際跑出來的。這一格只是**留痕不是閘**：讀不到／不認得／讀不完整都只是換一個
   // 值域寫死的字串，不擋掃描、不改退出碼。
   const modelField = modelFieldText(used);   // 值域寫死、不含任何由日誌決定的數字（見該函式）
-  const recipe = `base..head=${base}..${head}｜受掃=${repoLabel}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜指定模型=${model}（推理 ${effort}）｜模型=${modelField}｜掃描程式 sha256=${scriptSha.slice(0, 12)}｜${formal ? '複審' : '掃描'}起訖=${startedAt}→${endedAt}`;
+  const recipe = `base..head=${base}..${head}｜受掃=${repoLabel}｜結果包=${resultsDir}（launch.json＋sessions，已比對 ${needles.length} 根 DLP 針）｜沙箱=scripts/grok-sandbox.sb｜轉送器=127.0.0.1:${relayPort}→cli-chat-proxy.grok.com（白名單形狀＋本掃假值）｜${verText}｜指定模型=${model}（推理 ${effort}）｜模型=${modelField}｜${sourceHashLabel}=${scriptSha.slice(0, 12)}｜${formal ? '複審' : '掃描'}起訖=${startedAt}→${endedAt}`;
   log(`\n配方聲明可抄：${recipe}`);
   say(recipe);
   if (formal) {
@@ -1660,10 +1702,16 @@ export async function runScan(args, deps = {}) {
       if (finalSelectionFailureCode(error) === 'ROOT_CARDINALITY') log(`final-root-structure=${JSON.stringify(finalSelectionRootDiagnostic(error))}`);
       return failAndClean(`正式複審的完整最後回覆無法與 root 紀錄及 stdout 唯一對應（final-selection=${finalSelectionFailureCode(error)}）；核對固定 CLI 格式後重跑 scripts/grok-review.js`);
     }
-    const review = { ...args.review, ...selected, manifestSha256: sha256(manifestText ?? ''), base, head, source: 'Grok CLI', model, effort,
+    let diskLedger;
+    try {
+      diskSnapshots.push(captureDiskSnapshot('runner', 'before-runner-result', relayScript));
+      diskLedger = finishDiskLedger('runner', diskSnapshots);
+    } catch { return failAndClean('有限磁碟來源快照後置核對失敗；本輪不產生結果；請核對 scripts/grok-disk-snapshots.js 的固定來源及 scripts/grok-scan.js 的觀測接線，依原入口重備並重跑本輪完整啟動指令；合成重驗 node --test test/grok-scan-flow-review.test.js'); }
+    const review = { ...args.review, ...selected, diskLedger, diskLedgerSha256: diskLedgerSha256(diskLedger, 'runner'), manifestSha256: sha256(manifestText ?? ''), base, head, source: 'Grok CLI', model, effort,
       observedModels: [...used.models], modelFloor: REVIEW_MODEL_FLOOR, modelQualified: true, recipe, resultsDir };
     writeFileSync(join(resultsDir, 'review-manifest.json'), manifestText ?? '', { mode: 0o600, flag: 'wx' });
     writeFileSync(join(resultsDir, 'review-result.json'), JSON.stringify(review, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+    writeFileSync(join(resultsDir, 'disk-source-ledger.json'), JSON.stringify(diskLedger, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
     return { code: 0, summary, review };
   }
   return { code: 0, summary };

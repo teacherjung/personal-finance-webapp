@@ -2,8 +2,10 @@
 // 假 Grok 只驗正式複審材料與安全流程；不證明真模型的審查品質。
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdtempSync, lstatSync, readlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdtempSync, lstatSync, readlinkSync, mkdirSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { captureDiskSnapshot, verifyDiskLedger, diskLedgerSha256 } from '../scripts/grok-disk-snapshots.js';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { MODEL_WALK_MAX_NODES, reviewModelsQualified, runScan } from '../scripts/grok-scan.js';
@@ -27,7 +29,7 @@ test('通用沙箱環境不包含複審模型專用的合成 USER', () => {
 
 /** @param {Record<string, any>} [options] */
 async function reviewRun(options = {}) {
-  const repo = tinyRepo({ firstCommitFiles: { '.gitattributes': 'tree-only.txt export-ignore\n', 'RULES.md': 'base rules\n' } });
+  const repo = tinyRepo({ firstCommitFiles: { '.gitattributes': 'tree-only.txt export-ignore\n', 'RULES.md': 'base rules\n', ...options.repoFiles } });
   const inst = fakeGrok({ formalTranscript: true, model: 'grok-4.7', ...options.fake });
   if (options.versionProbe) {
     const bin = join(inst, 'bin', 'grok');
@@ -46,7 +48,7 @@ async function reviewRun(options = {}) {
   const logs = [];
   let box = '';
   let observed;
-  const result = await runScan(/** @type {any} */ ({ base: repo.base, head: repo.head, promptFile: promptFile('F3-UNCHANGED-PROMPT'), repo: repo.dir,
+  const result = await (options.runner ?? runScan)(/** @type {any} */ ({ base: repo.base, head: repo.head, promptFile: promptFile('F3-UNCHANGED-PROMPT'), repo: repo.dir,
     purpose: 'review', model: 'grok-4.7', effort: 'xhigh', review: { ...identity, previousHead: repo.base }, ...options.args }),
   { ...iso, ...withGrok(inst), relayScript: fakeRelay(), ...options.deps, log: (line) => {
     logs.push(line);
@@ -448,3 +450,112 @@ for (const [name, data] of [
   assert.ok(!logs.some(line => line.includes('final-selection=') || line.includes('final-root-structure=')));
   assert.deepEqual(readdirSync(iso.resultsRoot), []); assert.equal(existsSync(box), false);
 });
+
+
+
+const flowHint = "核對 scripts/grok-scan.js 的正式輸出／來源帳接線；重跑 node --test test/grok-scan-flow-review.test.js";
+for (const channel of ['stdout', 'stderr']) {
+  test('正式複審輸出上限拒收與清理：' + channel, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+    const shell = "/usr/bin/head -c 8388609 /dev/zero | /usr/bin/tr '\\000' 'q'" + (channel === 'stderr' ? ' >&2' : '');
+    const { result, logs, iso, box, observed } = await reviewRun({ shell });
+    assert.ok(observed, ('須已建立本題材料並走到模型啟動') + '；' + flowHint);
+    assert.equal(result.code, 2, flowHint);
+    assert.equal(result.review, undefined, flowHint);
+    assert.ok(result.summary.some(line => line.includes('任一通道超過 8388608 UTF-16 碼元')), flowHint);
+    assert.ok(logs.some(line => line.includes('grok 退出碼 0')), flowHint);
+    assert.deepEqual(readdirSync(iso.resultsRoot), [], flowHint);
+    assert.equal(existsSync(box), false, flowHint);
+    assert.ok(!logs.join('\n').includes('q'.repeat(200)), ('失敗摘要不帶可控輸出') + '；' + flowHint);
+  });
+}
+
+async function isolatedSourceRunner() {
+  const root = keep(mkdtempSync(join(tmpdir(), 'runner-disk-source-')));
+  const sourceRoot = new URL('../', import.meta.url);
+  for (const item of captureDiskSnapshot('runner', 'before-box').files) {
+    const target = join(root, item.path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, readFileSync(new URL(item.path, sourceRoot)));
+  }
+  writeFileSync(join(root, 'package.json'), '{"type":"module"}');
+  const module = await import(pathToFileURL(join(root, 'scripts/grok-scan.js')).href);
+  return { root, runner: module.runScan };
+}
+
+test('有限磁碟來源帳沿正式用途保存，實際 relay 與宣告程式分列', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const own = await isolatedSourceRunner(), relay = fakeRelay();
+  const marker = join(dirname(relay), 'started.txt');
+  writeFileSync(relay, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'actual-relay-started');\n` + readFileSync(relay, 'utf8'));
+  const decoy = '// synthetic reviewed repository decoy\n';
+  const { result } = await reviewRun({ runner: own.runner, repoFiles: { 'scripts/grok-scan.js': decoy, 'scripts/grok-review.js': decoy }, deps: { relayScript: relay } });
+  assert.equal(result.code, 0, (result.summary.join('\n')) + '；' + flowHint);
+  assert.equal(readFileSync(marker, 'utf8'), 'actual-relay-started', flowHint);
+  const ledger = result.review.diskLedger;
+  verifyDiskLedger(ledger, 'runner');
+  assert.equal(result.review.diskLedgerSha256, diskLedgerSha256(ledger, 'runner'), flowHint);
+  assert.deepEqual(ledger.snapshots.map(x => x.phase), ['before-box', 'before-relay-spawn', 'before-runner-result'], flowHint);
+  for (const snapshot of ledger.snapshots) {
+    assert.equal(snapshot.actualRelay.role, 'test-substitute', flowHint);
+    assert.equal(snapshot.actualRelay.sha256, hash(readFileSync(relay)), flowHint);
+    const runner = snapshot.files.find(x => x.path === 'scripts/grok-scan.js');
+    assert.equal(runner.sha256, hash(readFileSync(join(own.root, 'scripts/grok-scan.js'))), flowHint);
+    assert.notEqual(runner.sha256, hash(decoy), flowHint);
+  }
+  const saved = JSON.parse(readFileSync(join(result.review.resultsDir, 'disk-source-ledger.json'), 'utf8'));
+  assert.deepEqual(saved, ledger, flowHint);
+  const launch = JSON.parse(readFileSync(join(result.review.resultsDir, 'launch.json'), 'utf8'));
+  assert.deepEqual(launch.beforeBoxDiskSnapshot, ledger.snapshots[0], flowHint);
+  const runnerFile = ledger.snapshots[0].files.find(x => x.path === 'scripts/grok-scan.js');
+  const profileFile = ledger.snapshots[0].files.find(x => x.path === 'scripts/grok-sandbox.sb');
+  assert.equal(launch.scanScriptSha256, runnerFile.sha256, flowHint);
+  assert.equal(launch.profileSha256, profileFile.sha256, flowHint);
+  assert.ok(result.review.recipe.includes('runner 建盒前磁碟快照 sha256=' + runnerFile.sha256.slice(0, 12)), flowHint);
+});
+
+test('有限磁碟來源前置缺檔在建盒及金絲雀前拒收', async () => {
+  const own = await isolatedSourceRunner();
+  rmSync(join(own.root, 'scripts/grok-review.js'));
+  let probes = 0;
+  const { result, box, iso } = await reviewRun({ runner: own.runner, deps: { runCanary: async () => { probes++; return { code: 0, lines: [] }; } } });
+  assert.equal(result.code, 2, flowHint);
+  assert.equal(probes, 0, flowHint);
+  assert.equal(box, '', flowHint);
+  assert.deepEqual(readdirSync(iso.resultsRoot), [], flowHint);
+  assert.ok(result.summary.some(line => line.includes('有限磁碟來源快照前置核對失敗')), flowHint);
+});
+
+test('有限磁碟來源在 relay 啟動前變動，即停止正式模型並清理', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const own = await isolatedSourceRunner();
+  let changed = false;
+  const { result, box, iso, observed } = await reviewRun({ runner: own.runner, deps: { runCanary: async () => {
+    writeFileSync(join(own.root, 'scripts/grok-review.js'), '// changed private source\n'); changed = true;
+    return { code: 0, lines: [] };
+  } } });
+  assert.equal(changed, true, flowHint);
+  assert.equal(result.code, 2, flowHint);
+  assert.equal(observed, undefined, flowHint);
+  assert.equal(result.review, undefined, flowHint);
+  assert.ok(result.summary.some(line => line.includes('在 relay 啟動前不一致')), flowHint);
+  assert.equal(existsSync(box), false, flowHint);
+  assert.deepEqual(readdirSync(iso.resultsRoot), [], flowHint);
+});
+
+for (const target of ['declared-source', 'actual-relay']) {
+  test('有限磁碟來源後置變動拒收並清理：' + target, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+    const own = await isolatedSourceRunner(), relay = fakeRelay();
+    let changed = false;
+    const { result, box, iso, observed, logs } = await reviewRun({ runner: own.runner, deps: { relayScript: relay }, onLog: line => {
+      if (!line.startsWith('複審開始：')) return;
+      const path = target === 'actual-relay' ? relay : join(own.root, 'scripts/grok-review.js');
+      writeFileSync(path, readFileSync(path, 'utf8') + '\n// private post-observation change\n'); changed = true;
+    } });
+    assert.equal(changed, true, flowHint);
+    assert.ok(observed, flowHint);
+    assert.ok(logs.some(line => line.includes('grok 退出碼 0')), flowHint);
+    assert.equal(result.code, 2, flowHint);
+    assert.equal(result.review, undefined, flowHint);
+    assert.ok(result.summary.some(line => line.includes('有限磁碟來源快照後置核對失敗')), flowHint);
+    assert.equal(existsSync(box), false, flowHint);
+    assert.deepEqual(readdirSync(iso.resultsRoot), [], flowHint);
+  });
+}
