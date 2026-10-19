@@ -32,7 +32,7 @@
 - **GN-02｜Gemini 準備入口直接自動考題**（#693 r1 待辦 2）：#701 補 `prepareNativeScan` 的直接行為題，覆蓋來源重核、提供者乾淨狀態及文字 diff 拒收；三項對應防線突變均使本題失敗。落點：`test/gemini-native-runner.test.js` 的 GN-02 題；該版證據與核收以 [#701](https://github.com/teacherjung/personal-finance-webapp/pull/701) 的正式複審及合併紀錄為準，不以合成收據代替自動題。— **限定接線與直接回歸保護已隨 #701 合併**，見 [Grok r2 通過](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6238441417)及[當時收官](https://github.com/teacherjung/personal-finance-webapp/pull/701#issuecomment-6239647407)。當時實際掃描未完成，後續 Gemini 工作線依本人指示取消，不因歷史合併恢復啟用。
 - **GN-03｜Gemini 正式入口錯誤分類**（#693 r1 待辦 3）：讓正式入口依錯誤種類回報，避免把其他失敗印成認證政策未准。落點：`scripts/gemini-native-runner.js` 的命令列 catch。原定觸發為正式入口開始可執行；本人取消後停止，不排自動續作。— **Gemini線已由本人停止，保留未啟用沿革**
 
-- **網站小圖示請求回 404**：瀏覽器會讀取 `/favicon.ico`，主幹尚未提供；放在 `public/index.html` 的圖示宣告或靜態資產路由處理。值得做：下次整理網站資產，或需要完成無 console error 的瀏覽器驗證時；不能只過濾錯誤後宣稱全零。
+- **網站小圖示請求回 404**：瀏覽器會讀取 `/favicon.ico`，主幹尚未提供；放在 `public/index.html` 的圖示宣告或靜態資產路由處理。值得做：下次整理網站資產，或需要完成無 console error 的瀏覽器驗證時；不能只過濾錯誤後宣稱全零。 **本輪已承接，規劃中／未完成**：擬由 LOCAL 固定入口提供既有品牌派生 ICO，並驗 GET／HEAD／快取、錯誤回應與模式界線；完整五路徑草稿預約後才施工。HTTP／圖像解碼與原生頁籤採用分開驗證，不以過濾錯誤宣稱完成。
 
 - **銀行收支桌機明細伸縮**：[#710](https://github.com/teacherjung/personal-finance-webapp/pull/710) 接續調整主頁明細，欄寬隨容器與固定比例伸縮，移除桌機最小寬度造成的橫向捲動；範圍與實際尺寸證據見[計畫](docs/credit-description-layout-plan.md)。匯入預覽及手機排列不在此項。
 - **銀行收支與信用卡九位數金額**：[#710](https://github.com/teacherjung/personal-finance-webapp/pull/710) 的桌機金額欄改為 22% 並保持完整數字一行；有限 IAB 尺寸、長文字、跨月及操作欄證據見[計畫](docs/credit-description-layout-plan.md)，不擴為任意位數或所有瀏覽器已驗。
