@@ -10,11 +10,19 @@
 
 觀察器的 afterEach 同時記題名、該段實際新建根與 `mkdtempSync` 接線身分。repo 題的局部包裝情境須有 `scan-decoy-cwd-*` 建立正控，還原後須接回原觀察器，後續另一條建立路徑仍須可被觀察。
 
-`grok-fixture-host-*` 父根由本行程同步建立，可以直接觀察。已知 child 的 TMPDIR 位於該父根內；既有 child 載入回報、內部空目錄斷言、父端空目錄斷言與 finally 保持。沒有父根時須有該題的官方跳過證據。這只核對這條 contained 子程序路徑，不宣稱逐筆直接觀察 child 內每次建立。
+`grok-fixture-host-*` 父根由本行程同步建立，可以直接觀察。已知 child 的 TMPDIR 位於該父根內；既有 child 載入回報、內部空目錄斷言、父端空目錄斷言與 finally 保持。沒有父根時須有精確同題的官方跳過證據；缺該題 hook 時，另須確認本場實際建立記錄完全沒有父根，不能只看現在是否已清掉。已有父根卻缺 hook、或 hook 歸屬與實際根不符仍拒收。這段判讀在摘要、逐題 skip 對帳、真根、故障及對照保存檢查之後執行，只標該 contained 子路徑未驗證，不宣稱逐筆直接觀察 child 內每次建立。
 
 回報解析只濾空行。舊版 trim 已接受整份合法回報前後空白；新增接受範圍是兩條 JSON 事件之間的空行與全空白行，合成反例須將空白實際插入事件之間。空字串與全空白須由缺官方摘要斷言明確拒收；事件間加空白須保持原摘要與判斷；非空壞 JSON 仍拋錯。既有摘要、hook、根殘留、未登記對照、捷徑目標及逐題 skip 保存檢查保持。
 
 依 [Sol 內容風險裁示](https://github.com/teacherjung/personal-finance-webapp/pull/718#issuecomment-6271935185)，路徑工具分級為低，但本支改變既有回報接受／拒收方法，內容級上調高、每輪 Grok 全審。分級設定與清理保存要求不因此豁免。
+
+## CI 失敗分流與相容驗證
+
+計畫版的必要 [CI 39285125124](https://github.com/teacherjung/personal-finance-webapp/actions/runs/39285125124) 在 store-guidance 複製來源遇到瞬時目錄消失而中止。共享探針／來源遍歷競態有來源支持，但尚非唯一根因證明；依[獨立修補裁示](https://github.com/teacherjung/personal-finance-webapp/pull/718#issuecomment-6272464670)，另案優先處理，不混入本支。
+
+實作版的必要 [CI 39286766435](https://github.com/teacherjung/personal-finance-webapp/actions/runs/39286766435) 是 contained 判讀的三個斷言失敗：同題官方 skip 已存在，但未取得該題 hook。本支依[實際 Sol 續裁](https://github.com/teacherjung/personal-finance-webapp/pull/718#issuecomment-6272542702)同支修正，不作 D3 讓道，不用前瞻 Node 成功代替必要 CI。
+
+合成 child 透過正式 observer／reporter 提供 option skip、body skip、實際父根及 skip 後仍執行操作的證據。有限移除真實 hook 的反例只模擬事件缺席，不冒稱已在本機重現 CI 的 Node22 內部機制。缺同題 skip、別題 skip、非官方文字、缺摘要及數量不符均須拒收；保留受測操作，故意留下本場根或改壞專屬對照值仍須紅。相關突變逐項驗舊 hook 強求、精確題名、父根與歸屬、殘留與保存，以及 skip 提前返回的失守；舊候選收據不改標為新版已跑。
 
 ## 檔案與範圍
 

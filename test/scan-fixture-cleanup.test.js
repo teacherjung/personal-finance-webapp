@@ -13,6 +13,8 @@ import { gitEnv } from '../lib/git-env.js';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OBSERVER = join(ROOT, 'test/helpers/temp-root-lifecycle-observer.js');
 const REPORTER = join(ROOT, 'test/helpers/temp-root-lifecycle-reporter.js');
+const CONTAINED_TEST = '外層限制寫入時仍可載入能力夾具並執行純本地題';
+const CONTAINED_HINT = '；核對 test/scan-fixture-cleanup.test.js 的 contained 判讀與原生反例；在專案根目錄重跑 node --test test/scan-fixture-cleanup.test.js';
 const FILES = [
   'test/audit-grok-scan.test.js',
   'test/grok-scan-flow-credentials.test.js',
@@ -45,9 +47,28 @@ function run(file, env) {
   });
 }
 
+/** @param {any[]} events @param {any[]} skips @param {string} temporary
+ * @param {{diagnostic: (message: string) => void}} t */
+function verifyContainedLifecycle(events, skips, temporary, t) {
+  const prefix = join(temporary, 'grok-fixture-host-');
+  const parents = events.filter(e => typeof e.root === 'string' && e.root.startsWith(prefix)).map(e => e.root);
+  const contained = events.find(e => e.testName === CONTAINED_TEST);
+  if (!contained) {
+    assert.equal(parents.length, 0, '實際父根曾建立卻沒有該題 hook，不能當作未執行' + CONTAINED_HINT);
+  } else {
+    assert.deepEqual(contained.createdRoots.filter((/** @type {string} */ p) => p.startsWith(prefix)), parents,
+      '該題 hook 的父根必須對得上實際建立記錄' + CONTAINED_HINT);
+  }
+  if (!contained || !parents.length) {
+    assert.ok(skips.some(e => e.name === CONTAINED_TEST && e.skip),
+      '缺少父根或 hook 時須有精確同題官方跳過證據' + CONTAINED_HINT);
+    t.diagnostic('未驗證 contained 子程序：本平台未建立其私有父根；不擴稱已觀察子程序每次建立');
+  }
+}
+
 /** @param {any} result @param {any[]} events @param {string} value
- * @param {{failure: boolean|string, temporary: string}} options @param {{diagnostic: (message: string) => void}} t */
-function verifyLifecycle(result, events, value, { failure, temporary }, t) {
+ * @param {{failure: boolean|string, temporary: string, contained?: boolean}} options @param {{diagnostic: (message: string) => void}} t */
+function verifyLifecycle(result, events, value, { failure, temporary, contained = false }, t) {
   assert.equal(result.signal, null, '正常或故意斷言失敗必須走完收尾，不能被終止');
   const reports = result.report.split('\n').filter((/** @type {string} */ line) => line.trim()).map((/** @type {string} */ line) => JSON.parse(line));
   const summary = reports.filter((/** @type {any} */ e) => e.type === 'test:summary').at(-1);
@@ -95,6 +116,7 @@ function verifyLifecycle(result, events, value, { failure, temporary }, t) {
   }
   // runner 的跳過標記不代表題內完全沒執行；先驗已建立根與對照，再報原始標記。
   for (const skip of skips) t.diagnostic(`runner 標記跳過，不計通過：${skip.name}｜skip=${JSON.stringify(skip.skip)}｜${typeof skip.skip === 'string' ? skip.skip : '未提供原因'}`);
+  if (contained) verifyContainedLifecycle(events, skips, temporary, t);
   return { summary, skips, unverifiedReason };
 }
 
@@ -123,7 +145,7 @@ describe('掃描考題自有夾具的生命週期', { concurrency: 2 }, () => {
           mode: injected.failureMode, targetRootPresent: injected.targetRootPresent,
           rootObserved: events.some(e => e.root === injected.failureRoot),
         }));
-        const { unverifiedReason, skips } = verifyLifecycle(result, events, value, { failure, temporary }, t);
+        const { unverifiedReason } = verifyLifecycle(result, events, value, { failure, temporary, contained: file === 'test/grok-scan-flow-repo.test.js' }, t);
         if (unverifiedReason) t.skip(unverifiedReason);
         if (file === 'test/grok-scan-flow-repo.test.js') {
           const wrapped = events.find(e => e.testName?.startsWith('正式預設設定：'));
@@ -133,13 +155,6 @@ describe('掃描考題自有夾具的生命週期', { concurrency: 2 }, () => {
           const later = events.slice(events.indexOf(wrapped) + 1).find(e => e.createdRoots?.length);
           assert.ok(later, '局部包裝還原後須有另一條實際建立路徑作正控；核對 test/grok-scan-flow-repo.test.js 的「正式預設設定：」題及 test/helpers/temp-root-lifecycle-observer.js 的建立記錄；在專案根目錄重跑 node --test test/scan-fixture-cleanup.test.js');
           assert.equal(later.observerRestored, true);
-          const contained = events.find(e => e.testName === '外層限制寫入時仍可載入能力夾具並執行純本地題');
-          assert.ok(contained, '必須觀察已知子程序題的生命週期；核對 test/grok-scan-flow-repo.test.js 的「外層限制寫入時仍可載入能力夾具並執行純本地題」及本檔父根判讀；在專案根目錄重跑 node --test test/scan-fixture-cleanup.test.js');
-          if (!contained.createdRoots.some((/** @type {string} */ p) => p.startsWith(join(temporary, 'grok-fixture-host-')))) {
-            assert.ok(skips.some((/** @type {any} */ e) => e.name === contained.testName),
-              '沒有觀察到私有父根，必須有該子程序題的官方跳過證據；核對 test/grok-scan-flow-repo.test.js 的「外層限制寫入時仍可載入能力夾具並執行純本地題」及本檔父根判讀；在專案根目錄重跑 node --test test/scan-fixture-cleanup.test.js');
-            t.diagnostic('未驗證 contained 子程序：本平台未建立其私有父根；不擴稱已觀察子程序每次建立');
-          }
         }
       } finally {
         // 突變拿掉權限還原時，先讓上面的生命週期斷言紅，再收這次自己的殘留。
@@ -244,3 +259,101 @@ describe('synthetic suite', () => {
     rmSync(scope, { recursive: true, force: true });
   }
 });
+
+for (const mode of ['option', 'body', 'active', 'body-root', 'no-parent']) {
+  test(`contained 原生反例｜${mode}｜官方跳過不能遮住清理或保存失敗`, async () => {
+    const scope = mkdtempSync(join(tmpdir(), 'fixture-contained-'));
+    const temporary = join(scope, 'tmp');
+    mkdirSync(temporary);
+    const log = join(scope, 'created.jsonl');
+    const actions = join(scope, 'actions.jsonl');
+    const fixture = join(scope, 'contained.test.mjs');
+    const value = randomUUID();
+    writeFileSync(fixture, `import { test, after } from 'node:test';
+import { mkdtempSync, rmSync, appendFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+const mode = ${JSON.stringify(mode)};
+const root = mkdtempSync(join(tmpdir(), 'active-control-'));
+after(() => rmSync(root, { recursive: true, force: true }));
+const record = (name) => appendFileSync(${JSON.stringify(actions)}, JSON.stringify({ name, value: ${JSON.stringify(value)} }) + '\\n');
+test('active control', () => record('active control'));
+test('other option skip', { skip: 'other reason' }, () => { throw new Error('skipped body ran'); });
+test(${JSON.stringify(CONTAINED_TEST)}, { skip: mode === 'option' ? 'contained option reason' : false }, t => {
+  if (mode === 'body') { t.skip('contained body reason'); record('body after skip'); return; }
+  if (mode === 'no-parent') { record('active without parent'); return; }
+  const parent = mkdtempSync(join(tmpdir(), 'grok-fixture-host-'));
+  try {
+    if (mode === 'body-root') t.skip('contained body with parent');
+    record('parent operation');
+  } finally { rmSync(parent, { recursive: true, force: true }); }
+});
+`);
+    const env = { ...gitEnv(), TMPDIR: temporary, TMP: temporary, TEMP: temporary,
+      FIXTURE_LIFECYCLE_SCOPE: temporary, FIXTURE_LIFECYCLE_LOG: log,
+      FIXTURE_LIFECYCLE_FAIL: '0', FIXTURE_LIFECYCLE_CONTROL_VALUE: value };
+    delete env.NODE_TEST_CONTEXT;
+    let events = /** @type {any[]} */ ([]);
+    try {
+      const result = await run(fixture, env);
+      assert.equal(result.code, 0, result.output);
+      events = readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const records = readFileSync(actions, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const expected = [{ name: 'active control', value }];
+      if (mode !== 'option') expected.push({ name: mode === 'body' ? 'body after skip'
+        : mode === 'no-parent' ? 'active without parent' : 'parent operation', value });
+      assert.deepEqual(records, expected, '須有本場合成 child 的實際操作見證' + CONTAINED_HINT);
+      const messages = /** @type {string[]} */ ([]);
+      const t = { diagnostic: (/** @type {string} */ message) => messages.push(message) };
+      const options = { failure: false, temporary, contained: true };
+      const check = (observed = events, actual = result) => verifyLifecycle(actual, observed, value, options, t);
+      const withoutHook = events.filter(e => e.testName !== CONTAINED_TEST);
+      const parent = events.find(e => e.root?.startsWith(join(temporary, 'grok-fixture-host-')));
+      const hook = events.find(e => e.testName === CONTAINED_TEST);
+      if (mode === 'no-parent') {
+        assert.throws(() => check(), /精確同題官方跳過證據/, '有 hook 無父根不能借別題跳過' + CONTAINED_HINT);
+        assert.throws(() => check(withoutHook), /精確同題官方跳過證據/, '缺 hook 不能借別題跳過' + CONTAINED_HINT);
+        assert.throws(() => check(withoutHook, { ...result, output: result.output + CONTAINED_TEST + ' skip=true' }),
+          /精確同題官方跳過證據/, 'stderr 文字不能代替官方逐題事件' + CONTAINED_HINT);
+        return;
+      }
+      if (parent && !hook) assert.throws(() => check(), /實際父根曾建立卻沒有該題 hook/);
+      else check();
+      // 保留受測 child 與本題唯一值，故意破壞它完成操作後應保留的狀態。
+      const root = events.find(e => e.root).root;
+      mkdirSync(root);
+      assert.throws(() => check(), /考題完成後仍留有實際建立的根/,
+        '官方跳過不能提前返回放過本場殘留' + CONTAINED_HINT);
+      rmSync(root, { recursive: true, force: true });
+      const control = events.find(e => e.control);
+      writeFileSync(control.sentinel, value + '-damaged');
+      assert.throws(() => check(), /收尾傷到本題專屬的捷徑目標內容/,
+        '官方跳過不能提前返回放過本場對照損傷' + CONTAINED_HINT);
+      writeFileSync(control.sentinel, value);
+      if (parent) {
+        assert.equal(existsSync(parent.root), false, '反例須先完成父根收尾' + CONTAINED_HINT);
+        assert.throws(() => check(withoutHook), /實際父根曾建立卻沒有該題 hook/,
+          '已清掉的實際父根也不能借跳過掩蓋缺 hook' + CONTAINED_HINT);
+        if (hook) assert.throws(() => check(events.map(e => e === hook ? { ...e, createdRoots: [] } : e)),
+          /該題 hook 的父根必須對得上實際建立記錄/);
+      } else {
+        assert.doesNotThrow(() => check(withoutHook), '本場合成移除 hook 仍須採精確官方跳過' + CONTAINED_HINT);
+        assert.ok(messages.some(message => message.startsWith('未驗證 contained 子程序：')),
+          '未建立父根的路徑不能寫成已驗證' + CONTAINED_HINT);
+      }
+      const reports = result.report.split('\n').filter(line => line.trim()).map(line => JSON.parse(line));
+      const report = (/** @type {any[]} */ items) => items.map(e => JSON.stringify(e)).join('\n') + '\n';
+      assert.throws(() => check(events, { ...result, report: report(reports.filter(e => e.type !== 'test:summary')) }),
+        /官方考題摘要沒有回報/, 'contained 路徑仍須先有官方摘要' + CONTAINED_HINT);
+      assert.throws(() => check(events, { ...result, report: report(reports.filter(e => e.name !== 'other option skip')) }),
+        /官方跳過數量必須有逐題明細/, 'contained 路徑不得漏掉別題 skip 對帳' + CONTAINED_HINT);
+    } finally {
+      for (const event of events) if (event.root) {
+        restoreFixtureAccess(event.root);
+        rmSync(event.root, { recursive: true, force: true });
+      }
+      restoreFixtureAccess(scope);
+      rmSync(scope, { recursive: true, force: true });
+    }
+  });
+}
