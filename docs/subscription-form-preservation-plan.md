@@ -1,6 +1,6 @@
 # 訂閱表單的未操作欄位保存
 
-本支 [#713](https://github.com/teacherjung/personal-finance-webapp/pull/713) 先以計畫預約，再套用產品、直接考題與契約；直接組、型別、lint、原生合成操作與有效突變已完成，正常完整三關、當版 CI 及正式複審仍待完成。基底為 #712 合併版。實際 Sol／xhigh 的[完整答覆](https://github.com/teacherjung/personal-finance-webapp/pull/713#issuecomment-6259440223)及[標準裁示](https://github.com/teacherjung/personal-finance-webapp/pull/713#issuecomment-6259440487)可核，並非本人實看或正式複審放行。
+本支 [#713](https://github.com/teacherjung/personal-finance-webapp/pull/713) 先以計畫預約，再套用產品、直接考題與契約；實作者的直接組、型別、lint、原生合成操作與有效突變證據列於下方；正常完整三關、當版 CI、正式複審與合併結果以本支 PR 的當版紀錄為準。基底為 #712 合併版。實際 Sol／xhigh 的[完整答覆](https://github.com/teacherjung/personal-finance-webapp/pull/713#issuecomment-6259440223)及[標準裁示](https://github.com/teacherjung/personal-finance-webapp/pull/713#issuecomment-6259440487)可核，並非本人實看或正式複審放行。
 
 ## 問題與範圍
 
@@ -17,6 +17,8 @@
 預計產品、直接考題與必要契約檔：
 
 - `public/modules/subscriptions.js`
+- `lib/routes/crud.js`（只同步日期錨點原因註解）
+- `test/server.test.js`（只同步同族原因註解）
 - `test/subscriptions-form-preservation.test.js`
 - `test/helpers/subscriptions-form-case.js`
 - `docs/contracts/frontend-features.md`
@@ -59,3 +61,5 @@
 隔離突變第二次先 18 題基準全綠，產品 11 項、卡片公開預期 4 項及私有收據 8 項故障均觸發相應斷言紅，各自還原綠；非 JSON stdout 正向案例與最後完整基準通過。來源雜湊已核對，依賴連結已移除。首次因副本缺正式版本檢查依賴而全敗、沒有 mutant 執行，另存原紀錄，不採計有效紅。
 
 結果通道、卡片預期、lint 與隔離準備的失敗均經實際 Sol 分題裁同支修正；[準備裁示](https://github.com/teacherjung/personal-finance-webapp/pull/713#issuecomment-6259673369)、[PR 證據及失敗對帳](https://github.com/teacherjung/personal-finance-webapp/pull/713)、[推薦代選紀錄](https://github.com/teacherjung/personal-finance-webapp/pull/713#issuecomment-6259540728)可核。這些是實作者驗證，不能替代正式 Grok 複審或冒稱本人實看。
+
+送審前 K5 核到 CRUD 與 HTTP 錨點題仍宣稱表單每次回送整份資料；依[實際 Sol 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/713#issuecomment-6259742428)，先擴充預約與 D5，再只修原因註解，保留後端邏輯、HTTP payload、操作及斷言。卡片追蹤的其他命中仍是有效頁名與既有操作說明，沒有因本表單空選項而失真。
