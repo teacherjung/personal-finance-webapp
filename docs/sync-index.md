@@ -8,6 +8,7 @@
 
 | 改這裡 | 記得同步這裡 |
 |---|---|
+| LOCAL HTML 的側欄資料指引 | ——完整契約 → [契約：前端功能・LOCAL HTML 資料指引](contracts/frontend-features.md#local-html-資料指引) |
 | SEC 官方指標候選 tag 與 `selectMetric`（`lib/stock-fundamentals.js`） | ——完整契約 → [契約：投資與 SEC・SEC 官方指標挑值](contracts/investment-sec.md#sec-官方指標挑值) |
 | SEC 最新單季逐列期間（`periods.latestQuarterBasis:'per-metric'`） | ——完整契約 → [契約：投資與 SEC・最新單季逐列期間](contracts/investment-sec.md#最新單季逐列期間) |
 | `lib/parse-limits.js` 的 `MAX_SEC_RESPONSE_BYTES` | ——完整契約 → [契約：投資與 SEC・SEC 單一回應資源上限](contracts/investment-sec.md#sec-單一回應資源上限) |

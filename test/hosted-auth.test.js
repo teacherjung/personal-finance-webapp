@@ -4,7 +4,8 @@ import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
+import fs, { rmSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { gitEnv } from '../lib/git-env.js';
@@ -34,7 +35,17 @@ process.env.NOTEASY_MASTER_KEY = Buffer.alloc(32, 7).toString('base64');   // C5
 const { setSupabaseFactoryForTest, cookieAdapterFor, serializeCookie } = await import('../lib/services/auth.js');
 const { isHosted, hostedConfig, originAllowed } = await import('../lib/hosted.js');
 const { createFakePostgres, makeFakeSupabaseFactory } = await import('../test-doubles/fake-supabase.js');
+const localIndexCreated = [];
+const nativeMkdtemp = fs.mkdtempSync;
+fs.mkdtempSync = (...args) => {
+  const dir = nativeMkdtemp(...args);
+  if (String(args[0]).includes('finance-local-index-')) localIndexCreated.push(dir);
+  return dir;
+};
+syncBuiltinESMExports();
 const { app } = await import('../server.js');
+fs.mkdtempSync = nativeMkdtemp;
+syncBuiltinESMExports();
 
 /** 可控假 client：只假造 Supabase 的回應，cookie 寫入與資料層一律走正式管線。 */
 const USER = { id: 'u-1', email: 'a@x.com' };
@@ -118,7 +129,13 @@ test('HOSTED 靜態：/ 是公開站、/login extensionless、/health JSON、/we
   assert.deepEqual(await (await fetch(`${base}/health`)).json(), { ok: true }, '裁決④：/health 給機器');
   assert.match(await (await fetch(`${base}/wellness`)).text(), /健康｜不簡單/);
   // C3 上線後 /finance 要登入（本題前提隨 C3 更新）：帶 session 驗 SPA 有掛在這條路徑
-  assert.match(await (await fetch(`${base}/finance/`, { headers: { Cookie: 'sb-test-auth-token=abc' } })).text(), /個人理財中心/, '/finance＝既有 SPA（登入後）');
+  const finance = await fetch(`${base}/finance/`, { headers: { Cookie: 'sb-test-auth-token=abc' } });
+  assert.equal(finance.status, 200);
+  assert.deepEqual(Buffer.from(await finance.arrayBuffer()), fs.readFileSync(new URL('../public/index.html', import.meta.url)));
+  assert.deepEqual(localIndexCreated, [], 'HOSTED 不建立 LOCAL 派生 index');
+  const repo = await import('../lib/repo.js');
+  await assert.rejects(repo.getLocalStoreDiagnostic(), /HOSTED 模式不提供本機資料定位/);
+  assert.equal(fs.existsSync(TEST_STORE), false);
 });
 
 test('auth 回應不可被快取：setAll 第二參數 headers 有轉發＋/api/auth/* 一律 no-store（Codex #301 r2）', async () => {

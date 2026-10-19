@@ -62,6 +62,7 @@ for (const phase of ['readonly-file', 'readonly-directory']) {
 for (const [phase, corrupt] of [
   ['sql-11', true], ['sql-26', true], ['sql-267', true],
   ['sql-10', false], ['sql-999', false], ['sql-no-code', false], ['sql-text-code', false],
+  ['sql--245', false], ['sql-11.5', false], ['sql-9007199254741018', false],
   ['quick-bad', true], ['quick-throws', false], ['quick-missing', false], ['quick-empty', false],
 ]) {
   test(`開庫錯誤分類｜${phase} ${corrupt ? '保留明確損毀還原指引' : '未證損毀只要求保留檔案'}`, t => {
@@ -73,12 +74,18 @@ for (const [phase, corrupt] of [
     assert.equal(r.firstSQL, 2);
     assert.equal(r.closed, 2);
     assert.deepEqual(r.values, []);
-    for (const error of r.errors) {
+    for (const [index, error] of r.errors.entries()) {
       assert.ok(error);
+      const diagnostic = r.diagnostics[index].join('\n');
+      for (const suffix of ['', '-wal', '-shm', '.bak']) assert.ok(diagnostic.includes(JSON.stringify(c.file + suffix)));
+      assert.ok(!error.message.includes(c.file));
+      assert.doesNotMatch(error.message, /synthetic|quick_check:/);
       if (corrupt) {
-        assert.match(error.message, /刪掉 store.db、store.db-wal、store.db-shm/);
-        assert.match(error.message, /把 store.db.bak 改名為 store.db/);
+        assert.match(error.message, /檔案可能損毀.*本機終端.*不要先刪除資料/);
+        assert.match(diagnostic, /①先停止.*所有使用同一資料檔.*\n②.*確認候選備份存在.*不存在或不確定.*停止.*\n③變更有效檔名之前.*原主檔.*WAL／SHM 成組另存.*候選備份也另存.*\n④從候選備份的副本恢復主檔，保留原候選備份.*WAL／SHM 移至保存位置.*\n⑤.*重啟並驗證.*仍失敗.*保留.*停止.*備份存在不代表有效或最新/);
+        assert.doesNotMatch(diagnostic, /刪掉 store.db|改名為 store.db/);
       } else {
+        assert.doesNotMatch(diagnostic, /④從候選備份/);
         assert.match(error.message, /請保留現有資料檔與備份/);
         assert.doesNotMatch(error.message, /刪掉|改名|檔案可能損毀/);
       }

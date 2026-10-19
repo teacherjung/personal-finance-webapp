@@ -72,6 +72,7 @@
 
 - `data/seed.json`（dailyValues 欄位連動）
 - `lib/derive.js`（攤提 `subCostForMonth`／`subActive`／提醒 key／`parseLocalDate`——**與收支、投資多重命中**）
+- `lib/local-index.js`
 - `lib/repo.js`（`getDb`／`saveDb`）
 - `lib/routes/core.js`（刻意不改的入口約定）
 - `lib/routes/crud.js`（subscriptions beforeSave／`chargeAnchorDay`）
@@ -84,6 +85,7 @@
 - `lib/store.js`（`insightState` 註冊件）
 - `lib/types.js`（`insightState` 註冊件）
 - `public/app.js`（重繪／`parseLocalDate`）
+- `public/index.html`
 - `public/modules/assets.js`〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
 - `public/modules/backup-export.js`（匯出「先驗再存」與提示文案——#417）
 - `public/modules/boot-sequence.js`（開機自動更新依序跑＋等待上限＋總覽「開 App 自動更新檢查」區塊的文字——裁示 2026-09-29 乙、2026-09-30 兩則、#653 留言 5905965930 的格式）
@@ -109,11 +111,15 @@
 - `public/modules/transactions-import.js`〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
 - `public/modules/transactions.js`〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
 - `public/styles.css`（`.cb-ok`／`.cb-over` 寫死與 `theme.js` 同色的 hex——CSS 無法 import JS）
+- `server.js`
 - `test/ai-consent.test.js`（`openInfo({actionsHtml})` 的固定動作列考題——**與收支、雲端多重命中**）〔籃C 補搬點名檔〕
 - `test/cashflow-reload.test.js`（銀行收支重讀失敗、唯讀重試與跨頁競態）
 - `test/daily-values.test.js`
 - `test/goal-tracking-ui.test.js`（頁面模組＝**與各自領域多重命中**）〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
 - `test/goal-tracking.test.js`〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
+- `test/helpers/local-index-case.js`
+- `test/hosted-auth.test.js`
+- `test/local-index.test.js`
 - `test/modal-ownership.test.js`（世代行為＋接線形狀考題）〔籃C 補搬點名檔〕
 - `test/server.test.js`（契約點名的考題——**弱化考題也要先讀契約**）
 - `test/snapshot-safety.test.js`〔籃C 補搬點名檔〕〔async guard 管的九個頁面模組＋彈窗呼叫端＋淨值目標／時鐘倒退承重〕
@@ -384,12 +390,14 @@
 - `test/backup-file-permissions.test.js`
 - `test/daily-backup.test.js`
 - `test/helpers/backup-permission-case.js`
+- `test/helpers/store-guidance-case.js`
 - `test/helpers/store-permission-case.js`
 - `test/hosted-import-overwrite.test.js`
 - `test/hosted-store-pg.test.js`
 - `test/repo-async.test.js`
 - `test/server.test.js`
 - `test/store-file-permissions.test.js`
+- `test/store-guidance.test.js`
 - `test/vault-and-backup-integrity.test.js`（寫入櫃檯 fail-loud／備份的原子替換與殘骸清理／**「不得再長出操作前自動備份」的裁決題**／損毀 fail-closed）
 
 ### 雲端與安全

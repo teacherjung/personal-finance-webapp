@@ -6,7 +6,7 @@
 
 ## 目標
 
-- **為誰**：William（老師，無程式背景）的個人理財管理。**LOCAL 模式（日常使用）**：個人財務資料庫只存本機 `data/store.db`（SQLite）；**HOSTED 模式（多人上線；C6 首次部署及對抗驗收完成，後續項與 C7 尚未完成）**：資料存 Supabase Postgres（RLS 租戶隔離、機密加密或剝除）。Yahoo Finance／IBKR 等外部服務只在明確功能需要時由後端連線。
+- **為誰**：William（老師，無程式背景）的個人理財管理。**LOCAL 模式（日常使用）**：個人財務資料庫預設存本機 `data/store.db`（SQLite），自訂位置以啟動終端的設定定位為準；**HOSTED 模式（多人上線；C6 首次部署及對抗驗收完成，後續項與 C7 尚未完成）**：資料存 Supabase Postgres（RLS 租戶隔離、機密加密或剝除）。Yahoo Finance／IBKR 等外部服務只在明確功能需要時由後端連線。
 - **做什麼**：本機優先的理財 dashboard（Node + Express + vanilla JS，port 4321）——銀行收支、信用卡費、資產配置、投資組合、證券交易、訂閱／卡片／保險追蹤、每日洞察。
 - **北極星**：長期發展成「人生管理遊戲」（跨財務／健康／工作／學習等領域），理財只是第一塊；哲學＝簡單、實用、邊用邊學、漸進式深度。
 - **成功標準**：①數字要對（money-critical 正確性優先於一切）②看得懂（必懂概念一律在頁面上就地白話解釋）③資料主權清楚（LOCAL＝只存本機；HOSTED＝存 Supabase，機密加密存放或剝除）、機密不進瀏覽器④William 不需要懂程式就能用與維護。
@@ -69,7 +69,7 @@
 
 - （合庫解析考題，#678 r1 發現 1）「摘要為網銀轉帳」「種類為綜合存款」的拒收限制缺專屬反例題；移除各自限制仍全綠／`test/tcb-transfer-statement.test.js` 與 `lib/bank-statement.js`／下次變更這兩道版型限制或擴大可讀種類時，先補拒收題並各做有效突變 — **未分配**
 - （合庫多頁版型，#678 r1 發現 2）合成探針的頁尾、續頁表頭前頁首、每頁重印基準日會整份拒收；銀行真實多頁是否這樣排尚未量過／`lib/bank-statement.js` 合庫解析與 `docs/tcb-transfer-statement-plan.md`／第一份實際多頁合庫帳單被拒收時，先核版型、再決定校準範圍 — **未分配**
-- （啟動與還原文案，2026-10-15 #691 複審後掃第 5 題，屬實·進待辦）用 `STORE_FILE` 開預覽時，LOCAL 啟動橫幅仍印「資料只存在本機 data/store.db」、資料庫開不起來時的還原指引仍叫人到 `data/` 刪檔改名，都不看實際的 `STORE_FILE` 位置／`server.js` 第 287–289 行、`lib/store.js` 第 82 行／下次動到啟動橫幅或損毀還原指引時，或有人用 `STORE_FILE` 開預覽遇到開庫失敗時
+- **本機資料定位與保存指引**：[#712](https://github.com/teacherjung/personal-finance-webapp/pull/712) 承接 #691 的實測待辦，依實際 Sol 裁示修正 STORE_FILE 定位、JSON／NDJSON 公開錯誤與人工保存順序；LOCAL 側欄只顯示通用 SQLite 描述，保留靜態協定及 HOSTED 原內容。範圍、合成證據與生命週期限制見[計畫](docs/local-store-guidance-plan.md)；正式複審及合併核收以該支紀錄為準，不冒稱真實備份已可還原。
 - （合庫內轉分類，#678 r1 發現 6）收款遮罩露六碼與本人帳戶末四碼不相認，轉給自己可能先列支出，需在預覽核對／`lib/services/bank-import.js` 的 `noteAccountSuffixes`、`ownSuffixSet` 與 `classifyBankTx`／每月多筆本人跨行轉帳都要手改時，提出具體比對方案給 William 裁示；不可逕自放寬本人帳戶判準 — **未分配**
 
 - （合庫拒收覆蓋，#678 r2 發現 1）金額上限、基準日唯一、轉帳區重複、表頭額外字樣及跨頁缺表頭缺專屬反例題；結尾後四個證據條件也各缺專屬反例題（#678 r3 發現 5）／`test/tcb-transfer-statement.test.js` 與 `lib/bank-statement.js`／下次變更這些限制或擴充版型時補拒收題並各做有效突變 — **未分配**

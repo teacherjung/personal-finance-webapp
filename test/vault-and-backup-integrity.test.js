@@ -5,8 +5,8 @@
 //   - 唯一寫入口的「集合必須是陣列」煞車：改成默默清空 ⇒ 整個集合被抹掉並回 200。
 //   - 承諾「儲存前會自動備份」的文案：畫面一旦這樣寫，而那個備份不存在或存不成，那句話就是謊話——
 //     而使用者正是讀了它才敢按下不可逆的操作。
-//   - 備份的原子替換與 .tmp 清理：硬碟滿的那一次會兩頭空。⚠️ 損毀時的還原指引（lib/store.js:49）
-//     叫使用者改名回去的 `store.db.bak` 是**啟動備份 `backupOnce` 產的**，不是第三節主要受測的
+//   - 備份的原子替換與 .tmp 清理：硬碟滿的那一次會兩頭空。候選啟動 .bak 來自
+//     `backupOnce`，不是第三節主要受測的
 //     `snapshotTo`——這兩支是各自獨立的 VACUUM→rename 實作，所以第三節兩邊各自立題（劃界見該節）。
 //   - 資料庫損毀的 fail-closed：守衛拿掉之後損毀檔照常開起來讀寫，使用者只覺得「數字怪怪的」。
 //
@@ -579,11 +579,11 @@ test('⭐ 裁決｜店名規則與開 app 自動整理這兩條路，不得長�
 //    改壞其中一支不會被守著另一支的題抓到。逐支交代誰有安全網、誰沒有：
 //      ① `snapshotTo`：操作前 `<tag>.bak`（經 backupNow）與每日滾動備份走這裡
 //         ——本節除了「啟動 .bak」那一族以外的題守著。
-//      ② `backupOnce`：啟動 `.bak`，**損毀時的還原指引點名要改名回去的就是這一顆**
+//      ② `backupOnce`：啟動 `.bak`，須驗證候選備份的內容與失敗保存
 //         ——本節「啟動 .bak」那一族守著失敗路徑（舊備份不可被動到）與成功路徑（那顆檔裡要有當下的資料）。
 //         ⚠️ 成功路徑非守不可（實測過的假綠）：把 `d.exec(VACUUM…)` 改成**從一顆全新的空白資料庫**
 //         產生 `.bak`，檔案照樣建出、原子替換與 .tmp 清理都正常 ⇒ 整套全綠、退出碼 0，
-//         而使用者照指引改名回去只會拿到一顆空殼。只驗「檔案有沒有生出來」擋不住這一手。
+//         而把空殼作為恢復來源會丟失帳本內容。只驗「檔案有沒有生出來」擋不住這一手。
 //      ③ `migrateLedgerIfNeeded`：`pre-ledger-migration.bak` ——本節末尾守著 happy path。
 //      ④ `migrateSecTradesContractIfNeeded`：`pre-sec-contract.bak`
 //         ——test/securities-migration.test.js 的搬家題守著 happy path。
@@ -698,8 +698,7 @@ test('備份｜無法建立暫存快照時，舊的那一份必須逐位元組�
 });
 
 test('備份｜啟動 .bak（還原指引點名的那一顆）同樣不可「先刪舊再做新」', (t) => {
-  // ⚠️ 上一題受測的是 `snapshotTo`，但**還原指引（lib/store.js:49）叫使用者改名回去的 `store.db.bak`
-  //    不是它產的**——那是 `backupOnce`（lib/store.js:275-289）自己一份 VACUUM→rename。
+  // 候選啟動 .bak 由 `backupOnce` 寫入，與 `snapshotTo` 分開，故需獨立驗其原子替換。
   //    實測（把 backupOnce 逐字改回「先刪舊再做新」：`const bak = FILE + '.bak';
   //    if (existsSync(bak)) rmSync(bak); d.exec(VACUUM INTO bak);`＝拿掉 .tmp、原子替換與失敗清理）：
   //    **本檔七題全綠、`npm test` 1494 題全綠**——在這一題之前，使用者唯一的自救檔案沒有任何考題守著。
@@ -748,10 +747,10 @@ test('備份｜啟動 .bak（還原指引點名的那一顆）同樣不可「先
     '前置：主庫本身必須開得起來（開不起來就代表長度算錯，backupOnce 壓根沒跑到、本題會空轉）');
   assert.match(out, /WARN:.*啟動備份/,
     '前置：backupOnce 必須真的跑到並失敗（沒有這行＝它寫去了別的路徑，那還原指引本身就失效了）');
-  assert.ok(existsSync(bak), '這一次備份失敗，上一顆好備份必須還在（還原指引叫使用者改名回去的就是它）');
+  assert.ok(existsSync(bak), '這一次備份失敗，上一顆好備份必須還在，才能保留恢復來源');
   assert.deepEqual(readFileSync(bak), goodBytes,
     '啟動 .bak 必須**逐位元組**完好——「先刪舊再做新」會留下 0-byte 的同名檔，'
-    + '檔案「還在」但內容全沒了，使用者照指引改名回去只會得到一顆空資料庫');
+    + '檔案「還在」但內容全沒了，以它恢復只會得到一顆空資料庫');
 });
 
 test('備份｜啟動 .bak 的成功路徑：那顆檔裡要有「這次開機時的真資料」（不是一顆合法的空殼）', () => {
@@ -784,7 +783,7 @@ test('備份｜啟動 .bak 的成功路徑：那顆檔裡要有「這次開機�
   // ② 第二次開機：backupOnce 應該把「現在這一刻的資料」照下來
   assert.match(boot(" s.load(); console.log('OPENED');"), /OPENED/,
     '前置：第二次開機要成功（開不起來的話 backupOnce 壓根沒跑到、本題會空轉）');
-  assert.ok(existsSync(bak), '每次啟動都要留下一顆 .bak（損毀還原指引叫使用者改名回去的就是它）');
+  assert.ok(existsSync(bak), '本題成功開庫必須產生 .bak，才有候選快照可驗內容');
 
   const d = new DatabaseSync(bak);
   try {
@@ -800,14 +799,14 @@ test('備份｜啟動 .bak 的成功路徑：那顆檔裡要有「這次開機�
       '備份裡必須是**這次開機時的真資料**——抓不到本題種下去那一筆，代表 .bak 的內容來源不是這顆庫');
     const st = readKv('settings');
     assert.ok(st && typeof st === 'object' && st.currency,
-      '備份裡的 settings 也要在——缺了它，改名回去只是一顆沒有任何設定的殼');
+      '備份裡的 settings 也要在——缺了它，以此恢復只會得到沒有設定的殼');
   } finally { d.close(); }
 });
 
 test('備份｜失敗時不可留下半截的 .tmp 殘骸（會被誤認成備份、還原到它會失敗）', () => {
   // ⚠️ docstring 明寫「失敗時一定清掉半成品 .tmp，不留下會被誤認成備份的殘骸」。
   //    每日備份會反覆呼叫這支，殘骸會在 backups/ 底下累積成一堆「看起來像備份、其實是半截檔」，
-  //    而損毀還原的指引正是「把備份改名回 store.db」——改到半截檔會讓還原本身失敗。
+  //    誤把半截檔當成恢復來源，會讓人工還原本身失敗。
   // ⚠️ 誠實劃界（#410 r2 M③ 起草、r3 M 訂正）：**這一題只涵蓋「VACUUM 成功、改名失敗」這條路**。
   //    r2 版註解宣稱「`.tmp` 只可能由 VACUUM 建出來，兩種寫法對所有可達路徑等價」——**那是錯的**。
   //    本題不驗安全建立空暫存檔那一步；它的失敗處置由 test/backup-file-permissions.test.js 負責。
@@ -849,16 +848,19 @@ test('備份｜連資料庫都開不起來時，前一次留下的 .tmp 殘骸�
   const broken = join(dir, 'broken.db');                 // 垃圾位元組＝open() 在建連線/PRAGMA 就失敗
   writeFileSync(broken, Buffer.from('this is not a sqlite database, just garbage.'.repeat(64)));
 
-  const script = "const s = await import('./lib/store.js');"
+  const script = "const s = await import('./lib/store.js'); const diagnostics = [];"
+    + " console.error = (...parts) => diagnostics.push(parts.map(String).join(' '));"
     + " try { s.snapshotTo(process.env.T_DEST); console.log('NO_THROW'); }"
-    + " catch (e) { console.log('THREW:' + e.message); }";
+    + " catch (e) { console.log('THREW:' + JSON.stringify({message: e.message, diagnostic: diagnostics.join('\\n')})); }";
   const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
     cwd: ROOT, encoding: 'utf8', env: { ...process.env, STORE_FILE: broken, T_DEST: dest },
   });
   assert.doesNotMatch(out, /NO_THROW/, '主庫損毀時 snapshotTo 必須拋錯（呼叫端要據實回報備份失敗）');
-  assert.match(out, /store\.db\.bak/,
-    '拋出來的必須是 open() 的還原指引——確認失敗真的發生在**開庫**那一步，'
-    + '而不是後面的 VACUUM／改名（否則本題就退化成上一題的重複）');
+  const failure = JSON.parse(out.trim().slice('THREW:'.length));
+  assert.match(failure.message, /檔案可能損毀.*本機終端的保存與還原指引/);
+  assert.ok(failure.diagnostic.includes(JSON.stringify(broken + '.bak')));
+  assert.match(failure.diagnostic, /原因：.*not a database/);
+  assert.match(failure.diagnostic, /④從候選備份的副本恢復主檔，保留原候選備份/);
   assert.ok(!existsSync(tmp),
     '開庫就失敗這條路上，前一次的 .tmp 殘骸也必須被清掉——'
     + '清理只寫在 renameSync 的 catch 裡的話，這顆殘骸會永遠躺在 backups/ 冒充備份');
@@ -933,8 +935,7 @@ test('備份｜ledger 搬家動手前那顆 pre-ledger-migration.bak 要真的�
 // ─────────────────────────────────────────────────────────────────────────────
 
 test('開啟資料庫｜檔案損毀時**每一次**呼叫都要給「還原指引」（不是只擋第一次）', () => {
-  // ⚠️ 註解明寫「fail closed：資料庫損毀時絕不回空資料庫」，而丟出去的訊息就是使用者
-  //    唯一拿得到的還原指引（刪 -wal/-shm、把 .bak 改名回 store.db）。斷電／硬碟壞是真實情境。
+  // 公開錯誤須指向私有終端的保存指引；逐次捕捉診斷，避免第一輪替後一輪作保。
   // ⚠️ 考題設計沿革（每一版都被實際繞法抓到一次「弄壞卻全綠」）：
   //    v1 是空包彈：關鍵判準**不是「有沒有丟錯」而是「有沒有還原指引」**。第一版用「SQLite 檔頭＋垃圾」，
   //       那種檔連 CREATE TABLE 都失敗 ⇒ 守衛拿掉後照樣從 open() 的 catch 丟出帶指引的訊息，突變全綠。
@@ -972,12 +973,13 @@ test('開啟資料庫｜檔案損毀時**每一次**呼叫都要給「還原指�
   // 「只有第一次被擋」——整包 out 一起比對的話，第一輪那句指引會替第二輪擋掉 assert.match。
   // 訊息用 JSON.stringify 包成單行：quick_check 的錯誤本身是**多行**（每個壞頁一行），
   // 直接印會讓「一次呼叫＝一行」的前提破功（實測第一版就這樣誤紅）。
-  const script = "const s = await import('./lib/store.js');"
-    + " for (const tag of ['R1', 'R2']) {"
+  const script = "const s = await import('./lib/store.js'); let diagnostics = [];"
+    + " console.error = (...parts) => diagnostics.push(parts.map(String).join(' '));"
+    + " for (const tag of ['R1', 'R2']) { diagnostics = [];"
     + "   try { s.load(); console.log(tag + ':NO_THROW'); }"
-    + "   catch (e) { console.log(tag + ':THREW:' + JSON.stringify(e.message)); } }"
-    + " try { s.save({ ...s.emptyDb() }); console.log('SAVE:NO_THROW'); }"
-    + " catch (e) { console.log('SAVE:THREW:' + JSON.stringify(e.message)); }";
+    + "   catch (e) { console.log(tag + ':THREW:' + JSON.stringify({message: e.message, diagnostic: diagnostics.join('\\n')})); } }"
+    + " diagnostics = []; try { s.save({ ...s.emptyDb() }); console.log('SAVE:NO_THROW'); }"
+    + " catch (e) { console.log('SAVE:THREW:' + JSON.stringify({message: e.message, diagnostic: diagnostics.join('\\n')})); }";
   const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
     cwd: ROOT, encoding: 'utf8', env: { ...process.env, STORE_FILE: corrupt },
   });
@@ -991,9 +993,12 @@ test('開啟資料庫｜檔案損毀時**每一次**呼叫都要給「還原指�
     assert.ok(line, `前置：子行程必須印出 ${tag} 那一行（沒印＝腳本自己爆了，本題會空轉）`);
     assert.doesNotMatch(line, /NO_THROW/,
       `${what}也不可被放行——db 連線沒在失敗時重置的話，第二次起會拿到「空資料庫」還照樣接受寫入`);
-    assert.match(line, /store\.db\.bak/,
-      `${what}丟出的訊息必須點名 store.db.bak（使用者唯一拿得到的自救說明）——`
-      + '只丟一句 database disk image is malformed 等於把人丟在原地');
-    assert.match(line, /刪掉|改名/, `${what}要說清楚步驟（先刪 -wal/-shm、再把備份改名回去）`);
+    const failure = JSON.parse(line.slice((tag + ':THREW:').length));
+    assert.match(failure.message, /檔案可能損毀.*本機終端的保存與還原指引/, what);
+    assert.ok(!failure.message.includes(corrupt));
+    assert.ok(failure.diagnostic.includes(JSON.stringify(corrupt + '.bak')), what);
+    assert.match(failure.diagnostic, /①先停止.*所有使用同一資料檔/, what);
+    assert.match(failure.diagnostic, /③變更有效檔名之前.*成組另存.*候選備份也另存/, what);
+    assert.match(failure.diagnostic, /④從候選備份的副本恢復主檔，保留原候選備份/, what);
   }
 });
