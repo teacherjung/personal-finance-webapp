@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isMainModule } from '../lib/is-main.js';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const RELAY = 'scripts/grok-relay.js';
@@ -120,4 +121,10 @@ export function diskFileSha256(snapshot, path) {
   const file = snapshot.files.find(item => item.path === path);
   if (!file || !isHash(file.sha256)) fail();
   return file.sha256;
+}
+
+// 固定診斷使誤從命令列啟動可辨識，避免把載入 helper 誤當成已執行來源觀測。
+if (isMainModule(import.meta.url)) {
+  process.stderr.write('GROK_DISK_ENTRY：此模組只供安全 runner 與正式前端載入，不接受直接啟動。請以 scripts/grok-review.js 按本輪送審產生器的完整指令重備材料後啟動；合成重驗 node --test test/grok-disk-snapshots.test.js。\n');
+  process.exitCode = 2;
 }

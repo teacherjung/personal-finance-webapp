@@ -94,3 +94,11 @@ stdout、stderr 各自保留 `8 * 1024 * 1024` 個 UTF‑16 碼元。資料事�
 本支包含 settings.json，正式預期為 F＋E，仍以當版工具輸出記錄。依現行 F 適用規則核對 settings 除該 acceptance 名稱外語意不變、forbidden 完全相同，固定複本其餘輸入、已用範本、生成接線、測試鈕本體／登記皆無差異；留存純指紋或等效完整輸入對帳。核實符合時記錄本支不觸發換組、重新信任或安裝驗收，不宣稱兩側實機或歷史缺項已完成，不讀真實家目錄信任資料、不做安裝。若真正安全輸入改變即停下重新走適用手續與本人保留事項。這項精確初次登記不新增 A5 同意；仍查叫停與未答待裁。
 
 #719 已完成正式合併、交付及收樹；這只解除施工排序前置，不代替本支的正常推送、CI、高風險全審、F7與合併。其非阻塞型別射程註解待辦在本支 PROJECT 歸位，保留一句話、落點及觸發條件；本支不順手改那則註解。
+
+## 正常推送的入口失敗與限定修復（2026-10-19 UTC）
+
+f16b3ac9 的正常推送被入口守門擋下：新 helper 直接執行為空輸出，當趟 5269 題、5261 通過、1 失敗、7 略過；型別與 lint 通過。原日誌及版本保留，不能以先前直接組通過取代完整門。依[實際 Sol 全文](https://github.com/teacherjung/personal-finance-webapp/pull/720#issuecomment-6277570534)及[配對裁示](https://github.com/teacherjung/personal-finance-webapp/pull/720#issuecomment-6277571875)，在同支原十三路徑內沿既有同族模式，補 isMainModule 的直接啟動固定拒絕診斷與退出2；正常 import 不自行觀測來源。入口守門與 NO_OBSERVABLE_OUTPUT 完全不改，不移動 helper 或另開 PR。
+
+來源帳考題的實際 is-main 依賴使用真來源；新行為題走直接兩次、連結一次及真檔案 import，並在私有子程序觀察已用 readFileSync／lstatSync 接縫。此觀察不代表所有檔案 API、網路或任意背景副作用已受監控。移除拒絕分支、讓 import 也執行拒絕、錯回退出0及載入時真呼叫採集的有限反控須各自先綠、斷言紅、還原綠。新 helper／考題 hash 與直接組、反控另留，舊版證據不改寫成新版本重跑。
+
+[K5 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/720#issuecomment-6277506973)的 PROJECT 容量待辦補正一併完成，保留共用整輪拒收旗標的真實設計。新 HEAD 仍需正常三關、最新 CI、Grok 全審、F7 與合併後適用核收；本節不是交付證明。

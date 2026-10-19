@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -22,8 +23,8 @@ async function fixture(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const name of names) {
     mkdirSync(dirname(join(root, name)), { recursive: true });
-    writeFileSync(join(root, name), name === 'scripts/grok-disk-snapshots.js'
-      ? readFileSync(new URL('../scripts/grok-disk-snapshots.js', import.meta.url)) : 'fixture ' + name);
+    writeFileSync(join(root, name), ['scripts/grok-disk-snapshots.js', 'lib/is-main.js'].includes(name)
+      ? readFileSync(new URL('../' + name, import.meta.url)) : 'fixture ' + name);
   }
   const api = await import(pathToFileURL(join(root, 'scripts/grok-disk-snapshots.js')).href);
   const provider = () => api.finishDiskLedger('provider', [
@@ -37,6 +38,43 @@ async function fixture(t) {
   ]);
   return { root, ...api, provider, runner };
 }
+
+function entryFixture(t) {
+  const root = mkdtempSync(join(tmpdir(), 'disk-entry-test-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const name of ['scripts/grok-disk-snapshots.js', 'lib/is-main.js']) {
+    mkdirSync(dirname(join(root, name)), { recursive: true });
+    writeFileSync(join(root, name), readFileSync(new URL('../' + name, import.meta.url)));
+  }
+  writeFileSync(join(root, 'package.json'), '{"type":"module"}\n');
+  const home = join(root, 'home'); mkdirSync(home);
+  const entry = join(root, 'scripts/grok-disk-snapshots.js'), linked = join(root, 'linked.js');
+  symlinkSync(entry, linked);
+  return { root, entry, linked, env: { PATH: process.env.PATH || '', HOME: home } };
+}
+
+test('來源帳 helper 的直接與連結入口以固定診斷拒絕啟動', t => {
+  const f = entryFixture(t);
+  for (const entry of [f.entry, f.entry, f.linked]) {
+    const result = spawnSync(process.execPath, [entry], { env: f.env, cwd: f.root, encoding: 'utf8', timeout: 10_000 });
+    assert.equal(result.status, 2, diskHint); assert.equal(result.signal, null, diskHint);
+    assert.equal(result.stdout, '', diskHint);
+    assert.equal(result.stderr, 'GROK_DISK_ENTRY：此模組只供安全 runner 與正式前端載入，不接受直接啟動。請以 scripts/grok-review.js 按本輪送審產生器的完整指令重備材料後啟動；合成重驗 node --test test/grok-disk-snapshots.test.js。\n', diskHint);
+  }
+});
+
+test('來源帳 helper 載入保持靜默，匯出可用且不自動觀測來源', t => {
+  const f = entryFixture(t), importer = join(f.root, 'importer.mjs');
+  // 缺其他宣告來源的副本使提前觀測會失敗；計數另辨識被吞掉的檔案讀取。
+  writeFileSync(importer, "import fs from 'node:fs';\nimport { syncBuiltinESMExports } from 'node:module';\n"
+    + "let reads = 0; for (const name of ['readFileSync', 'lstatSync']) { const original = fs[name]; fs[name] = (...args) => { reads++; return original(...args); }; }\n"
+    + 'syncBuiltinESMExports();\nconst api = await import(' + JSON.stringify(pathToFileURL(f.entry).href) + ');\n'
+    + "console.log(JSON.stringify({ reads, exports: ['captureDiskSnapshot', 'verifyDiskProgress', 'verifyDiskLedger', 'finishDiskLedger', 'diskLedgerSha256', 'diskFileSha256'].map(name => typeof api[name]) }));\n");
+  const result = spawnSync(process.execPath, [importer], { env: f.env, cwd: f.root, encoding: 'utf8', timeout: 10_000 });
+  assert.equal(result.status, 0, diskHint); assert.equal(result.signal, null, diskHint);
+  assert.equal(result.stderr, '', diskHint);
+  assert.deepEqual(JSON.parse(result.stdout), { reads: 0, exports: Array(6).fill('function') }, diskHint);
+});
 
 test('有限磁碟帳來自記帳模組所在來源，列名、角色及自身位元組可核', async t => {
   const f = await fixture(t);
