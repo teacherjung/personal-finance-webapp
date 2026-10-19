@@ -237,7 +237,8 @@ if (isHosted()) {
   app.use('/finance', express.static(join(__dirname, 'public')));
 } else {
   installJsonBodyParsers(app);
-  app.get(/^\/favicon\.ico$/, (req, res, next) => {
+  app.get('/favicon.ico', (req, res, next) => {
+    if (req.path !== '/favicon.ico') return next();
     res.sendFile(join(__dirname, 'lib/assets/local-favicon.ico'), error => {
       if (!error) return;
       const err = /** @type {any} */ (error);

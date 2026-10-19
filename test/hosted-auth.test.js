@@ -742,6 +742,7 @@ test('對帳（反向）：對外連線能力只准出現在已登記的模組�
     ['/api/auth', 'body limit middleware 掛點（r17 起 use 帶字串入錨定）'],
     ['/finance', '靜態站掛點'],
     ['/vendor/chart.js', '靜態資源掛點'],
+    ['/favicon.ico', 'LOCAL 固定本機 ICO；不觸發需限速的業務上游'],
     ['/api', 'API 404 收尾掛點'],
     // P1b-1：lib/routes/statement.js 因組裝 AI 引擎（import lib/ai-transport.js）成為外連能力檔——
     // 但檔內只有 /api/bank-statement/preview 與 /api/bank-statement/apply 的 useAi 分支會觸發 AI 上游

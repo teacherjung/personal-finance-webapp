@@ -530,6 +530,7 @@ const MANIFEST = {
     files: [
       'data/seed.json',
       'db/supabase-schema.sql',
+      'lib/assets/local-favicon.ico',
       'lib/bank-statement.js',
       'lib/crypto-secrets.js',
       'lib/hosted.js',
