@@ -47,8 +47,8 @@
    ⚠️ 原本這裡寫「**只剩**兩件事」＝排他語，會讓讀本檔的人合理判斷其餘責任都搬走了（`Codex #514 r7 中①`）。這一族（**列舉／排他語把後加的規則排除在外**）在影片線那份規則書上已連續三輪中刀，本支又犯一次——**寫「只有這幾件」之前，先問後面還有沒有別的**
    — ①的維護＝**Claude／Codex**；②的實作＝**Codex**（本 repo 的前端＋DB 施工）。
    ⚠️ **工讀生不在這兩件的負責人裡**：他們不進 repo、無 GitHub 權限（見 `docs/project-collaboration.md` 角色表），人也在影片 repo 那條線上。分家改寫時這行只修正了「人在哪」，卻把實作留在他們名下（`Grok 掃 #7`）。
-3. 證券交易 S4 對帳洞察（可選：台新期末持股 vs 投資組合唯讀差異提示） — **未分配**
-4. D5 第二批：**Codex 施工／Grok 複審**的 [#721 單報表配息參考換算](https://github.com/teacherjung/personal-finance-webapp/pull/721)，範圍與未完成邊界見[施工計畫](docs/dividend-equivalence-plan.md)。月別／逐檔配息與投組對大盤比較仍缺對應來源，有限換算不結清原 D5。
+3. 證券交易 S4 對帳洞察 — **Codex 施工**：[手動單筆參考數量首版](docs/portfolio-reconciliation-plan.md)見 [#722](https://github.com/teacherjung/personal-finance-webapp/pull/722)；台新自動期末持股、可靠帳戶與同口徑部位日期仍待來源，不以手動差額結清原目標。
+4. D5 第二批：[#721 單報表配息參考換算](https://github.com/teacherjung/personal-finance-webapp/pull/721)已合併，原生驗收未完成；範圍與未完成邊界見[施工計畫](docs/dividend-equivalence-plan.md)及[交付紀錄](https://github.com/teacherjung/personal-finance-webapp/pull/721#issuecomment-6280355038)。月別／逐檔配息與投組對大盤比較仍缺對應來源，有限換算不結清原 D5。
 5. （遠期）電子發票載具 API 即時預算系統（財政部 API，需申請；見「重要決定」） — **未分配**
 
 工具與流程的待辦（不排優先序；開工印待辦 `tools/backlog-touch.js` 只讀 `- ` 開頭的條目；每條＝一句話／放在哪裡／什麼情況下值得做）：
@@ -131,6 +131,8 @@
 - （交接原第 23 項）根目錄驗收 E 級腳本名單的八個已刪名稱清理、守表題及產物同步見[本項PR](https://github.com/teacherjung/personal-finance-webapp/pull/697)；原刪除祖先、當版不存在與歷史分級前置按[技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/695#issuecomment-6223320263)及[原收官補核](https://github.com/teacherjung/personal-finance-webapp/pull/695#issuecomment-6223320933)對帳，不追認歷史未做操作。保留整支 F 分級，沒有新增安裝差異的判定須核當版禁區投影、固定輸入與接線來源；#692 Claude 待補驗收另留。本項限定清理（S023）已[真正收官](https://github.com/teacherjung/personal-finance-webapp/pull/697#issuecomment-6225245094)：合併後F＋E、沒有新增安裝差異；不結清Claude原待補或平台直接量測。
 
 ## 重要決定（已拍板，勿重議）
+
+- **S4 有限手動首版（2026-10-19 UTC，Sol 技術裁示）**：依[施工順序與模組收斂裁示](https://github.com/teacherjung/personal-finance-webapp/pull/718#issuecomment-6276040989)，在前置工作合併後製作單筆手填參考數量比對。用途、未知日期與非對帳界線依[計畫](docs/portfolio-reconciliation-plan.md)；不擴張為自動期末來源或新增資料保存，原生及全功能狀態依 #722 實際證據記錄。
 
 - **訂閱可空資訊保存（2026-10-19 UTC，Sol 技術裁示）**：依[實際裁示](https://github.com/teacherjung/personal-finance-webapp/pull/713#issuecomment-6259440487)，已由 [#713](https://github.com/teacherjung/personal-finance-webapp/pull/713) 合併限定修復表單 category/card/email 的空項與未操作 PUT 省略；保留原缺席、null、空字串及信箱顯示投影前原文，新增仍為娛樂／Gmail／未指定卡片。詳見[計畫](docs/subscription-form-preservation-plan.md)；不改週期、日期、攤提、全域表單或實際付款，不以此結清原第 24 項其他列操作。
 

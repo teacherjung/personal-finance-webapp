@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
 import { holdingsTableHtml, watchlistSectionHtml } from '../public/modules/portfolio-tables.js';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -75,4 +76,21 @@ test('投資願望清單｜到價、距離、缺報價、價格格式、空狀�
 
   const empty = watchlistSectionHtml([], formatters);
   assert.match(empty, /尚無項目/);
+});
+
+test('投資主表｜參考數量入口獨立於持股欄位且不攜帶資料', () => {
+  for (const rows of [[], [holding()]]) {
+    const dom = new JSDOM(holdingsTableHtml(rows, 120, { sortKey: 'value', sortDir: 'desc', formatters }));
+    try {
+      const doc = dom.window.document;
+      const entry = doc.getElementById('compareReferenceQuantity');
+      assert.equal(entry?.textContent, '參考數量比對');
+      assert.equal(entry.type, 'button');
+      assert.equal(entry.closest('table'), null);
+      assert.equal(entry.parentElement.className, 'portfolio-reconciliation-entry');
+      assert.equal(entry.parentElement.children.length, 1);
+      assert.deepEqual(Object.keys(entry.dataset), []);
+      assert.equal(doc.querySelectorAll('#compareReferenceQuantity').length, 1);
+    } finally { dom.window.close(); }
+  }
 });

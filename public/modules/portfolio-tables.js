@@ -85,6 +85,7 @@ export function holdingsTableHtml(rows, total, options) {
       <div><span>投資配置明細</span><h2 id="portfolio-holdings-title">持股明細</h2><p>依投資分層呈現市值、損益、報酬率與資產佔比。</p></div>
       <p class="portfolio-holdings-count">目前持有 <strong>${rows.length}</strong> 檔</p>
     </header>
+    <div class="portfolio-reconciliation-entry"><button type="button" class="btn-ghost btn-sm" id="compareReferenceQuantity">參考數量比對</button></div>
     <div class="tbl-wrap portfolio-holdings-table-wrap"><table class="subs-table portfolio-holdings-table">
     <thead><tr><th>代號</th><th>說明</th><th>均價</th><th>現價</th>
       <th class="sortable" data-hsort="value" aria-sort="${ariaSort('value', sortKey, sortDir)}">市值 ${sortTriangle('value', sortKey, sortDir)}</th>

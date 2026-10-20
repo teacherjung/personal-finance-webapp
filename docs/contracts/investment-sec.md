@@ -131,6 +131,8 @@ unref 之後撐不住事件迴圈，迴圈一跑乾就是
 
   - **配息參考換算**：`public/modules/ib-income-period.js` 管完整日期與保存的來源資格，`public/modules/portfolio-dividend.js` 管稅前配息合計、品質、手填 USD 單價與 G÷P；`public/modules/portfolio-dividend-actions.js` 管本輪收入快照及輸入事件，頁面注入節點查找與 isCurrentRender，舊頁或換代節點不寫回。活動卡負責 HTML；金額 G 由 portfolio 注入既有 moneyCur，以 USD 顯示，不重抄 K／萬格式。參考單位不是金額，以「約」及 U+2212 負號顯示，不取整成下單股數；計算不用格式化金額。整塊新 panel 預設隱藏，僅 screen 且寬度至少901px顯示，不加手機輸入或列印臨時結果。對應考題為 `test/portfolio-dividend.test.js`、`test/portfolio-dividend-actions.test.js` 與活動卡／報表題；合成 DOM／CSS 題不代表原生排版或跨瀏覽器驗收。
 
+  - **手動參考數量比對**：`public/modules/portfolio-reconciliation.js` 收斂數量語法、六位比例安全整數、比較資格、持股白名單快照與暫存 session；日期與代號分別直接共用 calendar-date.js、portfolio-symbol.js。`portfolio-reconciliation-view.js` 只組跳脫後的空白表單、並列原因及中性差額；`portfolio-reconciliation-actions.js` 管真表單與本窗生命週期，由頁面注入現有外殼、所有權及導覽訂閱。明確選唯一 id，不自選或按代號合併；來源／範圍／日期／掛牌與數量定義須手動填寫確認。參考數量減 App 數量只算算術差額，不判對平、漏記或交易動作。App 部位基準日保持未知，不拿讀取或報價時間補造。每代頁面讀資料前 dispose 舊窗，關閉、換頁、新窗接管、縮窄與節點換代均撤銷局部輸入，原殼的 DOM 身分 close 不清新窗。比較不新增 API、storage、URL 或列印寫出；入口沿 screen 901px 門檻，無手機新入口。直接題為同名 model、view、actions 與 tables 題；條件及完整驗證範圍見[施工計畫](../portfolio-reconciliation-plan.md)，合成 DOM 不代替原生驗收。
+
 ## IB 現金幣別歸零
 
 **改這裡**：**IB 現金幣別歸零**（Codex r4#3）

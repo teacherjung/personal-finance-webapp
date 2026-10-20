@@ -1293,3 +1293,8 @@ tr.sec-detail > td { background: var(--card-2); font-size: 12.5px; }
 @media screen and (min-width: 901px) {
   .portfolio-dividend-equivalence { display: block; }
 }
+
+.portfolio-reconciliation-entry { display: none; }
+@media screen and (min-width: 901px) {
+  .portfolio-reconciliation-entry { display: block; margin-bottom: 12px; }
+}
