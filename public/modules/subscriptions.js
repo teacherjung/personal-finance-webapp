@@ -241,8 +241,142 @@ const flagWriteTails = new Map();
 /** @type {any} */ let deleteFocusJob = null;
 const deleteOperations = new Set();
 
+// 成功事實與呈現權分開，避免晚回應搶回頁面，也避免較早 GET 清掉後到的成功。
+let formSuccessRevision = 0;
+let formConfirmedRevision = 0;
+/** @type {any} */ let formConfirmationObserver = null;
+/** @type {any} */ let formReloadFocus = null;
+
+function formConfirmationPending() { return formSuccessRevision > formConfirmedRevision; }
+function stopFormConfirmationObserver() {
+  if (!formConfirmationObserver) return;
+  formConfirmationObserver.observer.disconnect();
+  window.removeEventListener('hashchange', formConfirmationObserver.update);
+  formConfirmationObserver = null;
+}
+
+function refreshFormConfirmation() {
+  const p = subscriptionsPresented;
+  if (!formConfirmationPending() || !subscriptionsPresentationCurrent(p)) {
+    stopFormConfirmationObserver(); return;
+  }
+  const reading = subscriptionsReading && subscriptionsReading.generation === subscriptionsReadGeneration
+    && flagPresentationCurrent(subscriptionsReading);
+  const panels = p.page.querySelectorAll('[data-form-reload]');
+  const panel = panels.length === 1 && panels[0].parentElement === p.page ? panels[0] : null;
+  const button = panel?.querySelector('button');
+  if (button) button.disabled = !!reading;
+  if (byId('modal-root')?.children.length) {
+    if (formConfirmationObserver?.page !== p.page) {
+      stopFormConfirmationObserver();
+      const update = () => refreshFormConfirmation();
+      const observer = new MutationObserver(update);
+      formConfirmationObserver = { page: p.page, update, observer };
+      observer.observe(document, { childList: true, subtree: true });
+      window.addEventListener('hashchange', update);
+    }
+    return;
+  }
+  stopFormConfirmationObserver();
+  if (reading || panels.length) return;
+  const hint = document.createElement('div');
+  hint.className = 'subscriptions-attention';
+  hint.setAttribute('data-form-reload', '');
+  hint.setAttribute('role', 'status');
+  hint.innerHTML = '<div><p>資料已儲存，請重新載入確認更新</p><button class="btn">重新載入</button></div>';
+  const reload = hint.querySelector('button');
+  if (!reload) return;
+  reload.onclick = () => {
+    if (!subscriptionsPresentationCurrent(p) || !formConfirmationPending() || reload.disabled
+      || byId('modal-root')?.children.length || hint.parentElement !== p.page
+      || p.page.querySelectorAll('[data-form-reload]').length !== 1 || !flagFocusUsable(reload)) return;
+    return renderSubscriptionsPage({ showLoading: false, formReload: reload });
+  };
+  p.page.querySelector('.subscriptions-page-head').after(hint);
+}
+
+function registerSubscriptionsPresentation(chain, subs, creditCards) {
+  subscriptionsPresented = { host: chain.host, page: view().querySelector('.subscriptions-page'),
+    seq: chain.seq, nav: chain.nav, hash: chain.hash, subs, creditCards,
+    validSet: new Set(creditCards), curMk: monthKey() };
+}
+
+function rejectOutdatedFormRead(chain) {
+  if (!subscriptionsPresentationCurrent(subscriptionsPresented)) {
+    view().innerHTML = `<div class="subscriptions-page">${subscriptionsPageHeadHtml({ showPrint: false, showAdd: false })}</div>`;
+    registerSubscriptionsPresentation(chain, [], []);
+  }
+}
+
+function finishFormReloadFocus(job) {
+  if (!job || job.done) return;
+  job.done = true;
+  job.cleanups.forEach(remove => remove());
+  if (formReloadFocus === job) formReloadFocus = null;
+}
+
+function formReloadFocusCurrent(job) {
+  return job && !job.done && formReloadFocus === job && flagPresentationCurrent(job.chain)
+    && job.chain.generation === subscriptionsReadGeneration && job.page.isConnected
+    && job.page.parentElement === job.chain.host && job.modal === byId('modal-root')
+    && job.modalUnchanged() && !job.modal.children.length && !document.hidden;
+}
+
+function startFormReloadFocus(button, chain) {
+  const page = button?.closest('.subscriptions-page'), modal = byId('modal-root');
+  if (!button || document.activeElement !== button || !flagFocusUsable(button)
+    || page?.parentElement !== chain.host || !modal || modal.children.length || document.hidden) return null;
+  const job = { button, page, chain, modal, modalUnchanged: watchModalRoot(), done: false,
+    replacing: false, attempting: null, cleanups: /** @type {Array<()=>void>} */ ([]) };
+  formReloadFocus = job;
+  const cancel = () => finishFormReloadFocus(job);
+  const listen = (target, event, handler) => {
+    target.addEventListener(event, handler, true);
+    job.cleanups.push(() => target.removeEventListener(event, handler, true));
+  };
+  for (const event of ['pointerdown', 'keydown', 'touchstart', 'wheel']) listen(document, event, cancel);
+  listen(document, 'focusin', event => { if (event.target !== button && event.target !== job.attempting) cancel(); });
+  listen(button, 'blur', () => { if (!job.replacing) cancel(); });
+  listen(window, 'hashchange', cancel);
+  listen(window, 'blur', event => { if (event.target === window) cancel(); });
+  listen(document, 'visibilitychange', () => { if (document.hidden) cancel(); });
+  return job;
+}
+
+function beginFormReloadCommit(job) {
+  if (!formReloadFocusCurrent(job) || (document.activeElement !== job.button && document.activeElement !== document.body)) {
+    finishFormReloadFocus(job); return;
+  }
+  job.replacing = true;
+}
+
+function restoreFormReloadFocus(job) {
+  if (!job || job.done) return;
+  job.page = view().querySelector('.subscriptions-page');
+  job.replacing = false;
+  if (!formReloadFocusCurrent(job) || document.activeElement !== document.body) return finishFormReloadFocus(job);
+  const headings = job.page.querySelectorAll('.subscriptions-page-head h1');
+  const target = headings.length === 1 ? headings[0] : null;
+  if (!flagFocusUsable(target) || target.textContent !== '訂閱追蹤') return finishFormReloadFocus(job);
+  const added = !target.hasAttribute('tabindex');
+  if (added) target.setAttribute('tabindex', '-1');
+  const restore = () => { if (added && target.getAttribute('tabindex') === '-1') target.removeAttribute('tabindex'); };
+  job.attempting = target;
+  try { target.focus({ preventScroll: true }); } catch { /* 聚焦失敗不另搶其他位置。 */ }
+  job.attempting = null;
+  if (document.activeElement !== target || !formReloadFocusCurrent(job) || !flagFocusUsable(target)) restore();
+  else if (added) {
+    const observer = new MutationObserver(() => { if (!target.isConnected) release(); });
+    const release = () => { target.removeEventListener('blur', release); observer.disconnect(); restore(); };
+    target.addEventListener('blur', release, { once: true });
+    observer.observe(document, { childList: true, subtree: true });
+  }
+  finishFormReloadFocus(job);
+}
+
 function takeSubscriptionsPresentation() {
   const owner = ++subscriptionsPresentationOwner;
+  finishFormReloadFocus(formReloadFocus);
   finishFlagFocus(flagFocusJob);
   finishDeleteFocus(deleteFocusJob);
   // 已確認但仍等讀取的刪除，也要在下一個操作失敗前交給目前模型。
@@ -287,7 +421,7 @@ function syncPresentedDelete(id) {
       const empty = document.createElement('div');
       empty.innerHTML = subscriptionsEmptyHtml('');
       p.page.querySelector('#printSubs')?.remove();
-      p.page.querySelectorAll('.subscriptions-attention:not([data-delete-reload]),.subscriptions-summary,.subscriptions-section').forEach(node => node.remove());
+      p.page.querySelectorAll('.subscriptions-attention:not([data-delete-reload]):not([data-form-reload]),.subscriptions-summary,.subscriptions-section').forEach(node => node.remove());
       p.page.querySelector('#historySection').before(empty.querySelector('.subscriptions-empty-state'));
       p.page.querySelector('#emptyAddSub').onclick = () => openSubForm(null, p.creditCards);
       return;
@@ -304,7 +438,7 @@ function syncPresentedDelete(id) {
     delta.className = totals.delta < 0 ? 'pos' : totals.delta > 0 ? 'neg' : '';
     delta.textContent = subscriptionDeltaText(totals.delta);
     summary[3].querySelector('small').textContent = totals.endingCount ? '已排入停用流程' : '目前沒有待停用服務';
-    p.page.querySelector('.subscriptions-attention:not([data-delete-reload])')?.remove();
+    p.page.querySelector('.subscriptions-attention:not([data-delete-reload]):not([data-form-reload])')?.remove();
     p.page.querySelector('.subscriptions-summary').insertAdjacentHTML('beforebegin', staleSubscriptionsHtml(p.subs, p.validSet));
     p.page.querySelector('.timeline-card').outerHTML = chargeTimelineHtml(p.subs);
     destroyCharts();
@@ -324,7 +458,7 @@ function confirmSubscriptionDelete(operation) {
 function flagPresentationCurrent(owner) {
   return owner && owner.owner === subscriptionsPresentationOwner && owner.host === view()
     && owner.host.isConnected && owner.seq === currentRouteSeq() && owner.nav === currentNavSeq()
-    && owner.hash === location.hash;
+    && owner.hash === location.hash && (!owner.formOwns || owner.formOwns());
 }
 
 function subscriptionsPresentationCurrent(presentation) {
@@ -559,25 +693,30 @@ export async function renderSubscriptions({ showLoading = true } = {}) {
 }
 
 /**
- * @param {{showLoading?:boolean}} options
+ * @param {{showLoading?:boolean,formReload?:HTMLButtonElement|null}} options
  * @param {FlagFocusJob|null} [focusJob]
- * @param {{generation:number,owner:number,host:any,seq:number,nav:number,hash:string,deleted?:Set<string>}|null} [chain]
+ * @param {{generation:number,owner:number,host:any,seq:number,nav:number,hash:string,deleted?:Set<string>,formOwns?:()=>boolean,formFocus?:ReturnType<typeof startFormReloadFocus>}|null} [chain]
  * @param {any} [operation]
  * @param {any} [deleteJob]
  */
-async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = null, chain = null, operation = null, deleteJob = null) {
+async function renderSubscriptionsPage({ showLoading = true, formReload = null } = {}, focusJob = null, chain = null, operation = null, deleteJob = null) {
   if (!chain) {
     if (operation && !flagPresentationCurrent(operation)) return;
     if (flagFocusJob !== focusJob) finishFlagFocus(flagFocusJob);
     if (deleteFocusJob !== deleteJob) finishDeleteFocus(deleteFocusJob);
     chain = { generation: ++subscriptionsReadGeneration, owner: operation ? operation.owner : takeSubscriptionsPresentation(),
-      host: view(), seq: currentRouteSeq(), nav: currentNavSeq(), hash: location.hash };
+      host: view(), seq: currentRouteSeq(), nav: currentNavSeq(), hash: location.hash, formOwns: operation?.formOwns };
+    chain.formFocus = startFormReloadFocus(formReload, chain);
     if (focusJob && !focusJob.done) focusJob.generation = chain.generation;
     if (deleteJob && !deleteJob.done) deleteJob.generation = chain.generation;
     subscriptionsReading = chain;
+    if (chain.formFocus) chain.formFocus.replacing = true;
+    refreshFormConfirmation();
+    if (chain.formFocus) chain.formFocus.replacing = false;
     try { return await renderSubscriptionsPage({ showLoading }, focusJob, chain, null, deleteJob); }
     finally {
-      if (subscriptionsReading === chain) { subscriptionsReading = null; flagConfirmations.clear(); }
+      finishFormReloadFocus(chain.formFocus);
+      if (subscriptionsReading === chain) { subscriptionsReading = null; flagConfirmations.clear(); refreshFormConfirmation(); }
     }
   }
   const activeChain = chain;
@@ -585,12 +724,13 @@ async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = n
   const excluded = new Set();
   chain.deleted = excluded;
   const confirmedAtStart = flagConfirmationRevision;
+  const formCovered = formSuccessRevision;
+  const staleFormRead = () => formSuccessRevision > formCovered;
   flagConfirmations.clear();
   const seq = currentRouteSeq();
   const notice = subscriptionNotice;
   subscriptionNotice = '';
-  destroyCharts();
-  if (showLoading) view().innerHTML = subscriptionsLoadingHtml();
+  if (showLoading) { destroyCharts(); view().innerHTML = subscriptionsLoadingHtml(); }
 
   let raw;
   let cards;
@@ -598,10 +738,12 @@ async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = n
     [raw, cards] = await Promise.all([api('/subscriptions'), api('/cards')]);
     if (seq !== currentRouteSeq()) return;   // fetch 期間切走了頁（Codex r10#6）
     if (!current()) return;
+    if (staleFormRead()) { rejectOutdatedFormRead(activeChain); return; }
     raw = excludeConfirmedDeletes(raw, excluded);
     const expired = await autoExpire(raw);
     if (seq !== currentRouteSeq()) return;   // autoExpire 的 PUT 往返期間切走了頁——含下面的遞迴分支都別再動
     if (!current()) return;
+    if (staleFormRead()) { rejectOutdatedFormRead(activeChain); return; }
     raw = excludeConfirmedDeletes(raw, excluded);
     if (expired) {
       subscriptionNotice = notice;
@@ -612,12 +754,17 @@ async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = n
     if (!current()) return;
     finishFlagFocus(focusJob);
     finishDeleteFocus(deleteJob);
+    if (formConfirmationPending() && subscriptionsPresentationCurrent(subscriptionsPresented)) return;
+    destroyCharts();
     view().innerHTML = subscriptionsLoadErrorHtml(e?.message);
     const retry = byId('retrySubscriptions');
     if (retry) retry.onclick = () => renderSubscriptions();
     return;
   }
 
+  if (staleFormRead()) { rejectOutdatedFormRead(activeChain); return; }
+  beginFormReloadCommit(activeChain.formFocus);
+  destroyCharts();
   mergeConfirmedFlags(raw, confirmedAtStart);
   const creditCards = cards.filter(c => (c.type || 'credit') === 'credit').map(c => c.name);
   const validSet = new Set(creditCards);
@@ -629,6 +776,9 @@ async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = n
     byId('addSub').onclick = () => openSubForm(null, creditCards);
     byId('emptyAddSub').onclick = () => openSubForm(null, creditCards);
     renderHistorySection(byId('historySection'));
+    registerSubscriptionsPresentation(activeChain, [], creditCards);
+    formConfirmedRevision = Math.max(formConfirmedRevision, formCovered);
+    restoreFormReloadFocus(activeChain.formFocus);
     restoreDeleteFocus(deleteJob, true);
     return;
   }
@@ -715,8 +865,9 @@ async function renderSubscriptionsPage({ showLoading = true } = {}, focusJob = n
 
   drawBreakdown(activeThis, curMk);
   renderHistorySection(byId('historySection'));
-  subscriptionsPresented = { host: activeChain.host, page: view().querySelector('.subscriptions-page'),
-    seq: activeChain.seq, nav: activeChain.nav, hash: activeChain.hash, subs, creditCards, validSet, curMk };
+  registerSubscriptionsPresentation(activeChain, subs, creditCards);
+  formConfirmedRevision = Math.max(formConfirmedRevision, formCovered);
+  restoreFormReloadFocus(activeChain.formFocus);
   restoreFlagFocus(focusJob);
   restoreDeleteFocus(deleteJob, false);
 }
@@ -1247,7 +1398,11 @@ function openSubForm(sub, creditCards = []) {
       if (expInput.value && expInput.value === dateInput.value) { cb.checked = true; expInput.readOnly = true; }
       syncLifetimeFields();
     },
-    onSubmit: async (data) => {
+    onSubmit: async (data, ctx) => {
+      const owns = ctx?.owns;
+      const qualified = typeof owns === 'function' && typeof owns.handoff === 'function';
+      const operation = { owner: qualified && seq === currentRouteSeq() && owns() ? takeSubscriptionsPresentation() : -1,
+        host: view(), seq, nav: currentNavSeq(), hash: location.hash, formOwns: qualified ? owns.handoff : () => false };
       const date = data.whenDate || '';
       delete data.whenDate;
       if (data.cycle === 'lifetime') { data.status = 'active'; data.nextCharge = ''; data.endsOn = ''; data.expiryDate = ''; }
@@ -1261,7 +1416,9 @@ function openSubForm(sub, creditCards = []) {
       }
       else await api('/subscriptions', { method: 'POST', body: data });
       const message = sub ? '訂閱資料已更新' : '訂閱已新增';
-      rerenderSubscriptionsAfterAction(seq, message);
+      formSuccessRevision++;
+      if (flagPresentationCurrent(operation)) rerenderSubscriptionsAfterAction(seq, message, null, operation);
+      else refreshFormConfirmation();
     }
   });
 }

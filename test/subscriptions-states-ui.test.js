@@ -147,9 +147,10 @@ function assertStateWiring(source) {
   const emptyBranch = render.slice(emptyStart, emptyEnd);
 
   assert.match(render, /export async function renderSubscriptions\(\{ showLoading = true \} = \{\}\)/);
-  assert.match(render, /const seq = currentRouteSeq\(\);\s*const notice = subscriptionNotice;\s*subscriptionNotice = '';\s*destroyCharts\(\);\s*if \(showLoading\) view\(\)\.innerHTML = subscriptionsLoadingHtml\(\);/);
+  assert.match(render, /const seq = currentRouteSeq\(\);\s*const notice = subscriptionNotice;\s*subscriptionNotice = '';\s*if \(showLoading\) \{ destroyCharts\(\); view\(\)\.innerHTML = subscriptionsLoadingHtml\(\); \}/);
   assert.match(source, /try \{\s*\[raw, cards\] = await Promise\.all\(\[api\('\/subscriptions'\), api\('\/cards'\)\]\);/);
-  assert.match(source, /\} catch \(e\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;\s*if \(!current\(\)\) return;\s*finishFlagFocus\(focusJob\);\s*finishDeleteFocus\(deleteJob\);\s*view\(\)\.innerHTML = subscriptionsLoadErrorHtml/);
+  assert.match(source, /\} catch \(e\) \{\s*if \(seq !== currentRouteSeq\(\)\) return;\s*if \(!current\(\)\) return;\s*finishFlagFocus\(focusJob\);\s*finishDeleteFocus\(deleteJob\);\s*if \(formConfirmationPending\(\) && subscriptionsPresentationCurrent\(subscriptionsPresented\)\) return;\s*destroyCharts\(\);\s*view\(\)\.innerHTML = subscriptionsLoadErrorHtml/);
+  assert.match(render, /beginFormReloadCommit\(activeChain\.formFocus\);\s*destroyCharts\(\);\s*mergeConfirmedFlags\(raw, confirmedAtStart\);/);
   assert.match(source, /if \(retry\) retry\.onclick = \(\) => renderSubscriptions\(\);/);
   assert.match(emptyBranch, /byId\('emptyAddSub'\)\.onclick = \(\) => openSubForm\(null, creditCards\);/);
   assert.match(emptyBranch, /renderHistorySection\(byId\('historySection'\)\);/);
@@ -167,7 +168,7 @@ function assertStateWiring(source) {
     '拖曳排序必須保留手動排序偏好，並且只在原路由原地更新');
   assert.match(toggle, /const message = operation\.target \? '已標記為考慮停用' : '已取消「考慮停用」標記';\s*await rerenderSubscriptionsAfterAction\(seq, message, focusJob, operation\);/);
   assert.doesNotMatch(toggle, /toast\(message\)/, '標記成功不可同時顯示 toast 與頁內通知');
-  assert.match(form, /const message = sub \? '訂閱資料已更新' : '訂閱已新增';\s*rerenderSubscriptionsAfterAction\(seq, message\);/);
+  assert.match(form, /const message = sub \? '訂閱資料已更新' : '訂閱已新增';\s*formSuccessRevision\+\+;\s*if \(flagPresentationCurrent\(operation\)\) rerenderSubscriptionsAfterAction\(seq, message, null, operation\);\s*else refreshFormConfirmation\(\);/);
   assert.doesNotMatch(form, /toast\(message\)/, '儲存成功不可同時顯示 toast 與頁內通知');
 }
 
@@ -198,6 +199,9 @@ test('訂閱追蹤狀態：暖米橘容器與手機單欄由頁面專屬樣式�
 test('訂閱追蹤狀態：破壞消毒、重試、空白接線、路由守衛或手機排列時考題會紅', () => {
   const source = read('public/modules/subscriptions.js');
   const css = read('public/subscriptions.css');
+  assertStateWiring(source);
+  assertStateBehavior(source);
+  assertStateCss(css);
 
   const safeError = 'esc(String(message))';
   assert.ok(source.includes(safeError), '突變目標必須存在：錯誤訊息輸出消毒');
@@ -211,7 +215,7 @@ test('訂閱追蹤狀態：破壞消毒、重試、空白接線、路由守衛�
   assert.ok(source.includes(emptyCta), '突變目標必須存在：空白引導接線');
   assert.throws(() => assertStateWiring(source.replace(emptyCta, `byId('emptyAddSub').onclick = () => {}; // ${emptyCta}`)));
 
-  const catchGuard = 'if (seq !== currentRouteSeq()) return;\n    if (!current()) return;\n    finishFlagFocus(focusJob);\n    finishDeleteFocus(deleteJob);\n    view().innerHTML = subscriptionsLoadErrorHtml';
+  const catchGuard = 'if (seq !== currentRouteSeq()) return;\n    if (!current()) return;\n    finishFlagFocus(focusJob);\n    finishDeleteFocus(deleteJob);\n    if (formConfirmationPending() && subscriptionsPresentationCurrent(subscriptionsPresented)) return;\n    destroyCharts();\n    view().innerHTML = subscriptionsLoadErrorHtml';
   assert.ok(source.includes(catchGuard), '突變目標必須存在：失敗狀態路由守衛');
   assert.throws(() => assertStateWiring(source.replace(catchGuard, `/* ${catchGuard} */\n    view().innerHTML = subscriptionsLoadErrorHtml`)));
 
@@ -234,7 +238,7 @@ test('訂閱追蹤狀態：破壞消毒、重試、空白接線、路由守衛�
   assert.throws(() => assertStateWiring(source.replace(expireNotice,
     'return renderSubscriptions({ showLoading: false });')));
 
-  const conditionalLoading = 'if (showLoading) view().innerHTML = subscriptionsLoadingHtml();';
+  const conditionalLoading = 'if (showLoading) { destroyCharts(); view().innerHTML = subscriptionsLoadingHtml(); }';
   assert.ok(source.includes(conditionalLoading), '突變目標必須存在：只有首次進頁才清成載入狀態');
   assert.throws(() => assertStateWiring(source.replace(conditionalLoading,
     'view().innerHTML = subscriptionsLoadingHtml();')));
@@ -264,10 +268,10 @@ test('訂閱追蹤狀態：破壞消毒、重試、空白接線、路由守衛�
   assert.throws(() => assertStateWiring(source.replace(toggleNoticeOnly,
     toggleNoticeOnly.replace('rerenderSubscriptionsAfterAction', 'toast(message);\n    rerenderSubscriptionsAfterAction'))));
 
-  const saveNoticeOnly = "const message = sub ? '訂閱資料已更新' : '訂閱已新增';\n      rerenderSubscriptionsAfterAction(seq, message);";
+  const saveNoticeOnly = "const message = sub ? '訂閱資料已更新' : '訂閱已新增';\n      formSuccessRevision++;\n      if (flagPresentationCurrent(operation)) rerenderSubscriptionsAfterAction(seq, message, null, operation);\n      else refreshFormConfirmation();";
   assert.ok(source.includes(saveNoticeOnly), '突變目標必須存在：儲存成功單一通知');
   assert.throws(() => assertStateWiring(source.replace(saveNoticeOnly,
-    saveNoticeOnly.replace('rerenderSubscriptionsAfterAction', 'toast(message);\n      rerenderSubscriptionsAfterAction'))));
+    saveNoticeOnly.replace('formSuccessRevision++;', 'toast(message);\n      formSuccessRevision++;'))));
 
   const mobileStack = 'grid-template-columns: 1fr; gap: 18px; min-height: 390px;';
   assert.ok(css.includes(mobileStack), '突變目標必須存在：手機狀態排列');

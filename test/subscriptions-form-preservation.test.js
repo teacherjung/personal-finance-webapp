@@ -13,6 +13,7 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const normal = { category: '工具', card: '台新', email: 'Gmail' };
 const blank = { category: '', card: '', email: '' };
 const cases = [
+  ...['ack-after-flag', 'write-after-flag'].map(lifecycle => ({ name: '晚表單成功確認 ' + lifecycle, lifecycle, fields: normal, display: normal })),
   { name: '缺欄不套新增預設且儲存後仍缺席', fields: {}, display: blank },
   { name: 'null 初選空項且儲存後保留 null', fields: { category: null, card: null, email: null }, display: blank },
   { name: '空字串初選空項且只改名稱不改值', fields: blank, display: blank },
@@ -48,6 +49,11 @@ for (const entry of cases) test('訂閱表單｜' + entry.name, t => {
     const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
     assert.equal(report.version, 1); assert.equal(report.nonce, nonce);
     assert.equal(report.passed, true); assert.equal(report.name, spec.name); assert.equal(report.rawRoundTrip, true);
+    if (spec.lifecycle) {
+      assert.equal(report.lifecycle, spec.lifecycle); assert.equal(report.presentationPreserved, true);
+      assert.equal(report.confirmationReads, 1); assert.equal(report.writes.length, 2);
+      assert(report.writes.every(call => call.method === 'PUT' && call.status === 200));
+    }
   } catch (error) {
     error.message += '\n檢查 test/helpers/subscriptions-form-case.js 的本題收據；重跑 node --test test/subscriptions-form-preservation.test.js。\n' + result.stdout + result.stderr;
     throw error;

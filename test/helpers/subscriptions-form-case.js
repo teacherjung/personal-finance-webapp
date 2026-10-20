@@ -20,6 +20,8 @@ async function runCase() {
   assert.equal(fs.existsSync(reportPath), false); assert.equal(typeof nonce, 'string'); assert(nonce.length > 0);
   const http = globalThis.fetch, timers = new Set(), originalTimer = globalThis.setTimeout;
   let server, win;
+  let releaseForm;
+  const formBarrier = new Promise(resolveBarrier => { releaseForm = resolveBarrier; });
   const errors = [], calls = [], pending = new Set();
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status });
   globalThis.fetch = async () => { throw new Error('本題不使用外部來源'); };
@@ -70,10 +72,15 @@ async function runCase() {
       const task = (async () => {
         if (boot.has(key)) return json(boot.get(key));
         if (key === 'GET /api/history') return json(history);
-        assert(path === '/api/cards' && method === 'GET' || /^\/api\/subscriptions(?:\/subject)?$/.test(path), '未登記的請求：' + key);
+        assert(path === '/api/cards' && method === 'GET' || /^\/api\/subscriptions(?:\/subject)?$/.test(path)
+          || spec.lifecycle && path === '/api/subscriptions/control' && method === 'PUT', '未登記的請求：' + key);
         const call = { path, method, body: init.body ? JSON.parse(init.body) : null }; calls.push(call);
         if (failNext && method === 'PUT') { failNext = false; call.status = 503; call.transportFailure = true; return json({ error: '本題合成傳送失敗' }, 503); }
-        const response = await http(base + path, init); call.status = response.status; return response;
+        const hold = spec.lifecycle && path === '/api/subscriptions/subject' && method === 'PUT';
+        if (hold && spec.lifecycle === 'write-after-flag') await formBarrier;
+        const response = await http(base + path, init); call.status = response.status;
+        if (hold && spec.lifecycle === 'ack-after-flag') await formBarrier;
+        return response;
       })();
       pending.add(task); task.then(() => pending.delete(task), e => { pending.delete(task); errors.push(e.message); });
       return task;
@@ -101,6 +108,41 @@ async function runCase() {
     assert.equal(document.querySelectorAll('#modalForm select').length, 5);
     const writes = () => calls.filter(c => c.method !== 'GET');
     const select = (key, value) => { const e = query('#f_' + key); e.value = value; assert.equal(e.value, value); e.dispatchEvent(new Event('change', { bubbles: true })); };
+    if (spec.lifecycle) {
+      query('#f_name').value = '本題晚成功名稱';
+      query('#modalForm button[type="submit"]').click();
+      await waitFor(() => writes().length === 1 && (spec.lifecycle === 'write-after-flag' || writes()[0].status === 200));
+      const beforeB = await getRows();
+      assert.equal(beforeB.find(row => row.id === 'subject').name,
+        spec.lifecycle === 'write-after-flag' ? original.name : '本題晚成功名稱');
+      query('[data-cancel]').click();
+      const b = query('[data-flag="control"]'); b.focus(); b.click();
+      await waitFor(() => writes().length === 2 && writes()[1].status === 200
+        && document.querySelector('.subscriptions-notice') && pending.size === 1);
+      const page = query('.subscriptions-page'), button = query('[data-flag="control"]'), notice = query('.subscriptions-notice');
+      assert.equal(document.activeElement, button);
+      assert.deepEqual(writes()[1].body, { considerCancel: true });
+      const readsBefore = calls.filter(c => c.method === 'GET' && c.path === '/api/subscriptions').length;
+      releaseForm();
+      await waitFor(() => pending.size === 0 && document.querySelector('[data-form-reload] button'));
+      assert.equal(query('.subscriptions-page'), page); assert.equal(query('[data-flag="control"]'), button);
+      assert.equal(query('.subscriptions-notice'), notice); assert.equal(document.activeElement, button);
+      assert.equal(calls.filter(c => c.method === 'GET' && c.path === '/api/subscriptions').length, readsBefore);
+      const afterWrite = await getRows();
+      assert.equal(afterWrite.find(row => row.id === 'subject').name, '本題晚成功名稱');
+      assert.deepEqual(afterWrite.find(row => row.id === 'control'), { ...control, considerCancel: true });
+      const reload = query('[data-form-reload] button'); reload.focus(); reload.click();
+      await waitFor(() => pending.size === 0 && !document.querySelector('[data-form-reload]'));
+      assert.match(query('.subscriptions-page').textContent, /本題晚成功名稱/);
+      assert.equal(document.activeElement, query('.subscriptions-page-head h1'));
+      assert.equal(calls.filter(c => c.method === 'GET' && c.path === '/api/subscriptions').length, readsBefore + 1);
+      assert.equal(writes().length, 2); assert(writes().every(call => call.status === 200));
+      const actual = (await getRows()).find(row => row.id === 'subject');
+      assert.deepEqual(actual, { ...original, name: '本題晚成功名稱' });
+      assert.deepEqual(errors, []);
+      return { version: 1, nonce, passed: true, name: spec.name, writes: writes(), rawRoundTrip: true,
+        lifecycle: spec.lifecycle, presentationPreserved: true, confirmationReads: 1 };
+    }
     if (spec.mode === 'cancel') {
       query('#f_name').value = '本題取消的名稱'; query('[data-cancel]').click();
       assert.equal(writes().length, 0); assert.deepEqual(await getRows(), seeded);
@@ -142,6 +184,8 @@ async function runCase() {
     assert.deepEqual(errors, []);
     return { version: 1, nonce, passed: true, name: spec.name, writes: writes(), rawRoundTrip: true };
   } finally {
+    releaseForm();
+    if (spec.lifecycle) await Promise.allSettled([...pending]);
     if (win) win.close();
     for (const timer of timers) clearTimeout(timer);
     globalThis.setTimeout = originalTimer; globalThis.fetch = http;
