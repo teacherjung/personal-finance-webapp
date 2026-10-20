@@ -647,6 +647,7 @@ const MANIFEST = {
       '訂閱本月攤提',
       '訂閱狀態',
       '訂閱表單可空資訊與保存',
+      '訂閱表單成功後確認與呈現順序',
       'YYYY-MM-DD 日期解析',
       '每日洞察引擎書籤 insightState',
       'async render 與路由序號 guard',

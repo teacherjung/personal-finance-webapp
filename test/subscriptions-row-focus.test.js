@@ -12,11 +12,12 @@ const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(r => 
 const el = s => document.querySelector(s);
 const flag = (id = rows[0].id) => [...document.querySelectorAll('.subs-table [data-flag]')].find(b => b.dataset.flag === id);
 const puts = () => calls.filter(c => c.method === 'PUT');
+const ownLiveCharts = () => chartDraws.filter(c => c.canvas?.isConnected && c.canvas.closest('.subscriptions-page') && ['catChart', 'catBarChart'].includes(c.id));
 async function boot() {
   if (app) return;
   const win = new JSDOM('<!doctype html><nav id="nav"></nav><button id="snapshotBtn"></button><button id="outside">外部</button><main id="view"></main><div id="modal-root"></div><div id="toast-root"></div>', { url: 'http://localhost/#subscriptions', pretendToBeVisual: true }).window;
   for (const k of ['window','document','location','localStorage','HTMLElement','Element','Node','Event','CustomEvent','KeyboardEvent','MouseEvent','MutationObserver','requestAnimationFrame','getComputedStyle']) Object.defineProperty(globalThis, k, { value: win[k], configurable: true, writable: true });
-  Object.defineProperty(globalThis, 'Chart', { configurable: true, value: class { constructor(canvas, config) { chartDraws.push({ id:canvas?.id, config }); } destroy() {} } });
+  Object.defineProperty(globalThis, 'Chart', { configurable: true, value: class { constructor(canvas, config) { this.record = { id:canvas?.id, canvas, config, destroyed:0, connectedOnDestroy:[] }; chartDraws.push(this.record); } destroy() { this.record.connectedOnDestroy.push(this.record.canvas?.isConnected); this.record.destroyed++; } } });
   win.HTMLElement.prototype.getClientRects = function () { return this.isConnected ? [{ width: 100, height: 20 }] : []; };
   win.addEventListener('error', e => { errors.push(e.error?.message || e.message); e.preventDefault(); });
   globalThis.fetch = async (url, init) => {
@@ -482,4 +483,346 @@ for(const cancel of [false,true])test(`刪除回焦：${cancel?'取消':'成功'
   const active=new Map(),restore=[];
   for(const target of [document,window]){const add=target.addEventListener,remove=target.removeEventListener;target.addEventListener=function(type,fn,options){if(options===true)active.set(fn,(active.get(fn)||0)+1);return add.call(this,type,fn,options);};target.removeEventListener=function(type,fn,options){if(options===true&&active.has(fn)){const n=active.get(fn)-1;if(n)active.set(fn,n);else active.delete(fn);}return remove.call(this,type,fn,options);};restore.push(()=>{target.addEventListener=add;target.removeEventListener=remove;});}
   try{const id=rows[0].id,wait=defer();deletePlans.push(async remove=>{remove();await wait.promise;return json({ok:true});});await startDelete(id);assert.ok(active.size>0);if(cancel)el('#outside').focus();wait.resolve();await settle();deleted(id);assert.equal(active.size,0);}finally{restore.forEach(r=>r());}
+});
+
+const formReads = () => calls.filter(c => c.method === 'GET' && c.path === '/api/subscriptions');
+const formReload = () => el('[data-form-reload] button');
+async function submitEditedName(id, name) {
+  const opener = [...document.querySelectorAll('[data-edit]')].find(button => button.dataset.edit === id);
+  assert.ok(opener); opener.focus(); opener.click(); await settle();
+  el('#f_name').value = name;
+  el('#modalForm').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  await settle();
+}
+async function pendingForm(writeAfter = false) {
+  const id = rows[0].id, wait = defer(), name = `本題晚儲存-${serial}`;
+  let applied = false;
+  putPlans.push(async (row, body) => {
+    if (writeAfter) await wait.promise;
+    Object.assign(row, body); applied = true;
+    const saved = structuredClone(row);
+    if (!writeAfter) await wait.promise;
+    return json(saved);
+  });
+  await submitEditedName(id, name);
+  assert.equal(puts().length, 1);
+  assert.equal(applied, !writeAfter);
+  assert.equal(formReads().length, 0);
+  el('[data-cancel]').click(); await settle();
+  return { id, name, wait, applied: () => applied };
+}
+async function finishLateForm(job) {
+  job.wait.resolve(); await settle();
+  assert.equal(job.applied(), true);
+  assert.equal(puts().find(call => call.path === '/api/subscriptions/' + job.id).status, 200);
+}
+
+for (const writeAfter of [false, true]) test(`表單確認｜A${writeAfter ? '晚實際寫入' : '已寫入晚回應'}不接管B，人工重讀確認新值`, async () => {
+  const job = await pendingForm(writeAfter), idB = rows[1].id;
+  try {
+    flag(idB).focus(); flag(idB).click(); await settle(); written(idB);
+    const page = el('.subscriptions-page'), button = flag(idB), notice = el('.subscriptions-notice');
+    assert.equal(document.activeElement, button);
+    const before = formReads().length;
+    await finishLateForm(job);
+    assert.equal(el('.subscriptions-page'), page, '較新B呈現不可被舊A表單續行取代；查 public/modules/subscriptions.js 與本題，重跑 node --test test/subscriptions-row-focus.test.js');
+    assert.equal(flag(idB), button); assert.equal(el('.subscriptions-notice'), notice);
+    assert.equal(document.activeElement, button); assert.equal(formReads().length, before);
+    assert.equal(puts().length, 2); assert.equal(rows[0].name, job.name);
+    assert.match(el('[data-form-reload]').textContent, /資料已儲存，請重新載入確認更新/);
+    const reload = formReload(), read = defer();
+    reads.push(async snap => { await read.promise; return json(snap); });
+    reload.focus(); reload.click(); await settle();
+    assert.equal(reload.disabled, true); reload.click(); await settle();
+    assert.equal(formReads().length, before + 1);
+    read.resolve(); await settle();
+    assert.equal(puts().length, 2); assert.equal(formReload(), null);
+    assert.match(el('.subscriptions-page').textContent, new RegExp(job.name));
+    assert.equal(document.activeElement, el('.subscriptions-page-head h1'));
+  } finally { job.wait.resolve(); await settle(); }
+});
+
+for (const closeBefore of [false, true]) test(`表單確認｜新窗${closeBefore ? '已關閉' : '仍開啟'}不授權舊續行，關閉後有入口`, async () => {
+  const job = await pendingForm(), page = el('.subscriptions-page');
+  try {
+    app.openInfo('本題新窗', '<input id="form-later-window" data-modal-initial value="本題未儲存">');
+    await settle();
+    const field = el('#form-later-window'); field.focus();
+    if (closeBefore) { el('.x-close').click(); await settle(); }
+    const focus = document.activeElement;
+    await finishLateForm(job);
+    assert.equal(el('.subscriptions-page'), page); assert.equal(formReads().length, 0);
+    assert.equal(document.activeElement, focus);
+    if (!closeBefore) {
+      assert.equal(formReload(), null); assert.equal(el('#form-later-window'), field);
+      assert.equal(field.value, '本題未儲存');
+      el('.x-close').click(); await settle();
+    }
+    assert.ok(formReload()); formReload().click(); await settle();
+    assert.equal(formReads().length, 1); assert.equal(puts().length, 1); assert.equal(formReload(), null);
+  } finally { job.wait.resolve(); await settle(); }
+});
+
+test('表單確認｜換頁只保存成功事實，回訂閱新讀取消化', async () => {
+  const job = await pendingForm();
+  try {
+    window.location.hash = '#cards'; await settle();
+    const html = el('#view').innerHTML;
+    await finishLateForm(job);
+    assert.equal(el('#view').innerHTML, html); assert.equal(formReload(), null);
+    assert.equal(formReads().length, 0);
+    window.location.hash = '#subscriptions'; await settle();
+    assert.match(el('.subscriptions-page').textContent, new RegExp(job.name));
+    assert.equal(formReads().length, 1); assert.equal(formReload(), null); assert.equal(puts().length, 1);
+  } finally { job.wait.resolve(); await settle(); }
+});
+
+function expiredMaintenanceSeed(row) {
+  const day = new Date(); day.setDate(day.getDate() - 2);
+  const expiryDate = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+  return { ...row, active:true, status:'active', endsOn:'', expiryDate, cycle:'monthly' };
+}
+
+test('表單確認｜合法到期快照確實維護寫入並收斂', async () => {
+  const b = rows[1].id;
+  Object.assign(rows[1], expiredMaintenanceSeed(rows[1]));
+  const expiry = rows[1].expiryDate;
+  await renderSubscriptions({ showLoading:false }); await settle();
+  const writes = puts().filter(c => c.path === '/api/subscriptions/' + b);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(writes[0].body, { status:'ended', active:false, endsOn:expiry });
+  assert.equal(writes[0].status, 200);
+  const stored = await (await fetch('/api/subscriptions')).json();
+  assert.equal(stored.find(s => s.id === b).status, 'ended');
+  assert.equal(stored.find(s => s.id === b).active, false);
+  await renderSubscriptions({ showLoading:false }); await settle();
+  assert.equal(puts().filter(c => c.path === '/api/subscriptions/' + b).length, 1);
+});
+
+test('表單確認｜較早GET不得消化後到成功或啟動過期維護', async () => {
+  const job = await pendingForm(), read = defer(), page = el('.subscriptions-page');
+  const b = rows[1].id, savedB = structuredClone(rows[1]);
+  const keptCharts = ownLiveCharts();
+  reads.push(async snap => {
+    snap[1] = expiredMaintenanceSeed(snap[1]);
+    await read.promise; return json(snap);
+  });
+  const render = renderSubscriptions({ showLoading: false });
+  try {
+    await settle(); assert.equal(formReads().length, 1);
+    await finishLateForm(job);
+    read.resolve(); await render; await settle();
+    assert.equal(puts().filter(c => c.path === '/api/subscriptions/' + b).length, 0, '已知較早快照不可再發起 autoExpire 寫入；查 public/modules/subscriptions.js 與本題，重跑 node --test test/subscriptions-row-focus.test.js');
+    assert.equal(puts().filter(c => c.path === '/api/subscriptions/' + job.id && c.body.name === job.name && c.status === 200).length, 1);
+    assert.deepEqual(rows[1], savedB);
+    assert.ok(keptCharts.length > 0); assert.ok(keptCharts.every(c => c.destroyed === 0));
+    assert.equal(el('.subscriptions-page'), page);
+    assert.ok(formReload(), '較早讀取不得清掉後到的表單成功；查 public/modules/subscriptions.js 與本題，重跑 node --test test/subscriptions-row-focus.test.js');
+    formReload().click(); await settle();
+    assert.equal(formReads().length, 2); assert.equal(formReload(), null);
+    assert.equal(puts().length, 1); assert.equal(rows[1].status, 'active');
+  } finally { job.wait.resolve(); read.resolve(); await render; await settle(); }
+});
+
+test('表單確認｜首次載入遇晚成功有終態入口而非永遠載入', async () => {
+  const job = await pendingForm(), read = defer();
+  reads.push(async snap => { await read.promise; return json(snap); });
+  const render = renderSubscriptions();
+  try {
+    await settle(); assert.ok(el('.subscriptions-loading-state'));
+    await finishLateForm(job); read.resolve(); await render; await settle();
+    assert.equal(el('.subscriptions-loading-state'), null); assert.ok(formReload());
+    formReload().click(); await settle();
+    assert.equal(formReload(), null); assert.match(el('.subscriptions-page').textContent, new RegExp(job.name));
+    assert.equal(puts().length, 1);
+  } finally { job.wait.resolve(); read.resolve(); await render; await settle(); }
+});
+
+test('表單確認｜重讀失敗保留入口與頁面，重試只讀且不搶外部焦點', async () => {
+  const job = await pendingForm();
+  try {
+    await finishLateForm(job);
+    const page = el('.subscriptions-page'), reload = formReload();
+    const keptCharts = ownLiveCharts();
+    assert.ok(keptCharts.length > 0);
+    assert.ok(reload); reads.push(() => json({ error: '本題確認讀取失敗' }, 503));
+    reload.focus(); reload.click(); await settle();
+    assert.equal(el('.subscriptions-page'), page); assert.equal(formReload(), reload);
+    assert.equal(reload.disabled, false); assert.equal(document.activeElement, reload);
+    assert.ok(keptCharts.every(c => c.destroyed === 0), '保留頁面的失敗不得銷毀圖表；查 public/modules/subscriptions.js 與本題，重跑 node --test test/subscriptions-row-focus.test.js');
+    const read = defer(); reads.push(async snap => { await read.promise; return json(snap); });
+    reload.click(); await settle(); el('#outside').focus(); read.resolve(); await settle();
+    assert.equal(formReload(), null); assert.equal(document.activeElement, el('#outside'));
+    assert.ok(keptCharts.every(c => c.destroyed === 1), '成功替換頁面必須清理舊圖表；查 public/modules/subscriptions.js 與本題，重跑 node --test test/subscriptions-row-focus.test.js');
+    assert.equal(formReads().length, 2); assert.equal(puts().length, 1);
+  } finally { job.wait.resolve(); await settle(); }
+});
+
+test('表單確認｜空列表登記可呈現，晚成功不復活已刪列', async () => {
+  const job = await pendingForm();
+  try {
+    for (const id of rows.map(row => row.id)) {
+      el(`[data-del="${id}"]`).click(); await settle();
+    }
+    assert.equal(rows.length, 0); assert.ok(el('#emptyAddSub'));
+    const page = el('.subscriptions-page'), before = formReads().length;
+    await finishLateForm(job);
+    assert.equal(el('.subscriptions-page'), page); assert.equal(formReads().length, before);
+    assert.ok(formReload()); assert.equal(el('.subs-table'), null);
+    formReload().click(); await settle();
+    assert.equal(formReload(), null); assert.ok(el('#emptyAddSub')); assert.equal(rows.length, 0);
+  } finally { job.wait.resolve(); await settle(); }
+});
+
+test('表單確認｜寫入失敗不產生待確認，原表單可重試', async () => {
+  const id = rows[0].id, original = structuredClone(rows); putFail = true;
+  await submitEditedName(id, '本題重試名稱');
+  assert.deepEqual(rows, original); assert.equal(formReload(), null); assert.equal(formReads().length, 0);
+  assert.equal(el('#modalForm button[type="submit"]').disabled, false);
+  putFail = false;
+  el('#modalForm').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(rows[0].name, '本題重試名稱'); assert.equal(puts().length, 2);
+  assert.equal(formReads().length, 1); assert.equal(formReload(), null); assert.equal(el('#modalForm'), null);
+});
+
+test('表單確認｜連續晚成功不被第一輪重讀清掉，較早終態不解鎖新讀取', async () => {
+  const first = await pendingForm(), secondWait = defer(), oldRead = defer(), newRead = defer();
+  const b = rows[1].id, secondName = `本題第二筆晚成功-${serial}`;
+  putPlans.push(async (row, body) => { Object.assign(row, body); const saved = structuredClone(row); await secondWait.promise; return json(saved); });
+  await submitEditedName(b, secondName); el('[data-cancel]').click(); await settle();
+  try {
+    await finishLateForm(first);
+    const page = el('.subscriptions-page'), reload = formReload();
+    reads.push(async snap => { await oldRead.promise; return json(snap); });
+    reload.focus(); reload.click(); await settle(); assert.equal(reload.disabled, true);
+    secondWait.resolve(); await settle();
+    assert.equal(puts().length, 2); assert(puts().every(call => call.status === 200));
+    oldRead.resolve(); await settle();
+    assert.equal(el('.subscriptions-page'), page);
+    assert.equal(formReload(), reload); assert.equal(reload.disabled, false);
+    reads.push(async snap => { await newRead.promise; return json(snap); });
+    reload.click(); await settle(); assert.equal(reload.disabled, true);
+    const newest = defer();
+    reads.push(async snap => { await newest.promise; return json(snap); });
+    const render = renderSubscriptions({ showLoading: false }); await settle();
+    newRead.resolve(); await settle(); assert.equal(reload.disabled, true);
+    newest.resolve(); await render; await settle();
+    assert.equal(formReload(), null); assert.match(el('.subscriptions-page').textContent, new RegExp(first.name));
+    assert.match(el('.subscriptions-page').textContent, new RegExp(secondName));
+    assert.equal(puts().length, 2); assert.equal(formReads().length, 3);
+  } finally { first.wait.resolve(); secondWait.resolve(); oldRead.resolve(); newRead.resolve(); await settle(); }
+});
+
+for (const takeover of ['new-modal', 'opened-closed', 'navigate', 'keyboard', 'window-blur']) test(`表單確認｜重新載入後 ${takeover} 撤銷舊回焦`, async () => {
+  const job = await pendingForm(), read = defer();
+  try {
+    await finishLateForm(job);
+    reads.push(async snap => { await read.promise; return json(snap); });
+    const reload = formReload(); reload.focus(); reload.click(); await settle();
+    if (takeover === 'new-modal' || takeover === 'opened-closed') {
+      app.openInfo('本題確認新窗', '<input id="confirmation-new-field" data-modal-initial value="本題內容">');
+      await settle();
+      if (takeover === 'opened-closed') {
+        el('.x-close').click(); await settle();
+        assert.equal(document.activeElement, el('.subscriptions-page-head h1'));
+        // 關窗自己的回焦是合法對照；後續明確移焦才測舊重讀不得接管。
+        el('#outside').focus();
+      }
+    }
+    if (takeover === 'navigate') { window.location.hash = '#cards'; await settle(); }
+    if (takeover === 'keyboard') document.dispatchEvent(new Event('keydown', { bubbles: true }));
+    if (takeover === 'window-blur') window.dispatchEvent(new Event('blur'));
+    const newerModal = el('#modal-root').innerHTML, otherPage = el('#view').innerHTML;
+    read.resolve(); await settle();
+    assert.equal(puts().length, 1);
+    if (takeover === 'opened-closed') assert.equal(document.activeElement, el('#outside'), '新窗關閉後外部焦點不得被舊重讀搶回；查 public/modules/subscriptions.js 與本題，重跑 node --test test/subscriptions-row-focus.test.js');
+    else assert.notEqual(document.activeElement, el('.subscriptions-page-head h1'));
+    if (takeover === 'new-modal') {
+      assert.equal(el('#modal-root').innerHTML, newerModal);
+      assert.equal(document.activeElement, el('#confirmation-new-field'));
+    }
+    if (takeover === 'navigate') assert.equal(el('#view').innerHTML, otherPage);
+  } finally { job.wait.resolve(); read.resolve(); await settle(); }
+});
+
+test('表單確認｜較舊刪除同步保留新提示及已刪狀態', async () => {
+  const form = await pendingForm(), deletion = defer(), idB = rows[1].id;
+  deletePlans.push(async remove => { remove(); await deletion.promise; return json({ ok: true }); });
+  el(`[data-del="${idB}"]`).click(); await settle();
+  // 下一張表單取得呈現資格但不成功；舊刪除只能同步其已確認事實。
+  putFail = true;
+  await submitEditedName(form.id, '本題未成功送出');
+  assert.equal(puts().at(-1).status, 503);
+  putFail = false;
+  el('#modal-root .x-close')?.click(); await settle();
+  try {
+    await finishLateForm(form); assert.ok(formReload());
+    const page = el('.subscriptions-page'), hint = el('[data-form-reload]');
+    deletion.resolve(); await settle();
+    assert.equal(el('.subscriptions-page'), page); assert.equal(el('[data-form-reload]'), hint);
+    assert.equal(el(`[data-id="${idB}"]`), null);
+    assert.equal(rows.some(row => row.id === idB), false);
+  } finally { form.wait.resolve(); deletion.resolve(); await settle(); }
+});
+
+for (const closeBefore of [false, true]) test(`表單確認｜正常成功讀取在途遇新窗${closeBefore ? '已關閉' : '仍開啟'}，舊回覆不換頁`, async () => {
+  const read = defer(), id = rows[0].id, page = el('.subscriptions-page');
+  reads.push(async snap => { await read.promise; return json(snap); });
+  try {
+    await submitEditedName(id, '本題正常成功但讀取晚到');
+    assert.equal(puts()[0].status, 200); assert.equal(el('#modalForm'), null);
+    assert.equal(formReads().length, 1);
+    app.openInfo('本題接管窗', '<input id="normal-later-field" data-modal-initial value="本題未存">');
+    await settle();
+    const field = el('#normal-later-field');
+    if (closeBefore) { el('.x-close').click(); await settle(); }
+    const focus = document.activeElement;
+    read.resolve(); await settle();
+    assert.equal(el('.subscriptions-page'), page); assert.equal(document.activeElement, focus);
+    assert.equal(formReads().length, 1); assert.equal(puts().length, 1);
+    if (!closeBefore) { assert.equal(el('#normal-later-field'), field); assert.equal(formReload(), null); el('.x-close').click(); await settle(); }
+    assert.ok(formReload()); formReload().click(); await settle(); assert.equal(formReload(), null);
+    assert.match(el('.subscriptions-page').textContent, /本題正常成功但讀取晚到/);
+  } finally { read.resolve(); await settle(); }
+});
+
+
+for (const showLoading of [false, true]) test(`表單確認｜圖表在 ${showLoading ? 'loading替換' : '合法提交'} 時清理`, async () => {
+  const charts = ownLiveCharts(), read = defer();
+  assert.ok(charts.length > 0);
+  reads.push(async snap => { await read.promise; return json(snap); });
+  const render = renderSubscriptions({ showLoading });
+  try {
+    await settle();
+    assert.ok(charts.every(c => c.destroyed === (showLoading ? 1 : 0)), '圖表清理須與實際頁面替換對齊；查 subscriptions.js 的 showLoading，重跑 node --test test/subscriptions-row-focus.test.js');
+    assert.ok(charts.every(c => c.canvas.isConnected === !showLoading));
+    if (showLoading) assert.ok(charts.every(c => c.connectedOnDestroy[0] === true), '清理必須早於移除 canvas；查 public/modules/subscriptions.js 與本題，重跑 node --test test/subscriptions-row-focus.test.js');
+    read.resolve(); await render; await settle();
+    assert.ok(charts.every(c => c.destroyed === 1), '合法提交須清理舊實例；查 subscriptions.js 的 destroyCharts，重跑 node --test test/subscriptions-row-focus.test.js');
+    const newer = ownLiveCharts(); assert.ok(newer.length > 0);
+    assert.ok(newer.every(c => !charts.includes(c) && c.destroyed === 0));
+  } finally { read.resolve(); await render; await settle(); }
+});
+
+test('表單確認｜普通錯誤替換頁面仍清理圖表', async () => {
+  const charts = ownLiveCharts(); assert.ok(charts.length > 0);
+  reads.push(() => json({ error:'本題一般讀取失敗' }, 503));
+  await renderSubscriptions({ showLoading:false }); await settle();
+  assert.ok(el('#retrySubscriptions')); assert.ok(charts.every(c => c.destroyed === 1));
+});
+
+
+for (const fail of [false, true]) test(`表單確認｜舊圖表工作${fail ? '失敗' : '成功'}不清理較新實例`, async () => {
+  const old = ownLiveCharts(), read = defer(); assert.ok(old.length > 0);
+  reads.push(async snap => { await read.promise; return fail ? json({ error:'本題舊讀取錯誤' }, 503) : json(snap); });
+  const pending = renderSubscriptions({ showLoading:true });
+  try {
+    await settle(); assert.ok(old.every(c => c.destroyed === 1));
+    await renderSubscriptions({ showLoading:false }); await settle();
+    const page = el('.subscriptions-page'), newer = ownLiveCharts(); assert.ok(newer.length > 0);
+    assert.ok(newer.every(c => !old.includes(c) && c.destroyed === 0));
+    read.resolve(); await pending; await settle();
+    assert.equal(el('.subscriptions-page'), page);
+    assert.ok(newer.every(c => c.canvas.isConnected && c.destroyed === 0), '舊終態不可銷毀較新圖表；查 subscriptions.js 的 finally，重跑 node --test test/subscriptions-row-focus.test.js');
+  } finally { read.resolve(); await pending; await settle(); }
 });
