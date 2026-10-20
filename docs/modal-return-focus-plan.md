@@ -46,9 +46,9 @@
 - DOM 題須自行建立每題起點並清空、等待前題觀察器落定；路由與重畫分開測。真正按鍵／原生焦點行為另用瀏覽器驗，不把 jsdom 合成事件冒充瀏覽器預設動作。
 - 舊鍵盤驗收僅為部分流程代驗：#648 的 10/10 紀錄驗了信用卡上傳與訂閱新增兩種彈窗，明載未驗原生下拉內部、其餘彈窗、讀屏與其他瀏覽器；本項不沿用全面通過的說法。
 
-## 接續時先承接的程序待辦
+## 歷史程序待辦與後續追蹤
 
-PR #689 Opus r5 第 1 項：r4 同頁正常 PUT／POST 成功後、自動重讀期間的提示與可按外觀待辦，尚未列入 PROJECT.md 正式待辦節。下一支原定更新 PROJECT.md 的本工作開工時先補 F6 三要素；若更早另開 cashflow.js 工作則先補再施工。程式改善時機仍是下次整理讀取狀態，或本人驗收認為妨礙操作。不要把 PR 對帳或本草稿算成正式清單已落地。來源：https://github.com/teacherjung/personal-finance-webapp/pull/689#issuecomment-6162553093 。
+本節原記錄 [PR #689 Opus r5 第 1 項](https://github.com/teacherjung/personal-finance-webapp/pull/689#issuecomment-6162553093)銀行正常 PUT／POST 成功後重讀提示的正式登記需求。後續追蹤以 [PROJECT.md](../PROJECT.md)「銀行收支正常寫入的重讀提示」條目為正本；[#723](https://github.com/teacherjung/personal-finance-webapp/pull/723) 僅承接自動重讀期間既有重試鈕的停用同步，正式核收、合併與驗收階段依該 PR 當版收據，不代表全部銀行操作或原生驗收完成。
 
 ## 施工隔離與分工
 
