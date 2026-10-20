@@ -368,3 +368,56 @@ test('IB 同步｜報表缺市價／均價 → 既有持股保留原值，不可
   assert.equal(h?.price, 500, '缺市價時要保留原價，不可寫成 0');
   assert.equal(h?.avgCost, 480, '缺均價時要保留原均價，不可寫成 0');
 });
+
+test('收入來源｜真單份 Flex 解析到同步寫入，短期、同日、跨月均保留完整原日期', async () => {
+  for (const [fromDate,toDate] of [['20260115','20260120'],['20240229','20240229'],['20260115','20260320']]) {
+    store.save(store.emptyDb());
+    const raw=flexWithCash([{type:'Dividends',currency:'USD',amount:'12.50'}]);
+    Object.assign(raw.FlexQueryResponse.FlexStatements.FlexStatement,{fromDate,toDate});
+    let calls=0;
+    await syncIb(async () => {calls++;return parseStatement(raw,()=>null);});
+    assert.equal(calls,1);
+    const income=store.load().settings.ib.income;
+    assert.equal(income.periodBasis,'ib-flex-single-statement-v1');
+    assert.equal(income.from,fromDate);assert.equal(income.to,toDate);
+    assert.equal(income.dividends,12.5);
+  }
+});
+
+test('收入來源｜新收入缺資格不能沿用上次標記，缺收入清空', async () => {
+  for (const over of [
+    {statementCount:undefined}, {statementCount:'1'}, {statementCount:0},
+    {period:{from:'202601',to:'20260320'}}, {period:{from:'20260231',to:'20260320'}},
+    {period:{from:'20260321',to:'20260320'}}, {period:{}}, {income:null}
+  ]) {
+    const db=store.emptyDb();
+    db.settings.ib.income={periodBasis:'ib-flex-single-statement-v1',from:'20250101',to:'20250131',dividends:91};
+    store.save(db);
+    let calls=0;
+    const parsed=fakeParsed({statementCount:1,period:{from:'20260115',to:'20260320'},income:{dividends:13.5,paymentInLieu:0,count:1},...over});
+    await assert.doesNotReject(()=>syncIb(async()=>{calls++;return parsed();}));
+    assert.equal(calls,1);
+    const income=store.load().settings.ib.income;
+    if (over.income===null) assert.equal(income,null);
+    else { assert.equal(income.dividends,13.5);assert.equal(Object.hasOwn(income,'periodBasis'),false); }
+  }
+});
+
+test('收入來源｜多帳戶、不同期、同期間 bundle 與末份無收入整包拒收並保留本題原庫', async () => {
+  const cases=[
+    [{accountId:'U-A',fromDate:'20260101',toDate:'20260131'},{accountId:'U-B',fromDate:'20260101',toDate:'20260131'}],
+    [{accountId:'U-A',fromDate:'20260101',toDate:'20260131'},{accountId:'U-A',fromDate:'20260201',toDate:'20260228'}],
+    [{accountId:'U-A',fromDate:'20260101',toDate:'20260131'},{accountId:'U-A',fromDate:'20260101',toDate:'20260131'}],
+    [{accountId:'U-A',fromDate:'20260101',toDate:'20260131'},{accountId:'U-A',fromDate:'20260101',toDate:'20260131',CashTransactions:{}}]
+  ];
+  for (const [index,pair] of cases.entries()) {
+    const db=store.emptyDb();
+    db.settings.ib.income={periodBasis:'ib-flex-single-statement-v1',from:'20250101',to:'20250131',dividends:81+index};
+    store.save(db);const before=store.load();
+    const statements=pair.map(over=>({...flexWithCash([{type:'Dividends',currency:'USD',amount:'999'}]).FlexQueryResponse.FlexStatements.FlexStatement,...over}));
+    let calls=0;
+    await assert.rejects(()=>syncIb(async()=>{calls++;return parseStatement({FlexQueryResponse:{FlexStatements:{FlexStatement:statements}}},()=>null);}), /單一帳戶|單一 statement/);
+    assert.equal(calls,1);
+    assert.deepEqual(store.load(),before);
+  }
+});

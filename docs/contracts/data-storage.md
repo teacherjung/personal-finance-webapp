@@ -24,11 +24,15 @@
 
 **記得同步這裡**：`store.save()` 是唯一寫入口、每次寫入自動過 `schema.js sanitizeDbForWrite`——枚舉/布林非法值會直接 throw（＝寫入端程式有 bug，考試會抓到），任何新寫入路徑**結構上不可能**繞過驗證牆（七輪審查的病根根治）。新增欄位照舊補 `WRITABLE_FIELDS`/`FIELD_SCHEMA`。
 
+IB 收入的可選 `periodBasis` 與同筆 `from`／`to` 一起驗證：封閉版本與完整真實、有序日期的判準共用 `public/modules/ib-income-period.js`。`sanitizeSettingsDeep` 與備份還原的 `sanitizeSettings` 都剝除不合格標記並回報欄名，不因此丟棄其他收入欄；既有缺標記資料保留未知。合法標記隨同筆收入匯出還原，只是恢復記錄，不代表重新向 IB 核對。一般設定 PUT 不開放 income。兩個消毒器的收入數字欄名共用，`skippedNoCurrency` 沿有限 number 判準保存；非負安全整數是換算層的資格，不收緊舊值的保存政策。直接櫃檯壞數值仍拒收，匯入仍沿原有欄位消毒與錯誤處置。行為題：`test/settings-value-kinds.test.js`、`test/settings-roundtrip.test.js`。
+
 ## 日期與月份的真實日曆判準
 
 **改這裡**：**日期／月份走「真實日曆」判準（`isRealMonth`／`isRealDate`，Codex r3#9）**
 
 **記得同步這裡**：`date`/`datereq`/`month`/`monthreq` 四種型別**共用同一套**，不可各寫一份。以前只驗長相（`\d{4}-\d{2}`），`2026-13`／`2026-99-99`／`2026-02-31` 全都過得了關——後果不是崩潰而是**默默算錯**（月份排序把 `2026-13` 排到 `2026-02` 後面、提醒天數、費用攤提、日線的「找最接近的既有日」全偏掉，畫面上卻一切正常）。閏年用 `Date.UTC` 建構回比對（避開本地時區在月初月底的位移）。服務層的手動輸入（`setBatchMonth`、`importRows` 的 `statementMonth`）也一律改用同一個判準。⚠️ 這是**收緊**：萬一舊資料裡真的躺著一個假日期，下次寫入會在櫃檯 throw（訊息已指出集合/索引/值）——那是刻意的，發現了就把那筆改掉，不要為了它把驗證放寬回去。
+
+日期的 `isRealDate` 實作在零依賴 `public/modules/calendar-date.js`，schema 保留同名 export。抽出不改 Date.UTC 回比、0000–0099 年、月份或 instant 判準；瀏覽器來源期間也直接共用，不另用 Date.parse 猜日期。
 
 ## 必填欄位機制與跨欄不變式
 

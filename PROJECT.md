@@ -48,7 +48,7 @@
    — ①的維護＝**Claude／Codex**；②的實作＝**Codex**（本 repo 的前端＋DB 施工）。
    ⚠️ **工讀生不在這兩件的負責人裡**：他們不進 repo、無 GitHub 權限（見 `docs/project-collaboration.md` 角色表），人也在影片 repo 那條線上。分家改寫時這行只修正了「人在哪」，卻把實作留在他們名下（`Grok 掃 #7`）。
 3. 證券交易 S4 對帳洞察（可選：台新期末持股 vs 投資組合唯讀差異提示） — **未分配**
-4. D5 第二批剩餘：①股息換算 ②大盤基準（皆比③重，②需新增大盤資料源） — **未分配**
+4. D5 第二批：**Codex 施工／Grok 複審**的 [#721 單報表配息參考換算](https://github.com/teacherjung/personal-finance-webapp/pull/721)，範圍與未完成邊界見[施工計畫](docs/dividend-equivalence-plan.md)。月別／逐檔配息與投組對大盤比較仍缺對應來源，有限換算不結清原 D5。
 5. （遠期）電子發票載具 API 即時預算系統（財政部 API，需申請；見「重要決定」） — **未分配**
 
 工具與流程的待辦（不排優先序；開工印待辦 `tools/backlog-touch.js` 只讀 `- ` 開頭的條目；每條＝一句話／放在哪裡／什麼情況下值得做）：

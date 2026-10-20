@@ -83,3 +83,37 @@ test('設定型別｜「送 AI 前先問我一次」這顆開關真的存得起�
   assert.deepEqual(sanitizeSettings({ aiAskBeforeSend: false }), { aiAskBeforeSend: false },
     '★關掉也要存得起來（只驗 true 會漏掉「只認 truthy」那種寫法）');
 });
+
+const recordedIncome = () => ({periodBasis:'ib-flex-single-statement-v1',from:'20260115',to:'20260320',dividends:12.5,paymentInLieu:2,count:1,skippedNoFx:0,skippedNoCurrency:0,estimatedNoFx:0});
+
+for (const mode of ['deep','restore']) test(`收入來源｜${mode} 明確保留合法標記、剝除非法標記且不丟其他收入`, () => {
+  const clean = income => {
+    if (mode==='deep') {const r=sanitizeSettingsDeep({ib:{income}});return {income:r.value.ib.income,bad:r.bad};}
+    const bad=[];const r=sanitizeSettings({ib:{income}},{allowIbSyncFields:true,badOut:bad});return {income:r.ib.income,bad};
+  };
+  const valid=recordedIncome();
+  assert.deepEqual(clean(valid),{income:valid,bad:[]});
+  for (const over of [{periodBasis:'v2'},{periodBasis:null},{from:'202601'},{from:'20260231'},{from:'20260401'},{to:null}]) {
+    const incoming={...recordedIncome(),...over};
+    const expected={...incoming};delete expected.periodBasis;
+    const result=clean(incoming);
+    assert.deepEqual(result.income,expected);
+    assert.deepEqual(result.bad,['ib.income.periodBasis']);
+    assert.ok(Object.hasOwn(incoming,'periodBasis'),'消毒不可修改呼叫者的原物件');
+  }
+  const old=recordedIncome();delete old.periodBasis;
+  assert.deepEqual(clean(old),{income:old,bad:[]});
+  for (const value of ['0',null,Infinity,NaN]) {
+    const incoming={...recordedIncome(),skippedNoCurrency:value};
+    const expected={...incoming};delete expected.skippedNoCurrency;
+    assert.deepEqual(clean(incoming),{income:expected,bad:['ib.income.skippedNoCurrency']});
+  }
+  for (const value of [-1,1.5,0,2]) {
+    const incoming={...recordedIncome(),skippedNoCurrency:value};
+    assert.deepEqual(clean(incoming),{income:incoming,bad:[]});
+  }
+});
+
+test('收入來源｜一般 settings 消毒不能接受收入或來源資格', () => {
+  assert.deepEqual(sanitizeSettings({ib:{income:recordedIncome(),flexQueryId:'synthetic-query'}}),{ib:{flexQueryId:'synthetic-query'}});
+});
