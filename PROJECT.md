@@ -27,6 +27,38 @@
 - **本輪範圍（2026-10-20）**：依 [AGENTS.md 常設原話](AGENTS.md#william-的常設指示)與[本人來源](https://github.com/teacherjung/personal-finance-webapp/pull/725#issuecomment-6285303047)，先完成必要後台修正；其餘待辦隨使用需求逐步承接，不繼續清空清單。有限 LOCAL 保存核對已重現舊表單覆寫未改欄位，本題接法與驗證範圍見[計畫](docs/cashflow-edit-preservation-plan.md)；此指路不代表已合併或所有後台安全。市場卡等畫面與新功能延後，既有停止線及套件分工維持。
   - 入口背景移錄（舊紀錄，非本輪重測）：⚠️ **實測代價**：#417 的 r7–r13 七輪退回全屬這一族；事後窮舉稽核 311 句現況斷言、**58 句站不住**（19%）。；沙盒落點沿革：舊的第二個落點 `test/cross-pr-merge.test.js` 2026-09-18 第 7 步隨舊閘退役。
 
+### 提供掃描的核實與分流（2026-10-20）
+
+使用者提供的 Gemini 文字未附受掃版本；以下核對基準為 `0a52f82cbdc3e902839ebf260735511a31faed5a`。這批只登記待辦，**未修產品程式**；不重啟 Gemini／掃描、手機或 HOSTED 工作線。來源逐項對帳見 [#727](https://github.com/teacherjung/personal-finance-webapp/pull/727)，分類依 [Sol 完整諮詢](https://github.com/teacherjung/personal-finance-webapp/pull/727#issuecomment-6293758167)。
+
+#### 後端：優先處理
+
+- **GS-B01｜市場查詢的錯誤傳遞與參數防護**（原報告 1，已重現）：Express 4 的市場 GET 路由未接 async 錯誤包裝；隔離 HTTP 請求 `symbols[toString]=1` 在報價路由轉字串時丟錯，測試服務退出、連線中斷。落點：`lib/routes/market.js` 的 quotes／cape／realyield 及其路由考題。觸發：已有現行 LOCAL 反例，排後端下一項；修復時保留 auto／insights 的既有降級回應，不把各路錯誤口徑混為一談。CAPE／實質利率僅確認同型裸 async，未量到各自的實際外部失敗。
+
+#### 前端：隨使用需求處理
+
+這裡包含程式防護與資料呈現，並非都屬於外觀微調；依本人前端延後指示保留。若後續證據證明正常資料路徑可造成安全或資料損失，須提出證據再討論提前，不以檔案在前端就認定無害。
+
+- **GS-F01｜投資資料的原型鍵與分層查表防護**（原報告 3，函式層已重現）：異常幣別可污染共用原型；異常分層可讓加總變成字串、持股在主表及列印報表漏列。落點：`public/modules/portfolio-exposure.js` 的 fxExposure、`public/modules/portfolio-state.js`、`public/modules/portfolio-tables.js`、`public/modules/portfolio-report.js`。觸發：處理投資頁資料防護或實際遇到舊資料異常時；當版 schema 枚舉／匯入純驗證拒收本次異常 currency／layer，本次未跑該 HTTP 鏈，未證正常操作可植入，也未查真實資料。
+- **GS-F02｜幣別文字進入 HTML 前補跳脫**（原報告 4，輸出層已重現）：主表、願望清單與列印報表把原始幣別接進 HTML；無事件的合成標記仍原樣保留。落點：`public/modules/portfolio-tables.js` 的價格輸出、`public/modules/portfolio-report.js` 的 fmtPrice0。觸發：處理投資頁文字安全防護時；這是已證輸出防線缺口，不是已證正常輸入可利用的攻擊，也未執行惡意腳本。
+- **GS-F03｜訂閱成本明細容忍缺名稱**（原報告 5，已重現）：缺 name 的合成訂閱通過 pickWritable／validateImportItem 純驗證（未跑 HTTP 落庫），同額比較時 costDetailRows 的 localeCompare 丟錯。落點：`public/modules/subscriptions-model.js`、`public/modules/subscriptions.js` 成本明細入口、`public/modules/subscriptions-report.js` 報表呼叫端及對應考題。觸發：使用成本明細遇錯或安排該頁穩定性修正時；優先補呈現容錯，不自行改成名稱必填、刪舊列或更動攤提公式。
+- **GS-F04｜設定與資產等頁的晚到回應不要干擾新頁／新窗**（原報告 2、6 的剩餘呼叫端）：原碼確認部分保存後無換頁核對而重繪，或讀取完成才開窗。落點：`public/modules/assets.js` 的 openTargets、`public/modules/settings.js` 分類／內轉保存與管理按鈕／體檢入口、`public/modules/settings-store-rules.js` 保存回呼、`public/modules/transactions-import.js` 的 openBatchManager、`public/modules/securities.js` 的 openSecBatches。觸發：使用出現換頁被拉回、關窗後再冒窗或新輸入被蓋時，按具體入口補延遲回應測試再修；這批未逐一完成行為重現，不宣稱全站皆壞。共用 shell 與銀行批次入口不列在此。
+- **GS-F05｜信用卡預覽的關窗、重解析與重複送出保護**（原報告 2、6，合成編排已重現）：等待匯入時兩次觸發送出會送兩次請求；舊完成回呼可清掉替代視窗；改卡重解析後即使已取消仍可重開預覽。落點：`public/modules/transactions-import.js` 的 openStatementPreview、doImport、previewCard onchange。觸發：處理信用卡匯入體驗或資料保存問題時，先補整條 LOCAL 流程測試再修；目前證據是原碼加合成依賴，非原生瀏覽器／真 HTTP 全流程。後端已有 stmtRef 去重，兩次請求不等於已證重複落帳。
+
+#### 需先查證或討論
+
+- **GS-D01｜前端排序鍵防禦候選**（原報告 3）：`public/modules/tx-sort.js` 的 SORTERS 查表會讀原型，但呼叫頁面的排序鍵由固定表頭提供。落點：該模組、`public/modules/transactions.js`、`public/modules/cashflow.js`。觸發：取得正常操作可達的反例，或下次修改共用排序時再評估；不列成已證使用者可觸發的急件。
+- **GS-D02｜後端保費週期標籤防禦候選**（原報告 3 延伸）：`lib/derive.js` 的 cycleLabel 有繼承屬性查表，但正常 premiumCycle 有枚舉限制。落點：該函式、`lib/schema.js` 與提醒考題。觸發：先補合法輸入或可信舊資料可達的反例，再決定修法與優先序；不與已重現的市場路由同列必修。
+- **GS-D03｜開發環境維護／整理**（原報告附帶清單）：分支、工作樹、暫存與 stash 的舊數量不是產品錯誤，也不能直接作刪除依據。落點：本機環境，盤點入口 `tools/tidy-list.js`（套件檔只使用、不改）。觸發：有整理需求時重新唯讀盤點、核對持有人／未提交成果／證據保留及現有整理工作線，再依既有授權辦理；本次不刪除，不把舊數量寫成現況。
+
+#### 不重複列修
+
+- 原報告 2 的「共用 modal-shell 舊 close 直接清新窗」已不符合核對基準：現行有 DOM 身分守衛，對應新窗未存輸入保存題通過。
+- 原報告 6 的「銀行批次管理晚回沒有守衛」已不符合核對基準：現行有頁面、彈窗與開啟序號檢查，初開慢 GET 不接管新窗的題通過。
+- 報告沿用的 favicon 與已刪驗收腳本等例子，以本檔既有完成紀錄為準，不依舊掃描重新開工。
+
+### 既有待辦與交付沿革
+
 - **銀行單筆刪除後讀取恢復**：[#704](https://github.com/teacherjung/personal-finance-webapp/pull/704) 已合併，接續原4／6的單筆殘項，兩態提示及同 id 防重已由本人定案，模組內確認／讀取分離依實際Sol裁示；接法、證據與未涵蓋範圍見[計畫](docs/cashflow-delete-recovery-plan.md)。限定交付及[本人驗收轉述](https://github.com/teacherjung/personal-finance-webapp/pull/704#issuecomment-6247846492)已留痕；批次殘項由[#706](https://github.com/teacherjung/personal-finance-webapp/pull/706)已合併，依[雙域恢復計畫](docs/cashflow-batch-delete-recovery-plan.md)接續，產品推薦按本人授權代選，未冒稱本人實看；外部寫入仍另留。
 
 本人已結束Gemini工作線（[原話](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6249335559)）；下列GN候選與後文Gemini專屬啟用／遷移待辦保留沿革，不再排施工、登記或等待切換。現行Codex實作、Grok複審、掃描跳過；共用隔離與資料保護仍適用Grok正式複審。
