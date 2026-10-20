@@ -5,16 +5,18 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { basename, dirname, join } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { gitEnv } from '../lib/git-env.js';
+import { saveLifecycleFailure } from './helpers/lifecycle-failure-evidence.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OBSERVER = join(ROOT, 'test/helpers/temp-root-lifecycle-observer.js');
 const REPORTER = join(ROOT, 'test/helpers/temp-root-lifecycle-reporter.js');
 const CONTAINED_TEST = '外層限制寫入時仍可載入能力夾具並執行純本地題';
 const CONTAINED_HINT = '；核對 test/scan-fixture-cleanup.test.js 的 contained 判讀與原生反例；在專案根目錄重跑 node --test test/scan-fixture-cleanup.test.js';
+const EVIDENCE_HINT = '；核對 test/scan-fixture-cleanup.test.js 的 verifyLifecycle 與 test/helpers/lifecycle-failure-evidence.js；在專案根目錄重跑 node --test test/scan-fixture-cleanup.test.js';
 const FILES = [
   'test/audit-grok-scan.test.js',
   'test/grok-scan-flow-credentials.test.js',
@@ -68,7 +70,7 @@ function verifyContainedLifecycle(events, skips, temporary, t) {
 
 /** @param {any} result @param {any[]} events @param {string} value
  * @param {{failure: boolean|string, temporary: string, contained?: boolean}} options @param {{diagnostic: (message: string) => void}} t */
-function verifyLifecycle(result, events, value, { failure, temporary, contained = false }, t) {
+function verifyLifecycleResult(result, events, value, { failure, temporary, contained = false }, t) {
   assert.equal(result.signal, null, '正常或故意斷言失敗必須走完收尾，不能被終止');
   const reports = result.report.split('\n').filter((/** @type {string} */ line) => line.trim()).map((/** @type {string} */ line) => JSON.parse(line));
   const summary = reports.filter((/** @type {any} */ e) => e.type === 'test:summary').at(-1);
@@ -120,6 +122,26 @@ function verifyLifecycle(result, events, value, { failure, temporary, contained 
   return { summary, skips, unverifiedReason };
 }
 
+/** @param {any} result @param {any[]} events @param {string} value
+ * @param {{failure: boolean|string, temporary: string, contained?: boolean, captureFailure?: boolean}} options
+ * @param {{diagnostic: (message: string) => void}} t */
+function verifyLifecycle(result, events, value, options, t) {
+  try {
+    return verifyLifecycleResult(result, events, value, options, t);
+  } catch (error) {
+    if (options.captureFailure) {
+      try {
+        const file = saveLifecycleFailure(result, events, error);
+        Object.defineProperty(error, 'lifecycleEvidence', { value: file });
+        t.diagnostic(`生命週期驗證拒收；child code=${result.code} signal=${result.signal}；私有證據 <tmp>/${basename(dirname(file))}/evidence.json` + EVIDENCE_HINT);
+      } catch {
+        t.diagnostic('生命週期失敗證據未能保存，原驗證仍拒收' + EVIDENCE_HINT);
+      }
+    }
+    throw error;
+  }
+}
+
 describe('掃描考題自有夾具的生命週期', { concurrency: 2 }, () => {
   for (const file of FILES) for (const failure of (file.includes('preflight') ? [false, true, 'victim-write']
     : /flow-(repo|redaction)\.test\.js$/.test(file) ? [false, true, 'settings-write'] : [false, true])) {
@@ -145,7 +167,7 @@ describe('掃描考題自有夾具的生命週期', { concurrency: 2 }, () => {
           mode: injected.failureMode, targetRootPresent: injected.targetRootPresent,
           rootObserved: events.some(e => e.root === injected.failureRoot),
         }));
-        const { unverifiedReason } = verifyLifecycle(result, events, value, { failure, temporary, contained: file === 'test/grok-scan-flow-repo.test.js' }, t);
+        const { unverifiedReason } = verifyLifecycle(result, events, value, { failure, temporary, contained: file === 'test/grok-scan-flow-repo.test.js', captureFailure: true }, t);
         if (unverifiedReason) t.skip(unverifiedReason);
         if (file === 'test/grok-scan-flow-repo.test.js') {
           const wrapped = events.find(e => e.testName?.startsWith('正式預設設定：'));
@@ -354,6 +376,108 @@ test(${JSON.stringify(CONTAINED_TEST)}, { skip: mode === 'option' ? 'contained o
       }
       restoreFixtureAccess(scope);
       rmSync(scope, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const mode of ['殘留與內因', '摘要缺失', '終止訊號', '正常完成']) {
+  test(`失敗證據｜${mode}｜保留原因但不放寬原拒收`, async (context) => {
+    const scope = mkdtempSync(join(tmpdir(), 'fixture-evidence-case-'));
+    const temporary = join(scope, 'tmp');
+    mkdirSync(temporary);
+    const log = join(scope, 'created.jsonl');
+    const fixture = join(scope, 'evidence.test.mjs');
+    const marker = 'synthetic-inner-failure-' + randomUUID();
+    const value = randomUUID();
+    writeFileSync(fixture, `import { test, after } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+const root = mkdtempSync(join(tmpdir(), 'evidence-child-'));
+${mode === '殘留與內因' ? '' : 'after(() => rmSync(root, { recursive: true, force: true }));'}
+test('synthetic operation', () => { ${mode === '殘留與內因' ? `throw new Error(${JSON.stringify(marker)});` : 'if (!root) throw new Error("missing root");'} });
+`);
+    const env = { ...gitEnv(), TMPDIR: temporary, TMP: temporary, TEMP: temporary,
+      FIXTURE_LIFECYCLE_SCOPE: temporary, FIXTURE_LIFECYCLE_LOG: log,
+      FIXTURE_LIFECYCLE_FAIL: '0', FIXTURE_LIFECYCLE_CONTROL_VALUE: value };
+    delete env.NODE_TEST_CONTEXT;
+    let events = /** @type {any[]} */ ([]);
+    let evidence;
+    context.after(() => { if (evidence) rmSync(dirname(evidence), { recursive: true, force: true }); });
+    /** @type {string[]} */
+    let observedRoots;
+    const messages = /** @type {string[]} */ ([]);
+    try {
+      const actual = await run(fixture, env);
+      events = readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      observedRoots = events.filter(event => event.root).map(event => event.root);
+      assert.ok(observedRoots.length, '反例先有真 child 建立結果' + EVIDENCE_HINT);
+      const result = mode === '摘要缺失' ? { ...actual, report: '' }
+        : mode === '終止訊號' ? { ...actual, signal: 'SIGTERM' } : actual;
+      const options = { failure: false, temporary, captureFailure: true };
+      const t = { diagnostic: (/** @type {string} */ message) => messages.push(message) };
+      if (mode === '正常完成') {
+        assert.equal(actual.code, 0, '正常 child 須真成功' + EVIDENCE_HINT);
+        verifyLifecycle(result, events, value, options, t);
+        assert.deepEqual(messages, [], '成功不應產生失敗保存提示' + EVIDENCE_HINT);
+      } else {
+        const rejection = mode === '殘留與內因' ? /考題完成後仍留有實際建立的根/
+          : mode === '摘要缺失' ? /官方考題摘要沒有回報/ : /不能被終止/;
+        let caught;
+        try { verifyLifecycle(result, events, value, options, t); } catch (error) { caught = error; }
+        assert.ok(caught instanceof Error && rejection.test(caught.message), '原驗證仍須以原原因拒收' + EVIDENCE_HINT);
+        evidence = /** @type {any} */ (caught).lifecycleEvidence;
+        assert.equal(typeof evidence, 'string', '拒收前須留下可找回的私有證據' + EVIDENCE_HINT);
+        const saved = JSON.parse(readFileSync(evidence, 'utf8'));
+        assert.deepEqual(saved.child, { code: result.code, signal: result.signal }, '退出與訊號須保留傳入終態；終止訊號是合成反例' + EVIDENCE_HINT);
+        assert.equal(saved.output.text, actual.output, '此合成輸出須完整保存' + EVIDENCE_HINT);
+        assert.equal(saved.output.truncated, false, '此合成輸出不得標為截短' + EVIDENCE_HINT);
+        assert.equal(saved.report.text, result.report, '原事件輸出與缺摘要反例須原樣保存' + EVIDENCE_HINT);
+        assert.deepEqual(JSON.parse(saved.events.text), events, '原觀察事件須保存' + EVIDENCE_HINT);
+        assert.deepEqual(JSON.parse(saved.roots.text), observedRoots.map(root => ({ root, exists: existsSync(root) })),
+          '根存在狀態要在 finally 清除之前取得' + EVIDENCE_HINT);
+        assert.equal(lstatSync(evidence).mode & 0o777, 0o600, '證據檔不開放群組或其他使用者讀寫' + EVIDENCE_HINT);
+        assert.equal(lstatSync(dirname(evidence)).mode & 0o777, 0o700, '證據目錄須為本題私有' + EVIDENCE_HINT);
+        if (mode === '殘留與內因') {
+          assert.equal(actual.code, 1, '實際 child 的錯誤不可變成成功' + EVIDENCE_HINT);
+          assert.ok(saved.output.text.includes(marker), '殘留斷言不得遮住原 child 內因' + EVIDENCE_HINT);
+          assert.ok(JSON.parse(saved.roots.text).some((/** @type {any} */ root) => root.exists), '反例須確有清理前殘留' + EVIDENCE_HINT);
+        }
+        assert.equal(messages.length, 1, '本次拒收留一則有界提示' + EVIDENCE_HINT);
+        assert.ok(!messages[0].includes(marker) && !messages[0].includes(scope), '公開提示不印原始 child 內容或本機完整路徑' + EVIDENCE_HINT);
+      }
+    } finally {
+      for (const event of events) if (event.root) {
+        restoreFixtureAccess(event.root);
+        rmSync(event.root, { recursive: true, force: true });
+      }
+      restoreFixtureAccess(scope);
+      rmSync(scope, { recursive: true, force: true });
+    }
+    try {
+      assert.ok(observedRoots.every(root => !existsSync(root)), '驗證後仍清本題夾具' + EVIDENCE_HINT);
+      if (evidence) assert.ok(existsSync(evidence), 'finally 不能連失敗證據一起清掉' + EVIDENCE_HINT);
+    } finally {
+      if (evidence) rmSync(dirname(evidence), { recursive: true, force: true });
+    }
+  });
+}
+
+for (const [kind, text] of [['UTF-8', '合成🙂'.repeat(30_000)], ['JSON 跳脫', '\u0000'.repeat(70_000)]]) {
+  test(`失敗證據｜${kind} 容量截短要明示並保留原始雜湊`, () => {
+    const file = saveLifecycleFailure({ code: 1, signal: null, output: text, report: text }, [], new Error(text));
+    try {
+      const record = JSON.parse(readFileSync(file, 'utf8'));
+      for (const name of ['output', 'report', 'verification']) {
+        const entry = record[name];
+        assert.equal(entry.truncated, true, '超限欄位須明示截短' + EVIDENCE_HINT);
+        assert.ok(Buffer.byteLength(entry.text) <= 64 * 1024 + 3, 'UTF-8 邊界替代字元納入容量限制' + EVIDENCE_HINT);
+      }
+      assert.equal(record.output.bytes, Buffer.byteLength(text), '原始長度不可改成截短後長度' + EVIDENCE_HINT);
+      assert.equal(record.output.sha256, createHash('sha256').update(text).digest('hex'), '雜湊須對原始輸出計算' + EVIDENCE_HINT);
+      assert.ok(readFileSync(file).byteLength < 2 * 1024 * 1024, '有界欄位不得長成無限紀錄' + EVIDENCE_HINT);
+    } finally {
+      rmSync(dirname(file), { recursive: true, force: true });
     }
   });
 }
