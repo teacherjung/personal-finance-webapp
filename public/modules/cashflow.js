@@ -1139,6 +1139,17 @@ function openCashflowForm(tx, accounts = [], all = [], dataRevision = editRevisi
     && cashflowTextKey(x, part) === key).length : 0;
   const sameSummaryCount = tx ? sameTextCount('summary', summaryKey) : 0;
   const sameRemarkCount = tx ? sameTextCount('remark', remarkKey) : 0;
+  // 基準取選項初始化後的實際值，避免舊列後備顯示或預設選項被當成使用者修改。
+  const editableKeys = ['date', 'account', 'amount', 'summary', 'remark'];
+  const classificationKeys = ['type', 'category', 'subcategory'];
+  const payloadValues = data => ({
+    type: data.flow === 'income' ? 'income' : data.flow === 'transfer' ? 'transfer' : 'expense',
+    date: data.date, account: data.account || '', amount: data.amount,
+    category: data.flow === 'transfer' ? '內轉' : (data.category || ''), subcategory: data.subcategory || '',
+    summary: data.summary || '', remark: data.remark || '',
+  });
+  /** @type {Record<string, any>|null} */ let initialValues = null;
+  /** @type {HTMLFormElement|null} */ let mountedForm = null;
   openForm({
     title: tx ? '編輯收支' : '記一筆收支',
     fields: [
@@ -1185,27 +1196,41 @@ function openCashflowForm(tx, accounts = [], all = [], dataRevision = editRevisi
       fillCats(flowSel.value, tx?.category || '', tx?.subcategory || '');
       flowSel.onchange = () => fillCats(flowSel.value, '', '');
       catSel.onchange = () => { subSel.innerHTML = subOptionsFor(flowSel.value, catSel.value, ''); };
+      if (tx) {
+        mountedForm = root.querySelector('#modalForm');
+        const keys = ['flow', 'category', 'subcategory', ...editableKeys];
+        const values = {};
+        for (const key of keys) {
+          const element = mountedForm?.querySelector('#f_' + key);
+          if (!element || !['INPUT', 'SELECT'].includes(element.tagName)) return;
+          const field = /** @type {HTMLInputElement|HTMLSelectElement} */ (element);
+          values[key] = key === 'amount' ? (field.value === '' ? null : Number(field.value)) : field.value;
+        }
+        initialValues = payloadValues(values);
+      }
     },
     onSubmit: async (data) => {
       // 列表重讀不會換掉已開啟表單的欄位，不能因提示消失就准它送回舊值。
       if (tx && dataRevision !== editRevision) {
         throw new Error('資料已更新；請關閉編輯視窗，重新讀取後再編輯。');
       }
-      const flow = data.flow;
-      const type = flow === 'income' ? 'income' : flow === 'transfer' ? 'transfer' : 'expense';
-      /** @type {Record<string, any>} */ const body = {
-        type, date: data.date, account: data.account || '',
-        category: flow === 'transfer' ? '內轉' : (data.category || ''),
-        subcategory: data.subcategory || '', amount: data.amount,
-      };
-      if (!tx || typeof tx.summary === 'string' || data.summary !== description.summary) body.summary = data.summary || '';
-      if (!tx || typeof tx.remark === 'string' || data.remark !== description.note) body.remark = data.remark || '';
+      /** @type {Record<string, any>} */ const body = payloadValues(data);
       if (tx) {
+        if (!initialValues || !mountedForm?.isConnected || document.querySelector('#modalForm') !== mountedForm) {
+          throw new Error('無法確認編輯初值；請關閉編輯視窗，重新讀取後再編輯。');
+        }
+        // 分類是一個語意組，單送子分類會與另一客戶端的金流／父分類混搭。
+        const baseline = initialValues;
+        const classificationChanged = classificationKeys.some(key => body[key] !== baseline[key]);
+        if (!classificationChanged && !(data.applyAll === true && bankKey)) {
+          for (const key of classificationKeys) delete body[key];
+        }
+        for (const key of editableKeys) if (body[key] === baseline[key]) delete body[key];
         // 同類一起改（Q2乙）原子化（護欄 G3）：勾了就把 applyAll 併進 PUT，後端一次寫檔完成編輯（含學習）＋傳播——
         // 不再前端第二次呼叫（原本第二次失敗只能靠 try/catch 補救成「已儲存但套用失敗」的半套用狀態）
-        if (data.applyAll && bankKey) body.applyAll = true;
-        if (data.applySameSummary && data.summary !== description.summary) body.applySameSummary = true;
-        if (data.applySameRemark && data.remark !== description.note) body.applySameRemark = true;
+        if (data.applyAll === true && bankKey) body.applyAll = true;
+        if (data.applySameSummary === true && Object.hasOwn(body, 'summary')) body.applySameSummary = true;
+        if (data.applySameRemark === true && Object.hasOwn(body, 'remark')) body.applySameRemark = true;
         const r = await api('/transactions/' + tx.id, { method: 'PUT', body });   // PUT 會觸發 learnFromBankEdit（銀行交易）＋同鑰匙傳播
         // 舊版服務會靜默略過新欄位；HTTP 200 不代表摘要與備註真的存進去。
         if (!registerCashflowWrite(r, body)) {
