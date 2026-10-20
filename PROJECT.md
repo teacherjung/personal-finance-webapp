@@ -24,6 +24,9 @@
 
 ## 待辦（依優先序；已完結主線的結案紀錄在[完工紀錄](docs/archive/project-completion-log.md)）
 
+- **本輪範圍（2026-10-20）**：依 [AGENTS.md 常設原話](AGENTS.md#william-的常設指示)與[本人來源](https://github.com/teacherjung/personal-finance-webapp/pull/725#issuecomment-6285303047)，先完成必要後台修正；其餘待辦隨使用需求逐步承接，不繼續清空清單。有限 LOCAL 保存核對已重現舊表單覆寫未改欄位，本題接法與驗證範圍見[計畫](docs/cashflow-edit-preservation-plan.md)；此指路不代表已合併或所有後台安全。市場卡等畫面與新功能延後，既有停止線及套件分工維持。
+  - 入口背景移錄（舊紀錄，非本輪重測）：⚠️ **實測代價**：#417 的 r7–r13 七輪退回全屬這一族；事後窮舉稽核 311 句現況斷言、**58 句站不住**（19%）。；沙盒落點沿革：舊的第二個落點 `test/cross-pr-merge.test.js` 2026-09-18 第 7 步隨舊閘退役。
+
 - **銀行單筆刪除後讀取恢復**：[#704](https://github.com/teacherjung/personal-finance-webapp/pull/704) 已合併，接續原4／6的單筆殘項，兩態提示及同 id 防重已由本人定案，模組內確認／讀取分離依實際Sol裁示；接法、證據與未涵蓋範圍見[計畫](docs/cashflow-delete-recovery-plan.md)。限定交付及[本人驗收轉述](https://github.com/teacherjung/personal-finance-webapp/pull/704#issuecomment-6247846492)已留痕；批次殘項由[#706](https://github.com/teacherjung/personal-finance-webapp/pull/706)已合併，依[雙域恢復計畫](docs/cashflow-batch-delete-recovery-plan.md)接續，產品推薦按本人授權代選，未冒稱本人實看；外部寫入仍另留。
 
 本人已結束Gemini工作線（[原話](https://github.com/teacherjung/personal-finance-webapp/pull/702#issuecomment-6249335559)）；下列GN候選與後文Gemini專屬啟用／遷移待辦保留沿革，不再排施工、登記或等待切換。現行Codex實作、Grok複審、掃描跳過；共用隔離與資料保護仍適用Grok正式複審。

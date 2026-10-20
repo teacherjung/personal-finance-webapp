@@ -109,17 +109,17 @@
       完整射程與其餘劃界寫在該檔檔頭，這裡不重抄（抄兩份就會漂）。
     ⚠️ **原始碼不可有控制字元**：例如真的 NUL 會讓 git 當成二進位，GitHub 看不到 diff（#463 與 `test/reminder-thresholds.test.js` 實踩）。
       機械閘＝`test/comment-test-refs.test.js`，只含 `test/` 第一層考題及 `test/helpers/` 第一層 `.js`；`lib/`、`scripts/` 與更深子目錄靠人。不可把規則文案寫得比機械射程寬（Grok 預審 2026-08-16）。
-    ⚠️ **實測代價**：#417 的 r7–r13 七輪退回全屬這一族；事後窮舉稽核 311 句現況斷言、**58 句站不住**（19%）。
 
 11. **spawn git（或會再去 spawn git 的東西）一律清乾淨環境**：`env: gitEnv()`（`lib/git-env.js`）。
 
-    **`GIT_DIR` 一存在，git 就不看 `cwd`**：`git -C` 與子行程的 `cwd` 都失效。連結工作樹 push 時，git 會把它帶進 pre-push 的考題環境；2026-08-09 曾因此讓考題的 `git init` 把共用 `.git/config` 寫成 `bare = true`，主目錄與全部連結樹失去工作樹身分；查核也可能讀錯樹卻回報零違規。病理與證據見 `docs/bare-repo-incident.md`。
+    **`GIT_DIR` 會使 `git -C` 與子行程 `cwd` 失效**，查核可能讀錯樹而假綠。2026-08-09 事故與證據見 `docs/bare-repo-incident.md`。
+
     - **按 `GIT_` 前綴整族清、不列名**：`GIT_CONFIG_COUNT`／`KEY_n`／`VALUE_n` 是 `git -c` 生出來、
       會長的一族（它們能注入 `core.excludesFile` 讓 `--exclude-standard` 靜靜隱藏違規新檔）。
       列舉繞法補不完就要關門。射程與**刻意不清 `HOME`／`PATH` 的理由**寫在 `lib/git-env.js`。
     - **考題裡不要 `git init`**（那正是事故的兇器）。真的需要沙盒 repo：環境一律**從零組**
       （只給 `PATH`／`HOME`），不是「`process.env` 扣掉幾個」，並在檔頭寫出安全宣告
-      ——落點見 `test/worktree-integrity.test.js` 的沙盒節（舊的第二個落點 `test/cross-pr-merge.test.js` 2026-09-18 第 7 步隨舊閘退役；套件考題用的是 E4 的扣法、不是本條的範例）。
+      ——落點見 `test/worktree-integrity.test.js` 的沙盒節（套件考題用的是 E4 的扣法、不是本條的範例）。
     - **shell 另有實作**：`scripts/git-hooks/pre-push`、`mutate.sh`、套件 `templates/pre-push` 不經 Node，各用 `unset` 迴圈清 `GIT_` 整族；該行逐字相同、有題釘住，呼叫執行器的行不在該題射程。`mutate.sh` 靠 `git status` 守門，量錯樹也會假綠。
     - **`gh` 也在射程內**：它會再 spawn git。髒 `GIT_DIR` 可令它失敗；若指向另一個有效 repo，PR 與留言也可能查錯而輸出正常。
     - 每一個呼叫點都要有**行為題**撐著，而且**要兩種**（#463 r1 的教訓）：
@@ -143,6 +143,8 @@
 收到跨 PR 都適用的指示時，收到的那一方當下寫進這一節。
 
 以下日期為 UTC；原話照錄。括號外的背景與解讀依 2026-10-03 經 William 指示採用的交接，與原話分開標示。
+
+- **後台優先｜2026-10-20 UTC**：本人：「我想問一下待辦清單裏面的東西，能不能之後我邊使用理財網頁、邊提出修改的時候，再慢慢邊完成？只有後台的修正先完成就好。」[原話](https://github.com/teacherjung/personal-finance-webapp/pull/725#issuecomment-6285303047)。操作化見 PROJECT.md 本輪範圍。
 
 - **掃描分工沿革**：C42及2026-10-15分工原話見[協作附則](docs/project-collaboration.md#本次分工更新)，已由下一條更新。
 - **現行分工｜2026-10-18 UTC**：「請把相關共同規則與設定也統一成 Codex 實作、Grok 複審，避免其他 Session 之後又照舊設定啟用 Gemini。」掃描跳過；Gemini 線結束。來源及操作見[協作附則](docs/project-collaboration.md#本次分工更新)。
