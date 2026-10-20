@@ -121,12 +121,15 @@ test('投資頁真接線｜渲染與換代都綁上換算，本次輸入不觸�
       view:()=>dom.window.document.getElementById('view'),byId:id=>dom.window.document.getElementById(id),esc:escapeHtml,
       moneyCur:(n,c)=>{formatCalls.push([n,c]);return Math.round(n)+' '+c;},
       todayStr:()=> '2026-10-20',parseLocalDate:s=>new Date(s),currentRouteSeq:()=>route,
+      watchModalRoot:()=>{throw Error('配息題不應開比對窗；核對 portfolio.js 接線，重跑 test/portfolio-dividend-actions.test.js');},
       openForm:unexpected,openInfo:unexpected,openPrintWindow:unexpected,confirmDelete:unexpected,toast:unexpected
     }
   });
   const appUrl=new URL('../public/app.js',import.meta.url).href;
+  const shellUrl=new URL('../public/modules/modal-shell.js',import.meta.url).href;
   const hook=registerHooks({load(url,context,nextLoad){
-    if(url===appUrl) return {format:'module',shortCircuit:true,source:'export const {api,view,byId,esc,moneyCur,todayStr,parseLocalDate,openForm,openInfo,openPrintWindow,confirmDelete,toast,currentRouteSeq}=globalThis.__dividendPageTest;'};
+    if(url===shellUrl) return {format:'module',shortCircuit:true,source:"export const openModalShell=()=>{throw Error('配息題不應開比對窗；核對 portfolio.js 接線，重跑 test/portfolio-dividend-actions.test.js');};"};
+    if(url===appUrl) return {format:'module',shortCircuit:true,source:'export const {api,view,byId,esc,moneyCur,todayStr,parseLocalDate,openForm,openInfo,openPrintWindow,confirmDelete,toast,currentRouteSeq,watchModalRoot}=globalThis.__dividendPageTest;'};
     return nextLoad(url,context);
   }});
   try {

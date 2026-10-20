@@ -291,6 +291,9 @@
 - `public/modules/portfolio-model.js`（門檻單一真相）
 - `public/modules/portfolio-overview.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕
 - `public/modules/portfolio-quotes.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕
+- `public/modules/portfolio-reconciliation-actions.js`
+- `public/modules/portfolio-reconciliation-view.js`
+- `public/modules/portfolio-reconciliation.js`
 - `public/modules/portfolio-remote-actions.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕
 - `public/modules/portfolio-report.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕
 - `public/modules/portfolio-research-actions.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕
@@ -339,6 +342,9 @@
 - `test/portfolio-model.test.js`
 - `test/portfolio-overview.test.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕〔模組分工節點名的 17 支同名考題〕
 - `test/portfolio-quotes.test.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕〔模組分工節點名的 17 支同名考題〕
+- `test/portfolio-reconciliation-actions.test.js`
+- `test/portfolio-reconciliation-view.test.js`
+- `test/portfolio-reconciliation.test.js`
 - `test/portfolio-remote-actions.test.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕〔模組分工節點名的 17 支同名考題〕
 - `test/portfolio-report.test.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕〔模組分工節點名的 17 支同名考題〕
 - `test/portfolio-research-actions.test.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕〔模組分工節點名的 17 支同名考題〕

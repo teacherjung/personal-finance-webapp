@@ -1,12 +1,14 @@
 // @ts-check
 // 投資組合：核心–衛星架構儀表板
 // 頁面順序：紀律檢查 → 幣別曝險 → IB現金流 → 交易摘要 → 持股曝險(區域) → 投資分層 → 持股佔比(圓環) → 持股表 → 願望清單 → CAPE → 投入vs市值 → 個股研究卡
-import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, openInfo, openPrintWindow, confirmDelete, toast, currentRouteSeq } from '../app.js';
+import { api, view, byId, esc, moneyCur, todayStr, parseLocalDate, openForm, openInfo, openPrintWindow, confirmDelete, toast, currentRouteSeq, watchModalRoot } from '../app.js';
 import { buildPortfolioModel } from './portfolio-model.js';
 import { buildPortfolioPageState } from './portfolio-state.js';
 import { buildPortfolioReport } from './portfolio-report.js';
 import { incomeActivityHtml, tradesActivityHtml, dividendActivityHtml } from './portfolio-activity.js';
 import { bindDividendActions } from './portfolio-dividend-actions.js';
+import { openModalShell } from './modal-shell.js';
+import { createPortfolioReconciliationActions } from './portfolio-reconciliation-actions.js';
 import {
   companiesSection,
   disciplineSection,
@@ -49,12 +51,14 @@ const tableFormatters = () => ({ escapeHtml: esc, formatMoney: MONEY, formatPerc
 
 let lineChart = null;
 let portfolioRenderGeneration = 0;
+let disposeReconciliation = () => {};
 
 // 持股表排序（分組內排序，市值/損益/報酬率/佔比）
 let hSortKey = localStorage.getItem('pf_hSortKey') || 'value';
 let hSortDir = localStorage.getItem('pf_hSortDir') || 'desc';
 
 export async function renderPortfolio() {
+  disposeReconciliation();
   const seq = currentRouteSeq();
   const generation = ++portfolioRenderGeneration;
   const isCurrentRoute = () => seq === currentRouteSeq();
@@ -151,6 +155,20 @@ export async function renderPortfolio() {
   `;
 
   bindDividendActions({ income: settings.ib?.income, getElement: byId, isCurrentRender });
+
+  disposeReconciliation = createPortfolioReconciliationActions({
+    holdings, getElement: byId, escapeHtml: esc, openModalShell, watchModalRoot, isCurrentRender,
+    getMediaQuery: () => window.matchMedia('screen and (min-width: 901px)'),
+    onNavigate: callback => {
+      window.addEventListener('hashchange', callback);
+      return () => window.removeEventListener('hashchange', callback);
+    },
+    observeModal: (root, callback) => {
+      const observer = new MutationObserver(callback);
+      observer.observe(root, { childList: true, subtree: true });
+      return () => observer.disconnect();
+    }
+  }).dispose;
 
   // ---- handlers ----
   byId('addHolding').onclick = () => editors.openHolding(null);
