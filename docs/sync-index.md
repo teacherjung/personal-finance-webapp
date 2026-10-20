@@ -86,6 +86,7 @@
 | **淨值日線 `dailyValues`**（D0，每日洞察引擎的地基；使用者定 2026-07-19） | ——完整契約 → [契約：前端功能・淨值日線 dailyValues](contracts/frontend-features.md#淨值日線-dailyvalues) |
 | 估值訊號門檻／檔位（**程式單一真相＝`public/modules/signal-tiers.js`**，D3 抽出） | ——完整契約 → [契約：投資與 SEC・估值訊號門檻檔位](contracts/investment-sec.md#估值訊號門檻檔位) |
 | **每日洞察引擎書籤 `insightState`＋差異引擎**（D3，2026-07-22） | ——完整契約 → [契約：前端功能・每日洞察引擎書籤 insightState](contracts/frontend-features.md#每日洞察引擎書籤-insightstate) |
+| `lib/routes/market.js` 的 quotes／cape／realyield 查詢 | ——完整契約 → [契約：投資與 SEC・市場資料查詢 HTTP 邊界](contracts/investment-sec.md#市場資料查詢-http-邊界) |
 | `settings.signals`（美股自動、區域四市場每月手動） | ——完整契約 → [契約：投資與 SEC・settings-signals](contracts/investment-sec.md#settings-signals) |
 | 支出分類（兩層：分類/子類，**使用者可自訂** 2026-07） | ——完整契約 → [契約：收支記帳與匯入・支出分類兩層與使用者自訂](contracts/income-expense.md#支出分類兩層與使用者自訂) |
 | `lib/statement.js` `CATEGORY_RULES` 關鍵字順序 | ——完整契約 → [契約：收支記帳與匯入・CATEGORY_RULES 關鍵字順序](contracts/income-expense.md#category_rules-關鍵字順序) |

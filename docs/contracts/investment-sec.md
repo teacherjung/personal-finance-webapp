@@ -108,6 +108,12 @@ unref 之後撐不住事件迴圈，迴圈一跑乾就是
 
 **記得同步這裡**：純模組（`regionTier`/`taiwanTier`/`ecyOf`/`computeSignalTiers`/`TIER_LABELS`/`US_RATIO`），前端 `portfolio.js` 估值儀表與後端 `lib/services/insights.js` 跳檔**都 import 這一份**（後端 import `public/modules` 的前例＝categories.js）。改門檻只改這裡一處；**白話文件要跟著對齊**：投資原則規則書（memory）＋標題說明彈窗 `portfolio.js SIGNALS_INFO_HTML`。`portfolio.js` 只保留檔位**顏色**（presentation），label 取自 `TIER_LABELS`。
 
+## 市場資料查詢 HTTP 邊界
+
+**改這裡**：`lib/routes/market.js` 的 quotes／cape／realyield 查詢
+
+**記得同步這裡**：`GET /api/quotes` 依 Express 解析後的 symbols 形狀收缺省、字串 CSV 或單層字串陣列；逐字串拆逗號、trim、移除空項，保留順序。物件、混合／巢狀陣列及其他非字串元素在呼叫服務前回 400 `{error:'請求格式不正確'}`，不可先把物件轉字串；陣列空槽也不可跳過當合法。不加代號字元白名單或改大小寫，去重與數量上限仍由 `lib/services/market-data.js` 負責。三個 GET 的未預期例外走既有 asyncRoute 與 `server.js` 全域錯誤中介，不吞成成功或無資料；這不增加全域錯誤訊息遮罩。報價 null、CAPE／實質利率的 manual fallback，以及 auto／insights 各自的 200 降級口徑保持。正式 HTTP、服務實收參數、拒收前零服務呼叫、例外後存活及合成帳本保存由 `test/market-routes.test.js`、`test/helpers/market-routes-case.js` 驗證；射程與有效突變見[施工計畫](../market-query-errors-plan.md)。
+
 ## settings-signals
 
 **改這裡**：`settings.signals`（美股自動、區域四市場每月手動）

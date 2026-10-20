@@ -256,7 +256,7 @@
 - `lib/pdf-isolate-child.js`（子行程本體）
 - `lib/routes/auth.js`（`authGate`——名額要在它之後才拿）
 - `lib/routes/core.js`（估值訊號 `settings.signals` 的讀寫端點）
-- `lib/routes/market.js`（`/api/cape`／`/api/realyield`）
+- `lib/routes/market.js`（`/api/quotes`／`/api/cape`／`/api/realyield`）
 - `lib/routes/securities.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕〔securityTrades 的 API／UI／資料形狀與直接考題〕
 - `lib/schema.js`（`sanitizeDbForWrite`——**多領域命中**）
 - `lib/secret-fields.js`（`projectSecurityTrade` 機密投影——**與收支、雲端多重命中**）〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕
@@ -321,10 +321,12 @@
 - `test/derive.test.js`
 - `test/fx-sentinel.test.js`（哨兵匯率：三個檔每一處換算都吃設定裡的匯率）
 - `test/heavy-admission.test.js`
+- `test/helpers/market-routes-case.js`
 - `test/ib-cash-freshness.test.js`（IB 同步寫入與 securityTrades 雙寫）
 - `test/ib-parser-money.test.js`
 - `test/ib-sync-integrity.test.js`（IB 同步與匯率的失真守衛：匯率空值／1019 白名單／官方淨值壞值／重複持股）
 - `test/insights.test.js`
+- `test/market-routes.test.js`
 - `test/parse-limits.test.js`
 - `test/portfolio-activity.test.js`〔籃C 補搬點名檔（投資頁前端模組分工座位表＋securityTrades）〕〔模組分工節點名的 17 支同名考題〕
 - `test/portfolio-calculations.test.js`

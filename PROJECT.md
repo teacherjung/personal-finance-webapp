@@ -29,11 +29,11 @@
 
 ### 提供掃描的核實與分流（2026-10-20）
 
-使用者提供的 Gemini 文字未附受掃版本；以下核對基準為 `0a52f82cbdc3e902839ebf260735511a31faed5a`。這批只登記待辦，**未修產品程式**；不重啟 Gemini／掃描、手機或 HOSTED 工作線。來源逐項對帳見 [#727](https://github.com/teacherjung/personal-finance-webapp/pull/727)，分類依 [Sol 完整諮詢](https://github.com/teacherjung/personal-finance-webapp/pull/727#issuecomment-6293758167)。
+使用者提供的 Gemini 文字未附受掃版本；以下核對基準為 `0a52f82cbdc3e902839ebf260735511a31faed5a`。[#727](https://github.com/teacherjung/personal-finance-webapp/pull/727) 僅登記待辦，未修產品程式；後續承接狀態列在各項。不重啟 Gemini／掃描、手機或 HOSTED 工作線。來源逐項對帳見 [#727](https://github.com/teacherjung/personal-finance-webapp/pull/727)，分類依 [Sol 完整諮詢](https://github.com/teacherjung/personal-finance-webapp/pull/727#issuecomment-6293758167)。
 
 #### 後端：優先處理
 
-- **GS-B01｜市場查詢的錯誤傳遞與參數防護**（原報告 1，已重現）：Express 4 的市場 GET 路由未接 async 錯誤包裝；隔離 HTTP 請求 `symbols[toString]=1` 在報價路由轉字串時丟錯，測試服務退出、連線中斷。落點：`lib/routes/market.js` 的 quotes／cape／realyield 及其路由考題。觸發：已有現行 LOCAL 反例，排後端下一項；修復時保留 auto／insights 的既有降級回應，不把各路錯誤口徑混為一談。CAPE／實質利率僅確認同型裸 async，未量到各自的實際外部失敗。
+- **GS-B01｜市場查詢的錯誤傳遞與參數防護**（原報告 1，已重現）：由 [#728](https://github.com/teacherjung/personal-finance-webapp/pull/728) 承接。報價 query 僅接受缺省、字串 CSV 或單層字串陣列，異常形狀在服務前回 400；quotes／cape／realyield 透過既有 asyncRoute 交全域中介。隔離真 HTTP 已驗參數拒收、受控 async reject 後的下一次正常請求、真服務的成功／null／manual 退路與合成帳本保存；auto／insights 的既有 200 降級另有回歸題。落點與證據見[計畫](docs/market-query-errors-plan.md)；合併核收依該支 PR，工具驗證不等於本人實際重啟或實際核心流程驗收。
 
 #### 前端：隨使用需求處理
 
@@ -50,6 +50,7 @@
 - **GS-D01｜前端排序鍵防禦候選**（原報告 3）：`public/modules/tx-sort.js` 的 SORTERS 查表會讀原型，但呼叫頁面的排序鍵由固定表頭提供。落點：該模組、`public/modules/transactions.js`、`public/modules/cashflow.js`。觸發：取得正常操作可達的反例，或下次修改共用排序時再評估；不列成已證使用者可觸發的急件。
 - **GS-D02｜後端保費週期標籤防禦候選**（原報告 3 延伸）：`lib/derive.js` 的 cycleLabel 有繼承屬性查表，但正常 premiumCycle 有枚舉限制。落點：該函式、`lib/schema.js` 與提醒考題。觸發：先補合法輸入或可信舊資料可達的反例，再決定修法與優先序；不與已重現的市場路由同列必修。
 - **GS-D03｜開發環境維護／整理**（原報告附帶清單）：分支、工作樹、暫存與 stash 的舊數量不是產品錯誤，也不能直接作刪除依據。落點：本機環境，盤點入口 `tools/tidy-list.js`（套件檔只使用、不改）。觸發：有整理需求時重新唯讀盤點、核對持有人／未提交成果／證據保留及現有整理工作線，再依既有授權辦理；本次不刪除，不把舊數量寫成現況。
+- **GS-D04｜驗證程序的失敗內因保存**（#728 基線驗證附帶，非 Gemini 原報告）：未改產品的完整推送曾觀察到子程序退出後暫存根仍在，外層 finally 隨後清除；原內因未保存。原樣單檔、有界診斷及一次正常完整重推通過，未重現不等於根因排除。落點：`test/scan-fixture-cleanup.test.js`、`test/helpers/temp-root-lifecycle-reporter.js`。觸發：下次同型失敗或修改此驗證時，保存子行程原始錯誤與根觀察結果，保留既有斷言及清理；不先歸因負載或假紅。本支不擴張修改驗證框架，依 [Sol 技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6295504276) 留待承接。
 
 #### 不重複列修
 
