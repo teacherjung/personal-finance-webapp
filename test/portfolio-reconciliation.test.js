@@ -443,3 +443,39 @@ test('正式入口共用日曆與代號判準，清空初始狀態',()=>{
   session.setReferenceField('date','2023-02-29');
   assert.equal(session.calculate().comparison.kind,'parallel');
 });
+
+test('空白選列的完整參考只要求明確選列', () => {
+  const compare = createReferenceComparison({ isRealDate, normalizePortfolioSymbol });
+  const hint = '核對 portfolio-reconciliation.js 的選列原因；重跑 node --test test/portfolio-reconciliation.test.js';
+  for (const selectedId of ['', ' \t ']) {
+    const input = {
+      holdings: [{ id: 'unique', symbol: 'TEST', quantity: 0.1 }], selectedId,
+      reference: { sourceLabel: '合成來源', scopeLabel: '合成範圍', marketLabel: '合成市場', date: '2024-02-29', symbol: 'TEST', quantity: '0.3', unit: '股' },
+      confirmations: { sameInstrument: true, sameScope: true, sameQuantityDefinition: true },
+    };
+    const result = compare(input);
+    assert.equal(result.kind, 'parallel', hint);
+    assert.equal(result.difference, null, hint);
+    assert.deepEqual(result.reasons, ['selection-required'], hint);
+    input.reference.sourceLabel = '';
+    input.reference.date = '2024-02-30';
+    assert.deepEqual(compare(input).reasons, ['selection-required', 'sourceLabel-required', 'reference-date-invalid'], hint);
+  }
+});
+
+test('非空選列須以原字串唯一識別才檢查代號', () => {
+  const compare = createReferenceComparison({ isRealDate, normalizePortfolioSymbol });
+  const hint = '核對 portfolio-reconciliation.js 的唯一身分及代號資格；重跑 node --test test/portfolio-reconciliation.test.js';
+  for (const mode of ['missing', 'duplicate', 'inherited', 'padded']) {
+    const row = { id: 'unique', symbol: 'TEST', quantity: 0.1 };
+    const holdings = mode === 'duplicate' ? [row, { ...row }] : mode === 'inherited' ? [Object.assign(Object.create({ id: 'unique' }), { symbol: 'TEST', quantity: 0.1 })] : [row];
+    const selectedId = mode === 'missing' ? 'absent' : mode === 'padded' ? ' unique ' : 'unique';
+    const result = compare({ holdings, selectedId,
+      reference: { sourceLabel: '合成來源', scopeLabel: '合成範圍', marketLabel: '合成市場', date: '2024-02-29', symbol: 'TEST', quantity: '0.3', unit: '股' },
+      confirmations: { sameInstrument: true, sameScope: true, sameQuantityDefinition: true },
+    });
+    assert.equal(result.kind, 'parallel', hint);
+    assert.equal(result.difference, null, hint);
+    assert.deepEqual(result.reasons, ['selection-not-unique'], hint);
+  }
+});

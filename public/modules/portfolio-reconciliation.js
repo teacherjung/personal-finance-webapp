@@ -69,7 +69,7 @@ export function createReferenceComparison({ isRealDate, normalizePortfolioSymbol
     const rows = Array.isArray(holdings) ? holdings : [];
     const matches = nonempty(selectedId) ? rows.filter(row => own(row, 'id') === selectedId) : [];
     if (!nonempty(selectedId)) reasons.push('selection-required');
-    if (matches.length !== 1) reasons.push('selection-not-unique');
+    if (nonempty(selectedId) && matches.length !== 1) reasons.push('selection-not-unique');
     const selected = matches.length === 1 ? matches[0] : undefined;
     for (const key of ['sourceLabel', 'scopeLabel', 'marketLabel']) {
       if (!nonempty(own(reference, key))) reasons.push(key + '-required');
@@ -77,8 +77,8 @@ export function createReferenceComparison({ isRealDate, normalizePortfolioSymbol
     const referenceSymbol = own(reference, 'symbol');
     const appSymbol = own(selected, 'symbol');
     const symbolsUsable = nonempty(referenceSymbol) && nonempty(appSymbol);
-    if (!symbolsUsable) reasons.push('symbol-required');
-    if (symbolsUsable && normalizePortfolioSymbol(referenceSymbol) !== normalizePortfolioSymbol(appSymbol)) {
+    if (selected && !symbolsUsable) reasons.push('symbol-required');
+    if (selected && symbolsUsable && normalizePortfolioSymbol(referenceSymbol) !== normalizePortfolioSymbol(appSymbol)) {
       reasons.push('symbol-mismatch');
     }
     const referenceDate = own(reference, 'date');

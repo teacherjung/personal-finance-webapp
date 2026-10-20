@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createReferenceView} from '../public/modules/portfolio-reconciliation-view.js';
-import {snapshotHoldings} from '../public/modules/portfolio-reconciliation.js';
+import {snapshotHoldings, createPortfolioReferenceSession} from '../public/modules/portfolio-reconciliation.js';
 import {createReferenceComparison} from '../public/modules/portfolio-reconciliation.js';
 import {isRealDate} from '../public/modules/calendar-date.js';
 import {normalizePortfolioSymbol} from '../public/modules/portfolio-symbol.js';
@@ -132,4 +132,23 @@ test('真正呈現後輸入保存且未被凍結',()=>{
 test('沒有跳脫工具就明確拒絕',()=>{
   assert.throws(()=>createReferenceView(),/escapeHtml is required/,hint);
   assert.throws(()=>createReferenceView({escapeHtml:null}),/escapeHtml is required/,hint);
+});
+
+test('真session未選列只呈現選取要求且不輸出差額', () => {
+  for (const selectedId of ['', ' \t ']) {
+    const session = createPortfolioReferenceSession([{ id: 'unique', symbol: 'TEST', quantity: 0.1 }]);
+    assert.equal(session.ok, true, hint);
+    assert.equal(session.select(selectedId).ok, true, hint);
+    for (const [key, value] of Object.entries({ sourceLabel: '合成來源', scopeLabel: '合成範圍', marketLabel: '合成市場', date: '2024-02-29', symbol: 'TEST', quantity: '0.3', unit: '股' })) assert.equal(session.setReferenceField(key, value).ok, true, hint);
+    for (const key of ['sameInstrument', 'sameScope', 'sameQuantityDefinition']) assert.equal(session.setConfirmation(key, true).ok, true, hint);
+    const calculated = session.calculate();
+    assert.equal(calculated.ok, true, hint);
+    const state = session.read();
+    assert.equal(state.selectedId, selectedId, hint);
+    assert.deepEqual(state.comparison, calculated.comparison, hint);
+    const html = view.resultHtml({ comparison: state.comparison, reference: state.reference, selected: undefined });
+    assert.ok(html.includes('請明確選取一筆 App 紀錄。'), hint);
+    assert.doesNotMatch(html, /紀錄不存在|身分重複|兩側都需要標的代號|<output\b/, hint);
+    assert.equal((html.match(/<li>/g) || []).length, 1, hint);
+  }
 });
