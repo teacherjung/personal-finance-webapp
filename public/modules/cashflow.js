@@ -352,6 +352,15 @@ async function readCashflowPage(/** @type {RetryFocusJob|null} */ focusJob) {
   cashflowRead = flight;
   if (focusJob && !focusJob.done) { focusJob.flight = flight; focusJob.generation = generation; }
   const current = () => visitIsCurrent(visit) && seq === currentRouteSeq() && generation === renderGeneration;
+  const workspace = currentWorkspace();
+  if (current() && cashflowRead === flight && workspace?.visit === visit) {
+    const notices = workspace.node.querySelectorAll('#cashflowReadError');
+    const notice = notices.length === 1 ? notices[0] : null;
+    const buttons = notice?.querySelectorAll('#retryCashflowRead');
+    const button = /** @type {HTMLButtonElement|null} */ (buttons?.length === 1 ? buttons[0] : null);
+    if (notice?.parentElement === workspace.node && button?.tagName === 'BUTTON'
+      && button.type === 'button' && !button.disabled) button.disabled = true;
+  }
   const saved = renderedState;
   const loading = host.querySelector('.loading');
   const detachedByRouter = saved && saved.route !== seq && saved.node.parentNode === null

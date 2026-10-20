@@ -1953,3 +1953,106 @@ test('年月連選｜空資料只提供目前期間，既有選擇仍唯讀', as
   assert.match(text('.cashflow-empty-state'), /尚無銀行收支/);
   assert.equal(el('#cashflowReadError'), null);
 });
+
+const pendingReadPaths = ['/api/transactions', '/api/accounts', '/api/categories', '/api/income-categories', '/api/transfer-subcategories'];
+function queuePendingReads(fails = false) {
+  const wait = deferred();
+  const values = { '/api/accounts': [], '/api/categories': { 居住: ['房租'] }, '/api/income-categories': { 工作: ['薪資'] }, '/api/transfer-subcategories': [] };
+  for (const path of pendingReadPaths) {
+    if (!endpointQueue.has(path)) endpointQueue.set(path, []);
+    endpointQueue.get(path).push(async () => {
+      const captured = path === '/api/transactions' ? structuredClone(rows) : values[path];
+      await wait.promise;
+      return fails && path === '/api/transactions' ? readError() : json(captured);
+    });
+  }
+  return wait;
+}
+const pendingCheck = '請查 public/modules/cashflow.js 的 readCashflowPage；重跑 node --test test/cashflow-reload.test.js';
+
+for (const method of ['PUT', 'POST']) for (const fails of [false, true]) test(`讀取在途｜儲存${method}後${fails ? '失敗' : '成功'}：等待期間停用原重試鈕`, async () => {
+  const wait = queuePendingReads(fails);
+  try {
+    await submit(method);
+    assert.equal(writes().length, 1);
+    assert.equal(writes()[0].method, method);
+    assert.equal(rows.find(x => x.id === `${serial}-${method === 'PUT' ? 'a' : 'new'}`).amount, 35000);
+    assert.equal(el('#modal-root form'), null);
+    assert.deepEqual(calls.filter(x => x.method === 'GET').map(x => x.path).sort(), [...pendingReadPaths].sort());
+    const notice = el('#cashflowReadError'), button = el('#retryCashflowRead');
+    assert.ok(button);
+    assert.match(notice.textContent, /資料已儲存，畫面尚未更新/);
+    assert.equal(button.disabled, true, pendingCheck);
+    button.click(); button.onclick(); await settle();
+    assert.equal(el('#cashflowReadError'), notice);
+    assert.equal(el('#retryCashflowRead'), button);
+    assert.equal(writes().length, 1);
+    assert.equal(calls.filter(x => x.method === 'GET').length, 5);
+    wait.resolve(); await settle();
+    if (fails) {
+      assert.match(text('#cashflowReadError'), /資料已儲存，畫面尚未更新/);
+      assert.equal(el('#retryCashflowRead').disabled, false, pendingCheck);
+      const before = calls.length;
+      await click('#retryCashflowRead');
+      assert.equal(el('#cashflowReadError'), null);
+      assert.deepEqual(calls.slice(before).map(x => x.path).sort(), [...pendingReadPaths].sort());
+      assert.ok(calls.slice(before).every(x => x.method === 'GET'));
+    } else assert.equal(el('#cashflowReadError'), null);
+    assert.equal(writes().length, 1);
+  } finally { wait.resolve(); await settle(); }
+});
+
+for (const oldFails of [false, true]) test(`讀取在途｜舊讀取${oldFails ? '失敗' : '成功'}晚回不解鎖新讀取`, async () => {
+  const old = queuePendingReads(oldFails), fresh = queuePendingReads();
+  let latest;
+  try {
+    await submit('PUT');
+    assert.equal(writes().length, 1);
+    assert.equal(calls.filter(c => c.method === 'GET').length, 5);
+    const notice = el('#cashflowReadError'), button = el('#retryCashflowRead');
+    assert.ok(notice);
+    assert.equal(button.disabled, true, pendingCheck);
+    latest = renderCashflow(); await settle();
+    assert.equal(calls.filter(c => c.method === 'GET').length, 10);
+    old.resolve(); await settle();
+    assert.equal(el('#cashflowReadError'), notice);
+    assert.equal(el('#retryCashflowRead'), button);
+    assert.equal(button.disabled, true, pendingCheck);
+    assert.doesNotMatch(notice.textContent, /載入失敗/);
+    button.click(); button.onclick(); await settle();
+    assert.equal(calls.filter(c => c.method === 'GET').length, 10);
+    assert.equal(writes().length, 1);
+    fresh.resolve(); await latest;
+    assert.equal(el('#cashflowReadError'), null);
+    assert.equal(writes().length, 1);
+  } finally { old.resolve(); fresh.resolve(); await latest; await settle(); }
+});
+
+for (const kind of ['external', 'duplicate-notice', 'duplicate-button', 'detached-workspace', 'nested-notice', 'wrong-element', 'wrong-type', 'outside-same-id']) test(`讀取在途｜${kind}只操作工作區內合格候選`, async () => {
+  failReads = true; await renderCashflow(); failReads = false;
+  const workspace = el('.cashflow-workspace'), notice = el('#cashflowReadError'), button = el('#retryCashflowRead');
+  assert.ok(notice);
+  assert.equal(button.disabled, false);
+  let other = null;
+  if (kind === 'external') document.body.append(notice);
+  if (kind === 'duplicate-notice') workspace.append(notice.cloneNode(true));
+  if (kind === 'duplicate-button') notice.append(button.cloneNode(true));
+  if (kind === 'detached-workspace') workspace.remove();
+  if (kind === 'nested-notice') { const wrapper = document.createElement('div'); workspace.append(wrapper); wrapper.append(notice); }
+  if (kind === 'wrong-element') { other = document.createElement('span'); other.id = button.id; other.disabled = false; other.type = 'button'; button.replaceWith(other); }
+  if (kind === 'wrong-type') button.type = 'submit';
+  if (kind === 'outside-same-id') { other = notice.cloneNode(true); document.body.append(other); }
+  const before = calls.filter(c => c.method === 'GET').length, wait = queuePendingReads();
+  let pending;
+  try {
+    pending = renderCashflow(); await settle();
+    assert.equal(calls.filter(c => c.method === 'GET').length, before + 5);
+    assert.equal(writes().length, 0);
+    assert.equal(button.disabled, kind === 'outside-same-id', pendingCheck);
+    if (kind === 'wrong-element') assert.equal(other.disabled, false, pendingCheck);
+    if (kind === 'outside-same-id') assert.equal(other.querySelector('button').disabled, false, pendingCheck);
+    if (kind === 'duplicate-notice' || kind === 'duplicate-button') assert.ok([...workspace.querySelectorAll('#retryCashflowRead')].every(b => !b.disabled), pendingCheck);
+    wait.resolve(); await pending;
+    assert.equal(writes().length, 0);
+  } finally { wait.resolve(); await pending; if (notice.parentNode === document.body) notice.remove(); other?.remove(); await settle(); }
+});

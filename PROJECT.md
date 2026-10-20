@@ -97,7 +97,7 @@
 - （CI版本靜態覆蓋，#688 r1第2項及掃描）前瞻Node考題只驗主版下限，沒有排除不支援的23／`test/deploy-config.test.js`／雲端復工或調整CI前瞻版本時，改用既有支援判斷並補有效反例；現行CI的22.23.1與26均在支援範圍，本支不修改部署工作 — **未分配**
 
 - （銀行收支重試焦點，#689 r1 第 3 項）當時鍵盤啟動「重新讀取」後，成功與失敗重繪都移除了原按鈕，jsdom 實測焦點回到 body／`public/modules/cashflow.js`、`test/cashflow-reload.test.js`／已由 [#703](https://github.com/teacherjung/personal-finance-webapp/pull/703) 合併，依[本人定案與施工計畫](docs/cashflow-retry-focus-plan.md)處理重試鈕／成功標題候選及接管取消；[本人驗收轉述](https://github.com/teacherjung/personal-finance-webapp/pull/703#issuecomment-6246732038)只涵蓋該支重試回焦，不擴為全站鍵盤
-- （銀行收支正常寫入的重讀提示，#689 Opus r5 第 1 項）同頁 PUT／POST 成功後自動重讀期間，待更新提示與「重新讀取」可按外觀仍有改善空間／`public/modules/cashflow.js` 的寫入成功與頁內重讀狀態／下次整理讀取狀態，或本人驗收認為妨礙操作時改善；本支僅補正式清單，不改銀行收支程式 — **未分配**。來源：[複審待辦](https://github.com/teacherjung/personal-finance-webapp/pull/689#issuecomment-6162553093)。
+- （銀行收支正常寫入的重讀提示，#689 Opus r5 第 1 項）同頁 PUT／POST 成功後自動重讀期間，待更新提示與「重新讀取」可按外觀仍有改善空間／`public/modules/cashflow.js` 的寫入成功與頁內重讀狀態／由 [#723](https://github.com/teacherjung/personal-finance-webapp/pull/723) 承接現有重試鈕的停用狀態同步；本支施工中，正式核收、合併與驗收階段依該 PR 當版收據。此次不改提示文字、DOM 重建、焦點策略或後端寫入，不代表全部銀行操作或原生驗收完成。來源：[複審待辦](https://github.com/teacherjung/personal-finance-webapp/pull/689#issuecomment-6162553093)。
 
 - （Codex 平台直接量測，2026-10-14 工具登記續項）平台命令 shell、HOME／PATH、shell 選項、匯入函式、預載環境鍵、啟動哨兵及 runtime build 尚無直接收據；依 [GPT‑6.1 Sol 平台量測 A 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/689#issuecomment-6171974004)，本次不新增旁觀 hook 或診斷 wrapper，未量狀態保留／`docs/money-guard-operations.md` 的平台量測界線、實際客戶端與全域接線環境／平台版本或啟動方式變動、出現相反證據，或另行準備出具體隔離量測方案時續作；信任、指紋、canary 與考題 shell 不代替直接量測，前案第③項不標完成 — **未完成，另排**
 
