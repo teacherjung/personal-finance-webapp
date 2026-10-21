@@ -22,3 +22,15 @@ test('專案停用掃描設定讓試探入口在外部命令前拒絕', () => {
   assert.deepEqual(result.lines, ['隔離提供者是「無」：沒有隔離＝不掃，掃描紀錄寫「未執行：無隔離」。']);
   assert.equal(calls, 0);
 });
+
+
+test('Gemini 單輪登記使用原生有效模型與推理命令', () => {
+  const row = settings.reviewers.find(item => item.participant === 'Gemini');
+  assert.ok(settings.participants.some(item => item.id === 'Gemini'));
+  assert.ok(settings.sources.some(item => item.string === 'Gemini CLI'));
+  assert.equal(row.strongest, 'gemini-3.1-pro-preview');
+  assert.equal(row.maxEffort, 'HIGH');
+  assert.equal(row.source, 'Gemini CLI');
+  assert.match(row.command, /scripts\/gemini-review\.js --model \{model\} --effort \{effort\}/u);
+  assert.equal(settings.defaultDivision.reviewer, 'Grok');
+});
