@@ -915,7 +915,7 @@
     "tier": "E（不需驗收）"
    },
    {
-    "pattern": "^scripts/(audit-grok-scan|grok-scan|grok-review|grok-final-reply|grok-disk-snapshots|grok-bump|grok-relay|grok-auth-refresh|grok-sandbox-canary|gemini-auth|gemini-client|gemini-relay|gemini-scan|gemini-review|c6-adversarial)\\.js$",
+    "pattern": "^scripts/(audit-grok-scan|grok-scan|grok-review|grok-final-reply|grok-disk-snapshots|grok-bump|grok-relay|grok-auth-refresh|grok-sandbox-canary|gemini-auth|gemini-client|gemini-relay|gemini-scan|gemini-review|gemini-runtime-observer|gemini-review-evidence|c6-adversarial)\\.js$",
     "tier": "E（不需驗收）"
    },
    {
@@ -1077,10 +1077,31 @@
    "source": "Gemini CLI",
    "launch": "僅在本人另行指定的 PR 使用；#730 單輪授權及原生接法見 docs/project-collaboration.md。先由官方產生器備樹與掛相依捷徑。",
    "command": "node {reviewTree}/scripts/gemini-review.js --model {model} --effort {effort} --review-tree {reviewTree} --mutation-copy {mutationCopy} --prompt-file {promptFile} --out-file {outFile} --change {change} --project {project}",
-   "machine": "原生固定模型、workspace HIGH 設定解析、非命中 MCP 排他名單、停用擴充與 hooks/skills/agents；原生 JSON 完整 response 收件，前後核受審來源與本輪準備設定。",
+   "machine": "原生 CLI 載入前限定本輪信任；公開來源釘值，真 Config、主審請求模型與 HIGH、工具 registry 觀測，工具與 Shell 終態私有旁錄；完整原生 JSON 保留。",
    "promptOnly": "來源唯讀、僅改突變副本、不得讀真資料與憑證或提交合併靠角色提示；Shell 考題可跑任意程式，沒有 OS 隔離，前後相同不能排除中途改回。CLI 自行處理既有登入，未讀認證到模型材料。",
-   "verified": "2026-10-21：0.64.0 公開設定接線核對；真模型、實跑及正式結論按各輪收據，不把先前靜態掃描算作正式通過。",
-   "preflightSha256": "b20c325932d55a3f453dc49a483102ba8def630f51c71b510a4070674ca7bc1e"
+   "verified": "限定驗證與正式輪依 PR 證據；格式受理後仍待人工逐項核收。舊手造 Config 預檢不算真啟動等價證據。",
+   "nativeSources": [
+    {
+     "file": "gemini.js",
+     "sha256": "ab113d84c8f1692fd6c95081366718897876d8664328c7bf0ccf9437d688145f"
+    },
+    {
+     "file": "gemini-Q2GRYIAK.js",
+     "sha256": "7702da31cf099ca3e1d64fd195f15b7726b2c2829ec21e955558eb9dbfba47da"
+    },
+    {
+     "file": "chunk-FLKY6NH5.js",
+     "sha256": "f6a4ddd46350dad40515218069d369aaa0025f194c552400b69925b941098bc8"
+    },
+    {
+     "file": "chunk-NR7L3FXV.js",
+     "sha256": "d566e81b1df8d4d44a91bf7aeea96a58ec0e6c8934fa424315ef060507dcbb8c"
+    },
+    {
+     "file": "chunk-DPNFVVVC.js",
+     "sha256": "dc8e05dd6bdfff42fa29962b9745bd21882564203e30569a7918857d66d726ad"
+    }
+   ]
   }
  ],
  "reviewLaunch": {

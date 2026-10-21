@@ -1,11 +1,12 @@
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import launcher from '../tools/review-launch.js';
-import { nativeSettings, nativeCommand, nativePolicy, parseReply, parseArgs, runReview, reviewGit, nativePreflight, verifyNativeReceipt, sourceSnapshot, requireUnchanged } from '../scripts/gemini-review.js';
+import { nativeSettings, nativeCommand, nativePolicy, parseReply, parseArgs, runReview, reviewGit, sourceSnapshot, requireUnchanged } from '../scripts/gemini-review.js';
 import { injectDirtyGitEnv, assertChildGitEnvClean } from './helpers/dirty-git-env.js';
 
 const MODEL = 'gemini-3.1-pro-preview';
@@ -21,7 +22,7 @@ const metrics = roles => ({ api: {
   totalRequests: Object.values(roles).reduce((sum, item) => sum + item.totalRequests, 0),
   totalErrors: Object.values(roles).reduce((sum, item) => sum + item.totalErrors, 0),
 }, roles });
-const result = (body, models = { [MODEL]: metrics({ main: role() }) }) => ({ status: 0, signal: null, error: undefined, stdout: JSON.stringify({ response: body, stats: { models, tools: { totalCalls: 3 } } }), stderr: 'synthetic diagnostic\n' });
+const result = (body, models = { [MODEL]: metrics({ main: role() }) }) => ({ status: 0, signal: null, error: undefined, stdout: JSON.stringify({ response: body, stats: { models, tools: { totalCalls: 0, totalSuccess: 0, totalFail: 0, byName: {} } } }), stderr: 'synthetic diagnostic\n' });
 const retry = '核對 scripts/gemini-review.js 後跑 node --test test/gemini-review.test.js';
 
 test('完整原生 response 與尾端換行原樣保留', () => {
@@ -83,6 +84,20 @@ function fixture(t) {
   return { args, record, git, tree, mutation, dir };
 }
 
+function fakePreflight(f, models = { [MODEL]: metrics({ main: role() }) }) {
+  return async () => {
+    const bootstrap = join(f.tree, 'source.js');
+    const sha = createHash('sha256').update(readFileSync(bootstrap)).digest('hex');
+    const eventsFile = join(f.dir, 'native-events.jsonl');
+    const events = [{ type: 'installed' }, ...['refreshAuth','initialize','request'].map(stage => ({ type: 'config', stage, configId: 1 }))];
+    for (const [model, row] of Object.entries(models)) for (const [role, count] of Object.entries(row.roles)) {
+      for (let i = 0; i < count.totalRequests; i++) events.push({ type: 'request', model, role, configId: 1 });
+    }
+    writeFileSync(eventsFile, events.map((event, index) => JSON.stringify({ sequence: index + 1, pid: 123, binding: 'synthetic', ...event })).join('\n') + '\n');
+    return { executable: process.execPath, bootstrap, bootstrapSha256: sha, observer: bootstrap, observerSha256: sha, eventsFile, binding: 'synthetic', sources: [] };
+  };
+}
+
 test('正式接線保留輸出與收據、可跑真考題並僅在合成副本操作', async t => {
   const f = fixture(t);
   let called = 0, preflightCalled = 0;
@@ -92,10 +107,12 @@ test('正式接線保留輸出與收據、可跑真考題並僅在合成副本�
       preflightCalled++;
       assert.equal(JSON.parse(readFileSync(join(tree,'.gemini/settings.json'))).modelConfigs.overrides[0].modelConfig.generateContentConfig.thinkingConfig.thinkingLevel, 'HIGH', retry);
       assert.equal(settings.tools.core.includes('run_shell_command'), true, retry);
-      return { version: 'synthetic', thinkingLevelConfigured: 'HIGH' };
+      return fakePreflight(f)();
     },
-    invoke: (_cli, args, cwd) => {
+    invoke: (_cli, args, cwd, trusted) => {
       called++;
+      assert.equal(trusted, true, retry);
+      assert.equal(args[0], '--import', retry);
       assert.equal(cwd, f.tree, retry);
       assert.equal(args[args.indexOf('--model') + 1], MODEL, retry);
       assert.equal(args[args.indexOf('--approval-mode') + 1], 'default', retry);
@@ -115,7 +132,9 @@ test('正式接線保留輸出與收據、可跑真考題並僅在合成副本�
   assert.equal(readFileSync(f.args.outFile, 'utf8'), response, retry);
   const receipt = JSON.parse(readFileSync(f.args.outFile + '.receipt.json'));
   assert.equal(receipt.status, 0); assert.equal(receipt.failure, null);
-  assert.equal(receipt.native.thinkingLevelConfigured, 'HIGH');
+  assert.equal(receipt.native.binding, 'synthetic');
+  assert.equal(receipt.contentAcceptance, 'pending-human-acceptance', retry);
+  assert.equal(JSON.parse(readFileSync(f.args.outFile + '.evidence.json')).status, 'pending-human-acceptance', retry);
   assert.equal(existsSync(join(f.tree,'.gemini')), false, retry);
   assert.equal(readFileSync(join(f.tree, 'source.js'),'utf8'), 'export const value = 7;\n', retry);
 });
@@ -134,7 +153,7 @@ test('送出前拒絕錯版本、缺提示與既有 runtime 配置', async t => 
 test('來源或準備設定被改，保留失敗收據且不寫正式 output', async t => {
   for (const mode of ['source','runtime','exit']) {
     const f = fixture(t); let calls = 0;
-    await assert.rejects(runReview(f.args, { git: f.git, cli: process.execPath, preflight: async () => ({}), invoke: () => {
+    await assert.rejects(runReview(f.args, { git: f.git, cli: process.execPath, preflight: fakePreflight(f), invoke: () => {
       calls++;
       if (mode === 'source') writeFileSync(join(f.tree,'source.js'),'unauthorized\n');
       if (mode === 'runtime') writeFileSync(join(f.tree,'.gemini/settings.json'),'{}\n');
@@ -158,29 +177,6 @@ test('Git 核對與原生子程序在髒環境仍讀對工作樹', () => {
 test('子行程實際環境不含 GIT_ 家族', () => {
   assertChildGitEnvClean(assert, 'Gemini reviewGit', () => reviewGit(ROOT, ['rev-parse','HEAD']));
   assertChildGitEnvClean(assert, 'Gemini nativeCommand', () => nativeCommand(process.execPath, ['-e', "require('node:child_process').spawnSync('git',['status'],{stdio:'inherit'});"], ROOT));
-});
-
-test('原生有效收據綁定本輪，缺欄、錯 HEAD／設定／CLI 拒收', () => {
-  const expected = { head: HEAD, launchSha256: 'launch', settingsSha256: 'settings', cliSha256: 'cli', model: MODEL, sentinel: 'no-server' };
-  const receipt = { ...expected, version: '0.64.0', thinkingLevelConfigured: 'HIGH', mcpNoConfiguredMatch: true, tools: ['glob','grep_search','list_directory','read_file','replace','run_shell_command','write_file'], bundles: [{},{}] };
-  assert.equal(verifyNativeReceipt(receipt, expected), receipt, retry);
-  for (const key of Object.keys(expected)) {
-    const missing = { ...receipt }; delete missing[key];
-    assert.throws(() => verifyNativeReceipt(missing, expected), /未綁定/u, retry);
-    assert.throws(() => verifyNativeReceipt({ ...receipt, [key]: 'different' }, expected), /未綁定/u, retry);
-  }
-  assert.throws(() => verifyNativeReceipt({ ...receipt, thinkingLevelConfigured: 'LOW' }, expected), /未確認/u, retry);
-  assert.throws(() => verifyNativeReceipt({ ...receipt, mcpNoConfiguredMatch: false }, expected), /未確認/u, retry);
-  assert.throws(() => verifyNativeReceipt({ ...receipt, tools: [] }, expected), retry);
-});
-
-test('缺少或未核的外置 preflight 不執行', async t => {
-  const f = fixture(t);
-  await assert.rejects(nativePreflight(process.execPath, f.tree, nativeSettings(MODEL,'HIGH'), MODEL, 'no-server'), /ENOENT/u, retry);
-  const marker = join(f.dir, 'ran.txt');
-  writeFileSync(join(f.dir, 'native-preflight.mjs'), `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(marker)},'unexpected');`);
-  await assert.rejects(nativePreflight(process.execPath, f.tree, nativeSettings(MODEL,'HIGH'), MODEL, 'no-server'), /不是已核來源/u, retry);
-  assert.equal(existsSync(marker), false, retry);
 });
 
 test('子程序清 NODE_TEST_CONTEXT，父程序標誌仍保留', () => {
@@ -211,7 +207,7 @@ test('不同二進位來源即使解碼相同也拒收', async t => {
   writeFileSync(file, first);
   await assert.rejects(runReview(f.args, {
     git: (cwd, args) => args[0] === 'ls-files' ? 'synthetic.bin\0' : f.git(cwd, args),
-    cli: process.execPath, preflight: async () => ({}),
+    cli: process.execPath, preflight: fakePreflight(f),
     invoke: () => { writeFileSync(file, second); return result(response); },
   }), /未授權變動/u, retry);
   assert.equal(existsSync(f.args.outFile), false, retry);
@@ -223,7 +219,7 @@ test('官方範本原文可送完整入口，固定正文改字在模型前拒�
   const f = fixture(t);
   assert.deepEqual(readFileSync(join(f.tree, 'templates/review-request.md')), readFileSync(templateFile), retry);
   let calls = 0;
-  const options = { git: f.git, cli: process.execPath, preflight: async () => ({}), invoke: () => { calls++; return result(response); } };
+  const options = { git: f.git, cli: process.execPath, preflight: fakePreflight(f), invoke: () => { calls++; return result(response); } };
   await runReview(f.args, options);
   assert.equal(calls, 1, retry);
   assert.equal(readFileSync(f.args.outFile, 'utf8'), response, retry);
@@ -247,7 +243,7 @@ test('完整入口按 main 與已核循環偵測分列模型觀測', async t => 
   ]) {
     const f = fixture(t); let calls = 0;
     const r = result(response, models);
-    await runReview(f.args, { git: f.git, cli: process.execPath, preflight: async () => ({}), invoke: () => { calls++; return r; } });
+    await runReview(f.args, { git: f.git, cli: process.execPath, preflight: fakePreflight(f, models), invoke: () => { calls++; return r; } });
     assert.equal(calls, 1, retry);
     assert.equal(readFileSync(f.args.outFile, 'utf8'), response, retry);
     const receipt = JSON.parse(readFileSync(f.args.outFile + '.receipt.json'));
@@ -287,11 +283,39 @@ test('完整入口拒收錯主審、未知角色及未歸屬請求', async t => 
   for (const [name, models] of cases) {
     const f = fixture(t); let calls = 0;
     const r = result(response, models);
-    await assert.rejects(runReview(f.args, { git: f.git, cli: process.execPath, preflight: async () => ({}), invoke: () => { calls++; return r; } }), /模型|角色|計數|歸屬/u, name + '；' + retry);
+    await assert.rejects(runReview(f.args, { git: f.git, cli: process.execPath, preflight: fakePreflight(f), invoke: () => { calls++; return r; } }), /模型|角色|計數|歸屬/u, name + '；' + retry);
     assert.equal(calls, 1, name + '；' + retry);
     assert.equal(existsSync(f.args.outFile), false, name + '；' + retry);
     const receipt = JSON.parse(readFileSync(f.args.outFile + '.receipt.json'));
     assert.ok(receipt.failure, name + '；' + retry);
     assert.equal(readFileSync(f.args.outFile + '.stdout.json', 'utf8'), r.stdout, name + '；' + retry);
+  }
+});
+
+test('信任旗標只在正式子程序早設，不改父程序或一般命令', () => {
+  const before = process.env.GEMINI_CLI_TRUST_WORKSPACE;
+  const r = nativeCommand(process.execPath, ['-p', 'process.env.GEMINI_CLI_TRUST_WORKSPACE'], ROOT, true);
+  assert.equal(r.status, 0, retry); assert.equal(r.stdout.trim(), 'true', retry);
+  assert.equal(process.env.GEMINI_CLI_TRUST_WORKSPACE, before, retry);
+});
+
+test('缺失或矛盾旁錄使完整入口拒收，原生回覆仍保留', async t => {
+  for (const mode of ['missing', 'partial', 'count']) {
+    const f = fixture(t);
+    await assert.rejects(runReview(f.args, {
+      git: f.git, cli: process.execPath, preflight: fakePreflight(f), invoke: () => {
+        const file = join(f.dir, 'native-events.jsonl');
+        if (mode === 'missing') rmSync(file);
+        if (mode === 'partial') writeFileSync(file, readFileSync(file, 'utf8').trimEnd());
+        if (mode === 'count') {
+          const lines = readFileSync(file, 'utf8').trimEnd().split('\n');
+          lines.pop(); writeFileSync(file, lines.join('\n') + '\n');
+        }
+        return result(response);
+      },
+    }), /ENOENT|尾端|請求旁錄/u, retry);
+    assert.equal(existsSync(f.args.outFile), false, retry);
+    assert.equal(readFileSync(f.args.outFile + '.stdout.json', 'utf8'), result(response).stdout, retry);
+    assert.ok(JSON.parse(readFileSync(f.args.outFile + '.receipt.json')).failure, retry);
   }
 });

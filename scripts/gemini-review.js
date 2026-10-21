@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // @ts-check
 // 原生 CLI 的完整 response 才是送件本文；程序成功不代替正式結論與 F7。
-import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -9,6 +8,8 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { gitEnv } from '../lib/git-env.js';
 import { isMainModule } from '../lib/is-main.js';
 import { promptValues, publicReply } from './grok-review.js';
+import { TOOL_OUTPUT_CHARS } from './gemini-runtime-observer.js';
+import { prepareNativeObserver, reconcileEvidence, verifyObserverSources } from './gemini-review-evidence.js';
 
 const MODEL = 'gemini-3.1-pro-preview';
 const HELP = 'scripts/gemini-review.js：核對 launch.json 與本輪設定後，重跑 node scripts/gemini-review.js --model <model> --effort <effort> --review-tree <tree> --mutation-copy <mutation> --prompt-file <prompt> --out-file <output> --change <PR> --project <repo>';
@@ -21,10 +22,11 @@ const readBytes = file => {
 const read = file => readBytes(file).toString('utf8');
 const save = (file, text) => writeFileSync(file, text, { flag: 'wx', mode: 0o600 });
 
-export function nativeCommand(command, args, cwd) {
+export function nativeCommand(command, args, cwd, trusted = false) {
   const env = gitEnv();
   // node:test 的父程序標誌會使子考題被當成遞迴呼叫而跳過。
   delete env.NODE_TEST_CONTEXT;
+  if (trusted) env.GEMINI_CLI_TRUST_WORKSPACE = 'true';
   return spawnSync(command, args, { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 }
 
@@ -37,7 +39,7 @@ export function reviewGit(cwd, args) {
 export function nativeSettings(model, effort) {
   requireThat(model === MODEL && effort === 'HIGH', '模型或推理不在本輪登記');
   return {
-    tools: { core: ['list_directory', 'read_file', 'grep_search', 'glob', 'replace', 'write_file', 'run_shell_command'], allowed: [], discoveryCommand: '', callCommand: '', useRipgrep: false },
+    tools: { core: ['list_directory', 'read_file', 'grep_search', 'glob', 'replace', 'write_file', 'run_shell_command'], allowed: [], discoveryCommand: '', callCommand: '', useRipgrep: false, truncateToolOutputThreshold: TOOL_OUTPUT_CHARS },
     skills: { enabled: false }, hooksConfig: { enabled: false },
     experimental: { enableAgents: false, autoMemory: false, extensionReloading: false, extensionConfig: false },
     context: { fileName: 'GEMINI.md', includeDirectoryTree: false, loadMemoryFromIncludeDirectories: false, includeDirectories: [], memoryBoundaryMarkers: [] },
@@ -143,48 +145,12 @@ export function prepare(args, git = reviewGit) {
   const values = promptValues(read(join(reviewTree, 'templates/review-request.md')), prompt);
   for (const [key, value] of Object.entries({ project, change: String(change), reviewer: 'Gemini', source: 'Gemini CLI', head: record.head, headShort: record.head.slice(0, 7), base: record.base, round: String(record.round), reviewTree, mutationCopy })) requireThat(values[key] === value, 'F3 提示與本輪正式紀錄不符');
   requireThat(values.implementer !== 'Gemini', '實作與複審角色不分離');
-  for (const suffix of ['', '.stdout.json', '.stderr', '.receipt.json']) requireThat(!existsSync(outFile + suffix), '本輪輸出已存在');
+  for (const suffix of ['', '.stdout.json', '.stderr', '.receipt.json', '.evidence.json']) requireThat(!existsSync(outFile + suffix), '本輪輸出已存在');
   requireThat(!existsSync(join(reviewTree, '.gemini')), '審查樹已有 Gemini 配置，不能覆寫');
   return { record, settings, prompt, folder };
 }
 
-export function verifyNativeReceipt(receipt, expected) {
-  for (const [key, value] of Object.entries(expected)) requireThat(receipt[key] === value, '原生 preflight 收據未綁定本輪資料');
-  requireThat(receipt.version === '0.64.0' && receipt.thinkingLevelConfigured === 'HIGH' && receipt.mcpNoConfiguredMatch === true, '原生有效設定未確認');
-  assert.deepEqual(receipt.tools, ['glob', 'list_directory', 'read_file', 'replace', 'run_shell_command', 'grep_search', 'write_file'].sort());
-  requireThat(Array.isArray(receipt.bundles) && receipt.bundles.length === 2, '原生公開 bundle 收據不完整');
-  return receipt;
-}
-
-// 每輪外置核查只讀原生公開設定 API；入口核其實際執行結果，不以手填聲明放行。
-export async function nativePreflight(cli, tree, settings, model, sentinel) {
-  const folder = dirname(tree);
-  const script = join(folder, 'native-preflight.mjs');
-  const scriptSha256 = hash(read(script));
-  const registration = JSON.parse(read(join(tree, 'settings.json'))).reviewers.find(item => item.participant === 'Gemini');
-  requireThat(registration?.preflightSha256 === scriptSha256, '外置 preflight 不是已核來源');
-  const resultFile = join(folder, 'native-preflight.result.json');
-  requireThat(!existsSync(resultFile), '本輪原生 preflight 結果已存在');
-  const configFile = join(tree, '.gemini', 'settings.json');
-  const launchFile = join(folder, 'launch.json');
-  const record = JSON.parse(read(launchFile));
-  assert.deepEqual(JSON.parse(read(configFile)), settings);
-  const expected = { head: record.head, launchSha256: hash(read(launchFile)), settingsSha256: hash(read(configFile)), cliSha256: hash(read(realpathSync(cli))), model, sentinel };
-  const r = nativeCommand(process.execPath, [script, tree, realpathSync(cli), model, sentinel], tree);
-  save(join(folder, 'native-preflight.stdout.json'), r.stdout ?? '');
-  save(join(folder, 'native-preflight.stderr'), r.stderr ?? '');
-  requireThat(!r.error && r.status === 0 && !r.signal, '本輪原生 preflight 執行失敗');
-  const receipt = verifyNativeReceipt(JSON.parse(read(resultFile)), expected);
-  const bundleDir = dirname(realpathSync(cli));
-  for (const item of receipt.bundles) {
-    requireThat(dirname(realpathSync(item.path)) === bundleDir && /^chunk-[A-Za-z0-9]+\.js$/u.test(item.path.split('/').at(-1)), '原生 bundle 來源不在已核 CLI');
-    requireThat(hash(read(item.path)) === item.sha256, '原生 bundle 已移動');
-  }
-  requireThat(hash(read(script)) === scriptSha256, '本輪外置 preflight 來源有變動');
-  return { ...receipt, scriptSha256 };
-}
-
-export async function runReview(args, { git = reviewGit, invoke = nativeCommand, preflight = nativePreflight, cli = undefined } = {}) {
+export async function runReview(args, { git = reviewGit, invoke = nativeCommand, preflight = prepareNativeObserver, cli = undefined } = {}) {
   const p = prepare(args, git);
   const { reviewTree, mutationCopy, outFile, model } = args;
   const executable = cli ?? (process.env.PATH ?? '').split(delimiter).map(dir => join(dir, 'gemini')).find(file => existsSync(file));
@@ -198,16 +164,19 @@ export async function runReview(args, { git = reviewGit, invoke = nativeCommand,
   const policyText = nativePolicy();
   const sentinel = 'finance-no-server-' + randomUUID();
   const startedAt = new Date().toISOString();
-  let result, received, native, failure;
+  let result, received, native, evidence, failure;
   const commandArgs = ['--skip-trust', '--approval-mode', 'default', '--model', model, '-e', 'none', '--allowed-mcp-server-names', sentinel, '--include-directories', mutationCopy, '--policy', policyFile, '--output-format', 'json', '-p', p.prompt];
   try {
     save(configFile, settingsText); save(policyFile, policyText);
     native = await preflight(executable, reviewTree, p.settings, model, sentinel);
-    result = invoke(executable, commandArgs, reviewTree);
+    result = invoke(process.execPath, ['--import', native.bootstrap, native.executable, ...commandArgs], reviewTree, true);
     save(outFile + '.stdout.json', result.stdout ?? ''); save(outFile + '.stderr', result.stderr ?? '');
     requireUnchanged(before, sourceSnapshot(reviewTree, git));
     requireUnchanged(settingsText, read(configFile)); requireUnchanged(policyText, read(policyFile));
     received = parseReply(result.stdout, result, p.record, model);
+    verifyObserverSources(native);
+    evidence = reconcileEvidence(read(native.eventsFile), JSON.parse(result.stdout).stats, native.binding);
+    save(outFile + '.evidence.json', JSON.stringify(evidence, null, 2) + '\n');
   } catch (error) { failure = error; }
   finally {
     // 只收掉本輪建立且仍相同的普通檔；未知產物交回操作者，不遞迴刪目錄。
@@ -217,12 +186,12 @@ export async function runReview(args, { git = reviewGit, invoke = nativeCommand,
       unlinkSync(configFile); rmdirSync(runtime);
       requireThat(git(reviewTree, ['status', '--porcelain', '--untracked-files=all']) === '', '審查樹有未知產物');
     } catch (error) { failure ??= error; }
-    save(outFile + '.receipt.json', JSON.stringify({ startedAt, finishedAt: new Date().toISOString(), record: p.record, cli: executable, args: commandArgs, native, status: result?.status ?? null, signal: result?.signal ?? null, error: result?.error?.message ?? null, failure: failure?.message ?? null, sourceBefore: before, preparedRuntime: [{ path: configFile, sha256: hash(settingsText) }], policySha256: hash(policyText), promptSha256: hash(p.prompt), responseSha256: received ? hash(received.response) : null, observedModels: received?.models ?? [], mainModel: received?.mainModel ?? null, auxiliaryRoles: received?.auxiliaryRoles ?? [], toolStats: received?.tools ?? null, promptOnly: '審查樹唯讀與突變目的地靠提示及前後核對；不是 OS 隔離，也不能證明中途未改回。' }, null, 2) + '\n');
+    save(outFile + '.receipt.json', JSON.stringify({ startedAt, finishedAt: new Date().toISOString(), record: p.record, contentAcceptance: 'pending-human-acceptance', evidenceSha256: evidence ? hash(JSON.stringify(evidence, null, 2) + '\n') : null, cli: executable, args: commandArgs, native, status: result?.status ?? null, signal: result?.signal ?? null, error: result?.error?.message ?? null, failure: failure?.message ?? null, sourceBefore: before, preparedRuntime: [{ path: configFile, sha256: hash(settingsText) }], policySha256: hash(policyText), promptSha256: hash(p.prompt), responseSha256: received ? hash(received.response) : null, observedModels: received?.models ?? [], mainModel: received?.mainModel ?? null, auxiliaryRoles: received?.auxiliaryRoles ?? [], toolStats: received?.tools ?? null, promptOnly: '審查樹唯讀與突變目的地靠提示及前後核對；不是 OS 隔離，也不能證明中途未改回。' }, null, 2) + '\n');
   }
   if (failure) throw failure;
   if (!received) throw new Error(`未收到完整正式回覆；${HELP}`);
   save(outFile, received.response);
-  return { output: outFile, receipt: outFile + '.receipt.json' };
+  return { output: outFile, receipt: outFile + '.receipt.json', contentAcceptance: 'pending-human-acceptance' };
 }
 
 export function parseArgs(argv) {
