@@ -5,7 +5,7 @@
 // ——2026-09-13 端到端實際發生過（在真家目錄埋假機密約十次）。目前靠「在空白設定的複本裡跑指令入口」
 // （tests/helpers/kit-copy.js）與複審守著，沒有機器保證；這一題就是那個機器。
 //
-// 做法：在暫存目錄搭一份套件複本，設定**每一欄都填成假的**——對外的指令（平台動作、合併指令、三關、隔離前綴）
+// 做法：在暫存目錄搭一份套件複本，設定**每一欄都填成假的**——對外的指令（平台動作、合併指令、三關）
 // 換成只記錄、退 97 的錄音機，禁區與家目錄換成暫存目錄，PATH 最前面放一個只記錄的假 gh——整份考卷跑一遍。
 // 要：全綠、錄音機零次、禁區與家目錄**零寫入**。對照組：同一份假設定直接跑一支工具，錄音機要真的記到（證明設定填得夠滿、
 // 錄音機真的在錄）。
@@ -51,7 +51,7 @@ const ROOT_DIRS = ['tools', 'tests', 'templates'];   // cases/ 刻意不帶（�
 const recorder = (log, tag) => [process.execPath, '-e', `require('fs').appendFileSync(${JSON.stringify(log)}, ${JSON.stringify(tag)} + ' ' + process.argv.slice(1).join(' ') + '\\n'); process.exit(97)`];
 
 /** 從空白設定出發，每一欄填成假的（形狀不變，settings.test ⑨ 盯著形狀）。 */
-function fakeFilled({ log, box, zones }) {
+function fakeFilled({ log }) {
   const s = unfilled();
   s.participants = s.participants.map((p, i) => ({ ...p, id: ['Boss', 'Alpha', 'Beta'][i] || `Extra${i}`, account: i === 0 ? 'boss-acct' : 'ai-acct' }));
   s.sources = [{ tool: '假的 CLI', string: 'CLI' }];
@@ -59,14 +59,14 @@ function fakeFilled({ log, box, zones }) {
   s.mainBranch = 'main';
   s.defaultDivision = { implementer: 'Alpha', reviewer: 'Beta' };
   s.owner = 'Boss';
-  s.scanner = { tool: '假的掃描者', assignedBy: 'Alpha', tieBreak: '無', fallback: '無', strongest: '假的最強', maxEffort: '假的最高', isolation: { provider: '專案自建', lender: '未設定', wrap: [...recorder(log, 'isolation'), '{box}'], boxRoot: box, forbidden: zones } };
+  s.scanner = { participant: 'Alpha', tool: '假的掃描者', assignedBy: 'Alpha', tieBreak: '無', fallback: '無', strongest: '假的最強', maxEffort: '假的最高', source: 'CLI', command: '假的掃描指令 {model} {effort} {scanTree} {promptFile} {outFile}' };
   s.platform = {
     name: 'Fake', project: 'fake/repo', clearEnv: ['GH_REPO'],
     operations: Object.fromEntries(Object.entries(OPERATIONS).map(([name, op]) => [name, [...recorder(log, `op:${name}`), ...op.params.map((p) => `{${p}}`)]])),
   };
   // 禁區清單：從空白範本的預設名單出發、再疊上假的（2026-09-27 起範本帶預設；tests/forbidden-defaults.test.js 要求專案 ⊇ 預設，
   // 巢狀那一輪也要過，而且它在那一輪才真的跑到比對）。預設裡的連接器登記名與工具名只是字串、只進 decide() 比對，
-  // 這一輪不會呼叫任何工具——錄音機零次與零寫入的斷言照樣釘著（它們釘的是平台動作、合併、三關、隔離、gh，不是這一塊）
+  // 這一輪不會呼叫任何工具——錄音機零次與零寫入的斷言照樣釘著（它們釘的是平台動作、合併、三關、gh，不是這一塊）
   const fb = s.forbidden;
   s.forbidden = { ...fb, name: '錢', servers: [...fb.servers, 'broker-x'], safeServers: [...fb.safeServers, 'other'], deny: [...fb.deny, 'mcp__o__x'] };
   s.acceptance = { tiers: [{ id: '重', action: '重啟' }, { id: '輕', action: '看一眼' }], families: [{ pattern: '^lib/', tier: '重' }, { pattern: '^docs/', tier: '輕' }], unknownTier: '重' };
@@ -91,17 +91,16 @@ test('整份考卷在「每一欄都填了假值」的設定底下跑：全綠�
     const copy = path.join(scratch, 'kit');
     const home = path.join(scratch, 'home');
     const bin = path.join(scratch, 'bin');
-    const box = path.join(scratch, 'box');
     const zones = [path.join(scratch, 'zone-a'), path.join(scratch, 'zone-b')];
     const log = path.join(scratch, 'outside-calls.log');
-    for (const d of [copy, home, bin, box, ...zones]) fs.mkdirSync(d, { recursive: true });
+    for (const d of [copy, home, bin, ...zones]) fs.mkdirSync(d, { recursive: true });
     // 修改時間設成過去的固定值：之後在第一層新增或刪除任何一筆都會把它改成「現在」
     const PAST = new Date('2001-02-03T04:05:06Z');
     const watched = [...zones, home];
     const stamp = (d) => fs.statSync(d).mtimeMs;
     for (const d of ROOT_DIRS) fs.cpSync(path.join(ROOT, d), path.join(copy, d), { recursive: true });
     for (const f of ROOT_FILES) fs.copyFileSync(path.join(ROOT, f), path.join(copy, f));
-    const settings = fakeFilled({ log, box, zones });
+    const settings = fakeFilled({ log });
     fs.writeFileSync(path.join(copy, 'settings.json'), `${JSON.stringify(settings, null, 1)}\n`);
     for (const { file, patterns } of settings.ignoreLists) fs.writeFileSync(path.join(copy, file), `${patterns.join('\n')}\n`);
     fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\necho "gh $*" >> ${JSON.stringify(log)}\nexit 97\n`, { mode: 0o755 });
@@ -115,28 +114,30 @@ test('整份考卷在「每一欄都填了假值」的設定底下跑：全綠�
     assert.deepEqual(settings.machines.filter((m) => m.name === CASEBOOK).map((m) => m.state), ['未移植'], '前提：複本把案例簿登記成不帶');
     const build = sh([process.execPath, 'tools/build-settings.js']);
     assert.equal(build.status, 0, `前提：假設定產得出設定說明（${build.stderr}）`);
-    for (const step of [['git', 'init', '-q'], ['git', 'add', '-A']]) assert.equal(sh(step).status, 0, `前提：複本要是版本控制目錄（git ${step[1]}）`);
+    for (const step of [['git', 'init', '-q'], ['git', 'config', 'maintenance.auto', 'false'], ['git', 'config', 'gc.auto', '0'], ['git', 'add', '-A']]) assert.equal(sh(step).status, 0, `前提：複本要是版本控制目錄（git ${step[1]}）`);
     assert.deepEqual(settings.machines.filter((m) => m.name === KIT_LOCK).map((m) => m.state), ['已啟用'], '前提：複本把共用檔清單登記成帶（使用專案的樣子）');
     const kitSrc = path.join(scratch, 'kit-src');
     fs.mkdirSync(kitSrc);
     for (const p of SHARED_PATHS) if (fs.existsSync(path.join(copy, p))) fs.cpSync(path.join(copy, p), path.join(kitSrc, p), { recursive: true });
     const inKit = (args) => spawnSync('git', args, { cwd: kitSrc, env: { ...env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' }, encoding: 'utf8' });
     fs.writeFileSync(path.join(kitSrc, 'settings.json'), '{"mainBranch":"main"}\n');
-    for (const step of [['init', '-q'], ['add', '-A'], ['commit', '-q', '-m', 'kit'], ['update-ref', 'refs/remotes/origin/main', 'HEAD']]) assert.equal(inKit(step).status, 0, `前提：假套件倉庫 git ${step[0]}`);
+    for (const step of [['init', '-q'], ['config', 'maintenance.auto', 'false'], ['config', 'gc.auto', '0'], ['add', '-A'], ['commit', '-q', '-m', 'kit'], ['update-ref', 'refs/remotes/origin/main', 'HEAD']]) assert.equal(inKit(step).status, 0, `前提：假套件倉庫 git ${step[0]}`);
     const kitVersion = inKit(['rev-parse', 'HEAD']).stdout.trim();
     const lockRun = sh([process.execPath, 'tools/kit-lock.js', '--write', '--kit', kitSrc, '--version', kitVersion, '--repo', 'acct/kit', '--date', '2026-09-29']);
     assert.equal(lockRun.status, 0, `前提：複本寫得出共用檔清單（${lockRun.stdout}${lockRun.stderr}）`);
     assert.ok(fs.existsSync(path.join(copy, LOCK_FILE)), '前提：複本有共用檔清單');
 
     for (const d of watched) fs.utimesSync(d, PAST, PAST);
-    // 報告格式固定成 spec：下面數跳過原因靠的是報告文字（裁示批 r1 T1：換成別的格式會假紅）
-    const r = sh([process.execPath, '--test', '--test-reporter=spec']);
+    // 報告格式固定成 spec：下面數跳過原因靠的是報告文字（裁示批 r1 T1：換成別的格式會假紅）；
+    // 巢狀並行度設在 2〜4（雲端 2 核心 runner 預設 availableParallelism()-1＝1 會退化成全序列，本機多核兩題巢狀同時跑預設又會起太多子行程互搶）
+    const nestedConcurrency = Math.max(2, Math.min(4, Math.ceil((typeof os.availableParallelism === 'function' ? os.availableParallelism() : 4) / 2)));
+    const r = sh([process.execPath, '--test', `--test-concurrency=${nestedConcurrency}`, '--test-reporter=spec']);
     const failing = r.stdout.split('\n').filter((l) => /^✖|^not ok/u.test(l)).slice(0, 12).join('\n');
     assert.equal(r.status, 0, `填了假設定的整份考卷不是全綠：\n${failing}`);
     const skippedCasebook = r.stdout.split(NOT_CARRIED_REASON).length - 1;
     assert.equal(skippedCasebook, 5, `巢狀那一輪要走「不帶案例簿」那條路：五題跳過、各寫一次原因（實際 ${skippedCasebook} 次）`);
     const calls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim() : '';
-    assert.equal(calls, '', `有考題照設定去叫了外面（平台、合併、三關、隔離或 gh）：\n${calls.split('\n').slice(0, 8).join('\n')}`);
+    assert.equal(calls, '', `有考題照設定去叫了外面（平台、合併、三關或 gh）：\n${calls.split('\n').slice(0, 8).join('\n')}`);
     for (const d of watched) {
       const name = d === home ? '家目錄' : `禁區 ${path.basename(d)}`;
       assert.deepEqual(fs.readdirSync(d), [], `${name}被留下了東西`);

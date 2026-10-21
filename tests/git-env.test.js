@@ -51,6 +51,13 @@ test('整份考卷帶著指向誘餌倉庫的 GIT_DIR 跑：全綠，而且誘�
   // 沒清環境，就寫進真倉庫（套件倉庫的案例簿 bare-repo-incident；公開紀錄＝personal-finance-webapp #435）。這裡把真倉庫換成誘餌。
   const files = fs.readdirSync(__dirname).filter((f) => f.endsWith('.test.js') && f !== path.basename(__filename)).sort();
   assert.ok(files.length >= 20, `只找到 ${files.length} 支考題：這一題自己的前提變了`);
+  const testPaths = files.map((f) => path.join(__dirname, f));
+  const kitOnlyDir = path.join(__dirname, '..', 'kit-only');
+  if (fs.existsSync(kitOnlyDir)) {
+    for (const f of fs.readdirSync(kitOnlyDir).filter((n) => n.endsWith('.test.js')).sort()) {
+      testPaths.push(path.join(kitOnlyDir, f));
+    }
+  }
   const decoy = fs.mkdtempSync(path.join(os.tmpdir(), 'git-decoy-'));
   try {
     // 誘餌要是「主倉庫＋一棵連結工作樹」、GIT_DIR 指向那棵樹的 gitdir：事故就是這個形狀——git 看 GIT_DIR 結尾
@@ -67,7 +74,8 @@ test('整份考卷帶著指向誘餌倉庫的 GIT_DIR 跑：全綠，而且誘�
     const before = snapshot(path.join(decoy, '.git'));
     const env = { ...gitEnv(), GIT_DIR: linkedGitDir, KIT_NESTED_SUITE: '1' };   // 巢狀整卷裡另一題整卷重跑的那題標成跳過
     delete env.NODE_TEST_CONTEXT;   // 不拿掉的話子行程的 node --test 不管紅不紅都退 0
-    const r = spawnSync(process.execPath, ['--test', ...files.map((f) => path.join(__dirname, f))], { cwd: path.join(__dirname, '..'), env, encoding: 'utf8' });
+    const nestedConcurrency = Math.max(2, Math.min(4, Math.ceil((typeof os.availableParallelism === 'function' ? os.availableParallelism() : 4) / 2)));
+    const r = spawnSync(process.execPath, ['--test', `--test-concurrency=${nestedConcurrency}`, ...testPaths], { cwd: path.join(__dirname, '..'), env, encoding: 'utf8' });
     assert.equal(r.status, 0, `帶著別的倉庫的 GIT_DIR，考卷不是全綠：\n${r.stdout.split('\n').filter((l) => /^\s*not ok|^✖/u.test(l)).slice(0, 10).join('\n')}`);
     assert.deepEqual(snapshot(path.join(decoy, '.git')), before, '誘餌倉庫被寫了：有考題（或它叫的工具）叫 git 時沒清環境');
   } finally {

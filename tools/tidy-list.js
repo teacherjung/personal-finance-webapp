@@ -21,7 +21,7 @@
 //     （預設 1 天＝24 小時）的資料夾。它本身是或底下有登記在這個倉庫的工作樹（歸②判；只比登記的路徑，.git 讀不讀得到都一樣）、
 //     這個倉庫的 git 目錄、目前所在這棵樹、core.worktree 指的主工作目錄（git 目錄另存時 git 的工作樹清單第一筆是 git 目錄、不是實際的主工作目錄）、
 //     往下兩層裡有 .git 指回這個倉庫 git 目錄的樹（理財 #672 r5 第 2 條）、
-//     往下兩層裡別的倉庫的樹上鎖、讀不了狀態、有沒提交的改動、或有資料夾讀不了（判斷不了就保守不列），整個資料夾不列
+//     往下兩層裡別的倉庫的樹上鎖、讀不了狀態、有沒提交的改動、還沒進那個倉庫主幹、或有資料夾讀不了（判斷不了就保守不列），整個資料夾不列
 //     （送審產生器的布局是 review-…/tree、review-…/mutation，容器本身不是樹）。
 //   ④stash：每一筆都列、附建立的日期；stash 整個倉庫共用，誰的都在這裡。
 // 主幹：--main 給的（先找 origin/<名字>、確定沒有才找本機同名分支；查的時候出錯或被殺掉＝退 2，不默默換一個主幹），
@@ -128,6 +128,23 @@ function isAncestor(cwd, a, b) {
 /** 參照的短名：只拿掉固定前綴（refs/heads/、refs/remotes/）。不用 git 的 :short——有同名標籤時它會回 heads/main 這種（#73 r1 R3）。 */
 const shortRef = (ref) => ref.replace(/^refs\/(?:heads|remotes)\//u, '');
 
+/** 當 git status 退 128（not a git repository）時，看這棵樹是不是被系統清掉檔案後只剩空資料夾的空殼（裡面沒有任何一般檔案或連結）。 */
+function isEmptySkeleton(dir) {
+  const queue = [dir];
+  let visited = 0;
+  while (queue.length) {
+    if (++visited > 200) return false;
+    const cur = queue.shift();
+    const kids = read('readdirSync', cur, { withFileTypes: true });
+    if (!kids.ok) return false;
+    for (const k of kids.value) {
+      if (k.isDirectory() && !k.isSymbolicLink()) queue.push(path.join(cur, k.name));
+      else return false;
+    }
+  }
+  return true;
+}
+
 /**
  * 一棵樹的狀態（不搶鎖、不寫索引）：回 { ok：讀得完整，dirty：有沒提交的改動（含沒追蹤的檔），why：讀不完整的理由 }。
  * 退 0 不夠：git 讀不了某個沒追蹤的子資料夾時照樣退 0、輸出空的，只在 stderr 印警告（#73 r4 R1）——stderr 有字＝讀不完整＝判斷不了。
@@ -138,7 +155,10 @@ function treeStatus(dir) {
     if (e instanceof TidyError) return { ok: false, dirty: false, why: e.message };   // 進不去那個資料夾（權限）＝讀不了狀態，不讓整支停
     throw e;
   }
-  if (r.status !== 0) return { ok: false, dirty: false, why: `git status 退 ${r.status === null ? '（被殺掉）' : r.status}：${firstLine(r.stderr) || '（沒有訊息）'}` };
+  if (r.status !== 0) {
+    const emptyNote = r.status === 128 && isEmptySkeleton(dir) ? '（空殼目錄：裡面已無任何檔案）' : '';
+    return { ok: false, dirty: false, why: `git status 退 ${r.status === null ? '（被殺掉）' : r.status}：${firstLine(r.stderr) || '（沒有訊息）'}${emptyNote}` };
+  }
   if ((r.stderr || '').trim()) return { ok: false, dirty: false, why: `git status 印了警告「${firstLine(r.stderr)}」` };
   return { ok: true, dirty: r.stdout.trim() !== '' };
 }
@@ -268,11 +288,34 @@ function staleWorktrees(cwd, main, branches, trees, unsure, mainDir) {
   return out;
 }
 
+/** 別的倉庫登記的工作樹（.git 是檔案、指到別的倉庫）：看它的 HEAD 在不在那個倉庫的主幹歷史裡（先 origin/main、再本機 main），還沒進主幹的不列。 */
+function otherTreeMerged(d) {
+  let otherMain = null;
+  for (const ref of ['refs/remotes/origin/main', 'refs/heads/main']) {
+    let r;
+    try { r = git(d, ['--no-optional-locks', 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { allowFail: true }); } catch (e) {
+      if (e instanceof TidyError) return { unsure: e.message };
+      throw e;
+    }
+    if ((r.stderr || '').trim()) return { unsure: `找那棵樹的主幹時 git 印了警告「${firstLine(r.stderr)}」` };
+    if (r.status === 0) { otherMain = ref; break; }
+    if (r.status !== 1) return { unsure: `找那棵樹的主幹（${shortRef(ref)}）退 ${r.status === null ? '（被殺掉）' : r.status}` };
+  }
+  if (!otherMain) return { unsure: '找不到那棵樹的主幹（試過 origin/main、main）' };
+  let anc;
+  try { anc = isAncestor(d, 'HEAD', otherMain); } catch (e) {
+    if (e instanceof TidyError) return { unsure: e.message };
+    throw e;
+  }
+  if (anc && anc.unsure) return { unsure: anc.unsure };
+  return { merged: Boolean(anc) };
+}
+
 /**
  * 暫存資料夾的候選能不能當成「可以收」（#73 r1 R1、r2 R1、r3 R1）。確定有人在用回 { busy }、判斷不了回 { unsure }，可以收回 null：
  *   ①它本身就是、或底下（任何深度）有這個倉庫登記的工作樹＝歸②判，整個不列。只比登記的路徑，不看 .git 讀不讀得到
  *     （.git 被移走或讀不了時，登記與鎖都還在）。
- *   ②它自己與往下 TREE_DEPTH 層裡，別的倉庫或獨立倉庫的樹：上鎖、讀不了狀態、有沒提交的改動＝不列；找到一棵樹就不往它裡面走、捷徑不跟。
+ *   ②它自己與往下 TREE_DEPTH 層裡，別的倉庫或獨立倉庫的樹：上鎖、讀不了狀態、有沒提交的改動、或別的倉庫的工作樹還沒進那個倉庫主幹＝不列；找到一棵樹就不往它裡面走、捷徑不跟。
  *   ③走的時候有資料夾讀不了、或 .git 判斷不了（不是「不存在」的錯）＝判斷不了，保守不列。
  * 送審產生器的布局是 review-…/tree、review-…/mutation，容器本身不是樹，所以只比完全相同的路徑不夠。
  */
@@ -304,6 +347,11 @@ function protectedInside(dir, own, gitDir) {
       const s = treeStatus(d);
       if (!s.ok) return { unsure: `裡面有讀不了完整狀態的樹（${d}：${s.why}）` };
       if (s.dirty) return { busy: `裡面有沒提交改動的樹（${d}）` };
+      if (g.value.isFile()) {
+        const om = otherTreeMerged(d);
+        if (om.unsure) return { unsure: `裡面有讀不了完整狀態的樹（${d}：${om.unsure}）` };
+        if (!om.merged) return { busy: `裡面有別的倉庫還沒進主幹的樹（${d}）` };
+      }
       continue;
     }
     if (depth >= TREE_DEPTH) continue;

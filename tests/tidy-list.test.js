@@ -11,7 +11,7 @@
 //   ④暫存資料夾：名字帶審查字眼、或前後是分隔符號的 PR 編號與輪次、超過天數的資料夾＝列；mkdtemp 亂數尾巴碰巧長得像
 //     （「-PR9PKV」「-pr1xld」）、不像的名字、沒超過天數（剛好等於也不算）、不是資料夾（檔案、捷徑）、登記在這個倉庫的工作樹＝不列；
 //     兩個暫存資料夾其實是同一個只算一次、不存在的跳過；
-//     裝著樹的資料夾：這個倉庫登記的工作樹（乾淨、上鎖、有改動都一樣）、別的倉庫或獨立倉庫有改動、上鎖、讀不了狀態的＝不列，乾淨沒上鎖的照列；
+//     裝著樹的資料夾：這個倉庫登記的工作樹（乾淨、上鎖、有改動都一樣）、別的倉庫或獨立倉庫有改動、上鎖、還沒進主幹、讀不了狀態的＝不列，乾淨、沒上鎖且已進主幹的照列；
 //     登記過的樹 .git 被移走或資料夾讀不了＝照樣不列（只比登記的路徑）；別的資料夾裡有讀不了的子資料夾＝判斷不了、保守不列；
 //   ⑤stash 每一筆列出來、附日期與說明；②③④⑤每一題跑預設與 --list 兩次，前後所有參照、stash、工作樹登記、每棵工作樹的工作檔內容
 //     （含沒提交的改動與沒追蹤的檔）、暫存資料夾第一層的名字與修改時間、底下每個檔的內容都不變（只列不刪）；
@@ -66,6 +66,7 @@ function repo() {
   const g = (...args) => sh(dir, ...args);
   g('init', '-q', '-b', 'main');
   g('config', 'maintenance.auto', 'false');
+  g('config', 'gc.auto', '0');
   g('remote', 'add', 'origin', remote);
   const commit = (file, text, msg) => { fs.writeFileSync(path.join(dir, file), text); g('add', '-A'); g('commit', '-q', '-m', msg); return g('rev-parse', 'HEAD'); };
   commit('a.txt', 'a\n', 'one');
@@ -254,7 +255,7 @@ test('④暫存資料夾：名字像審查樹而且超過天數的資料夾才�
     r.g('worktree', 'add', '-q', '--detach', path.join(tmpA, 'review-registered'), 'HEAD');
     fs.utimesSync(path.join(tmpA, 'review-registered'), old, old);
     // 裝著樹的容器（#73 r1 R1；送審產生器的布局 review-…/tree、review-…/mutation）：
-    //   這個倉庫登記的（乾淨、上鎖、有改動都一樣歸②）→ 不列；別的倉庫的樹或獨立倉庫：有改動、上鎖、讀不了 → 不列；乾淨沒上鎖 → 照列
+    //   這個倉庫登記的（乾淨、上鎖、有改動都一樣歸②）→ 不列；別的倉庫的樹或獨立倉庫：有改動、上鎖、還沒進主幹、讀不了 → 不列；乾淨、沒上鎖且已進主幹 → 照列
     const nest = (n) => { fs.mkdirSync(path.join(tmpA, n)); return path.join(tmpA, n, 'tree'); };
     r.g('worktree', 'add', '-q', '--detach', nest('review-own-clean'), 'HEAD');
     r.g('worktree', 'add', '-q', '--detach', nest('review-own-locked'), 'HEAD');
@@ -268,12 +269,18 @@ test('④暫存資料夾：名字像審查樹而且超過天數的資料夾才�
       other.g('worktree', 'add', '-q', '--detach', nest('review-other-locked'), 'HEAD');
       other.g('worktree', 'lock', path.join(tmpA, 'review-other-locked', 'tree'));
       other.g('worktree', 'add', '-q', '--detach', nest('review-other-clean'), 'HEAD');
+      other.g('switch', '-q', '-c', 'other-side');
+      const otherSideTip = other.commit('other-side.txt', 'unmerged\n', 'other side work');
+      other.g('switch', '-q', 'main');
+      other.g('worktree', 'add', '-q', '--detach', nest('review-other-unmerged'), otherSideTip);
       fs.mkdirSync(path.join(tmpA, 'review-standalone-dirty'));
       sh(path.join(tmpA, 'review-standalone-dirty'), 'init', '-q');
       fs.writeFileSync(path.join(tmpA, 'review-standalone-dirty', 'new.txt'), 'x\n');
       fs.mkdirSync(path.join(tmpA, 'review-broken'));
       fs.writeFileSync(path.join(tmpA, 'review-broken', '.git'), `gitdir: ${path.join(r.base, 'no-such-gitdir')}\n`);
-      for (const n of ['review-own-clean', 'review-own-locked', 'review-own-dirty', 'review-other-dirty', 'review-other-locked', 'review-other-clean', 'review-standalone-dirty', 'review-broken']) fs.utimesSync(path.join(tmpA, n), old, old);
+      fs.mkdirSync(path.join(tmpA, 'review-skeleton', 'tree', '.git', 'objects'), { recursive: true });
+      fs.mkdirSync(path.join(tmpA, 'review-skeleton', 'tree', '.git', 'refs'), { recursive: true });
+      for (const n of ['review-own-clean', 'review-own-locked', 'review-own-dirty', 'review-other-dirty', 'review-other-locked', 'review-other-clean', 'review-other-unmerged', 'review-standalone-dirty', 'review-broken', 'review-skeleton']) fs.utimesSync(path.join(tmpA, n), old, old);
       // 看狀態不寫別人的索引：工作檔內容不變、只換修改時間，一般的 git status 會順手重寫索引；這裡要用不搶鎖的讀法、索引一個位元組都不動
       const cleanTree = path.join(tmpA, 'review-other-clean', 'tree');
       const later = (NOW + DAY) / 1000;
@@ -284,14 +291,17 @@ test('④暫存資料夾：名字像審查樹而且超過天數的資料夾才�
       const nested = runKeeping(r, { settings: SETTINGS, cwd: r.dir, now: NOW, argv: ['--tmp', tmpA] }, [tmpA]);
       assert.equal(fs.statSync(indexFile).mtimeMs + ':' + fs.readFileSync(indexFile).toString('base64'), indexBefore, '別的倉庫那棵樹的索引沒被寫');
       const got = nested.tmp.map((x) => path.basename(x.dir));
-      for (const n of ['review-own-clean', 'review-own-locked', 'review-own-dirty', 'review-other-dirty', 'review-other-locked', 'review-standalone-dirty', 'review-broken', 'review-registered']) assert.ok(!got.includes(n), `${n} 不該列：${got.join('、')}`);
-      assert.ok(got.includes('review-other-clean'), '別的倉庫乾淨、沒上鎖的樹照列');
-      // 確定有人在用（上鎖、有改動、這個倉庫登記的）跟判斷不了是兩回事：前者不進「判斷不了」那一欄
+      for (const n of ['review-own-clean', 'review-own-locked', 'review-own-dirty', 'review-other-dirty', 'review-other-locked', 'review-other-unmerged', 'review-standalone-dirty', 'review-broken', 'review-skeleton', 'review-registered']) assert.ok(!got.includes(n), `${n} 不該列：${got.join('、')}`);
+      assert.ok(got.includes('review-other-clean'), '別的倉庫乾淨、沒上鎖且已進主幹的樹照列');
+      // 確定有人在用（上鎖、有改動、還沒進主幹、這個倉庫登記的）跟判斷不了是兩回事：前者不進「判斷不了」那一欄
       const unsureNames = nested.unsure.map((x) => path.basename(x.dir));
-      for (const n of ['review-own-clean', 'review-own-locked', 'review-own-dirty', 'review-other-dirty', 'review-other-locked', 'review-standalone-dirty']) assert.ok(!unsureNames.includes(n), `${n} 是確定在用、不是判斷不了：${unsureNames.join('、')}`);
+      for (const n of ['review-own-clean', 'review-own-locked', 'review-own-dirty', 'review-other-dirty', 'review-other-locked', 'review-other-unmerged', 'review-standalone-dirty']) assert.ok(!unsureNames.includes(n), `${n} 是確定在用、不是判斷不了：${unsureNames.join('、')}`);
       assert.ok(unsureNames.includes('review-broken'), '.git 指到不存在處的那一棵讀不了狀態＝判斷不了');
+      assert.ok(unsureNames.includes('review-skeleton'), '系統清掉檔案後只剩空 .git 目錄的空殼＝判斷不了');
+      const skelEntry = nested.unsure.find((x) => path.basename(x.dir) === 'review-skeleton');
+      assert.match(skelEntry.why, /空殼目錄：裡面已無任何檔案/u, '空殼目錄要在原因標明裡面已無任何檔案');
       assert.ok(fs.existsSync(path.join(tmpA, 'review-own-dirty', 'tree', 'only-here.txt')), '沒提交的內容還在');
-      for (const n of ['review-own-clean', 'review-own-locked', 'review-own-dirty', 'review-other-dirty', 'review-other-locked', 'review-other-clean', 'review-standalone-dirty', 'review-broken']) fs.rmSync(path.join(tmpA, n), { recursive: true, force: true });
+      for (const n of ['review-own-clean', 'review-own-locked', 'review-own-dirty', 'review-other-dirty', 'review-other-locked', 'review-other-clean', 'review-other-unmerged', 'review-standalone-dirty', 'review-broken', 'review-skeleton']) fs.rmSync(path.join(tmpA, n), { recursive: true, force: true });
       r.g('worktree', 'prune'); other.g('worktree', 'prune');
     } finally { other.cleanup(); }
     // 登記過的樹 .git 被移走、或資料夾讀不了（#73 r2 R1）：登記與鎖都還在，照樣不列——只比登記的路徑，不靠 .git 讀不讀得到；

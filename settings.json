@@ -134,19 +134,15 @@
  },
  "mainBranch": "main",
  "scanner": {
+  "participant": "無",
   "tool": "無",
   "assignedBy": "無掃描發射者：William 2026-10-18 結束 Gemini 工作線，指定 Codex 實作、Grok 複審；本人原話與停止範圍見 docs/project-collaboration.md「本次分工更新」。",
   "tieBreak": "未登記掃描者，不適用發射者選擇；不得依舊設定、部署或資格收據自行恢復。",
   "fallback": "實作者（RULES G3、G4）：第一次有效正式通過後，記「未執行：本人已取消 Gemini 工作線，目前未登記掃描者」，核當版通過後轉正式。不以 Grok 複審充當掃描，不另開替代掃描。",
   "strongest": "未設定",
   "maxEffort": "未設定",
-  "isolation": {
-   "provider": "無",
-   "wrap": [],
-   "boxRoot": "未設定",
-   "forbidden": [],
-   "lender": "未設定"
-  }
+  "source": "未設定",
+  "command": "未設定"
  },
  "platform": {
   "name": "GitHub",
@@ -1323,18 +1319,6 @@
    "rules": "E6",
    "state": "已啟用",
    "verified": "2026-09-15"
-  },
-  {
-   "name": "掃描前試探（禁區各埋一個假機密，從盒內試讀試寫；隔離本身由專案設定指定誰提供）",
-   "rules": "G2",
-   "state": "已啟用",
-   "verified": ""
-  },
-  {
-   "name": "掃描後比對（假機密與未給盒子的真值不得出現在回覆、日誌、檔名）",
-   "rules": "G2",
-   "state": "已啟用",
-   "verified": ""
   },
   {
    "name": "合併閘登記對帳題（磁碟上的閘 vs 設定登記的閘）",

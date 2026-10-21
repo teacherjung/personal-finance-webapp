@@ -1,10 +1,10 @@
 // 守待裁清單（規矩 D1、I1〜I3）。它不是閘；它讓裁示者與 AI 都不必翻留言串就知道還欠哪些答案。
 //
-// 守得到的：
+// 邊界與原因：
 //   ①問裁示者的三種留痕只認範本的形狀：問／裁示／撤回；日期要是真的日子（驗收留痕見⑭）；
 //   ②裁示要由裁示者的帳號貼、要有原話那一行；別人貼的、缺原話的＝疑似，不關題；
 //   ③撤回要有三選一的理由（附依據）與自報句；缺一＝疑似；
-//   ④配對：裁示或撤回要引到原 ❓ 的留言編號、在引用區塊以外、而且比 ❓ 晚；引在引用區塊裡不算；先貼的不算；
+//   ④配對：裁示或撤回要引到原 ❓ 的留言編號、在引用區塊以外、而且比 ❓ 晚；開頭那一段若有帶錨點的網址只認第一個網址錨點（忽略後續網址與裸編號），純數字編號不認裸寫；引在引用區塊裡不算；先貼的不算；
 //   ⑤已裁與已撤回一定印出來、附配對；長得像但形狀不合＝疑似；
 //   ⑥裁示者沒填、平台問不到＝退 2；不擋任何事（沒有退 1）；掃**整個專案**的留言（allComments），題目所屬的PR關了照樣列、
 //     裁示貼在別支PR上照樣配得起來（搬家驗屋 09-13：原本只掃開著的PR，真語料 12 題裡 4 題會從清單消失）；
@@ -19,15 +19,21 @@
 //     圍欄開頭行後面的「<!--」也屬於圍欄（r4 Medium②）。
 //   ⑭驗收留痕（H6；擁有者 2026-10-07 裁）：形狀合的另列成「驗收留痕」並印出來，不進待裁、不算疑似、引到 ❓ 的編號也不關題；
 //     日期假的、少原話行、不是登記帳號貼的、第一行像但形狀不合、標題不在第一行＝疑似；別的打勾標題不算像。
+//   ⑮真 CLI 長輸出經管線（pipe）與普通檔案 fd 逐位元組一致：超過 64 KiB 管線緩衝時自然排空後才結束，不因提早 process.exit 截短；
+//     成功退 0、失敗與管線寫入錯誤（EPIPE 等）退 2（刻意沒有 1）。
 // ⚠️ 守不到的：整個專案的留言有沒有給齊（分頁收齊是那條登記指令的責任）；已裁是推導不是事實；原話只驗形狀。
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync, spawn } = require('node:child_process');
+const { gitEnv } = require('../tools/git-env.js');
 const { run, evaluate, deciderOf, cites, realDate, readPart, cliArgsProblem, RULES_SHOWN } = require('../tools/pending-rulings.js');
 const { excerpt, read: readRules } = require('../tools/build-rules.js');
 const { PlatformError } = require('../tools/platform.js');
-const { runInCopy } = require('./helpers/kit-copy.js');
+const { runInCopy, unfilled } = require('./helpers/kit-copy.js');
 
 const D = { id: 'Boss', account: 'boss-acct', ids: ['Boss', 'Alpha'], accounts: ['boss-acct', 'ai-acct'] };
 let n = 0;
@@ -74,7 +80,7 @@ test('③撤回：理由三選一附依據、自報句，缺一＝疑似；齊�
   assert.equal(evaluate([q, noSelf], D).open.length, 1);
 });
 
-test('④配對：引在引用區塊裡不算；先貼的不算；編號要整個對上不是子字串', () => {
+test('④配對：引在引用區塊裡不算；先貼的不算；編號要整個對上不是子字串；只認第一個網址錨點、不認裸數字編號（#51）', () => {
   const q = ask();
   const quoted = ruling('x'); quoted.body = `## ⚖️ Boss 裁示（2026-09-13）：選甲\n原話（對話中，Alpha 轉述）：**「甲」**\n> 見 ${q.id}`;
   assert.equal(evaluate([q, quoted], D).open.length, 1, '引用區塊裡的編號不算在回答它');
@@ -84,6 +90,82 @@ test('④配對：引在引用區塊裡不算；先貼的不算；編號要整�
   assert.equal(cites('see 9c1 here', 'c1'), false, '子字串不算（前面接字）——只釘後面那格的話，前面那道邊界拿掉也不會紅');
   assert.equal(cites('see c1 here', 'c1'), true);
   assert.equal(cites('https://x/pull/7#issuecomment-5560311732', '5560311732'), true, '網址尾碼算');
+  assert.equal(cites('另外三則 5560311732 他還沒回', '5560311732'), false, '純數字編號不認裸寫（#51）');
+  const multi = '原題：https://x/pull/7#issuecomment-5560311732\n操作化：另外 https://x/pull/7#issuecomment-5560311733 與 c99 他還沒回';
+  assert.equal(cites(multi, '5560311732'), true, '第一個網址錨點算');
+  assert.equal(cites(multi, '5560311733'), false, '第二個網址錨點不算（#51）');
+  assert.equal(cites(multi, 'c99'), false, '有網址錨點時忽略後續裸編號（#51）');
+  const q2 = ask('第二題');
+  const q3 = ask('第三題');
+  const r1Only = c(`## ⚖️ Boss 裁示（2026-09-13）：選甲\n原話（對話中，Alpha 轉述）：**「甲」**\n原 ❓：https://x/pull/7#issuecomment-${q.id}\n操作化：另外 https://x/pull/7#issuecomment-${q2.id} 與 ${q3.id} 他還沒回`, { author: 'boss-acct' });
+  const res = evaluate([q, q2, q3, r1Only], D);
+  assert.deepEqual(res.ruled.map((x) => x.ask.id), [q.id]);
+  assert.deepEqual(res.open.map((x) => x.id), [q2.id, q3.id]);
+  // r2 R8：兩個網址以「、」或「;」緊接且無空白時，不可跨過第一個 # 誤配到後一題
+  for (const sep of ['、', ';', '，', ',']) {
+    const tight = `原題：https://x/pull/1#issuecomment-${q.id}${sep}https://x/pull/2#issuecomment-${q2.id}（後者未答）`;
+    assert.equal(cites(tight, q.id), true, `以「${sep}」相連無空白時，第一題應命中`);
+    assert.equal(cites(tight, q2.id), false, `以「${sep}」相連無空白時，第二題不可誤中`);
+    const tightRuling = c(`## ⚖️ Boss 裁示（2026-09-13）：選甲\n原話（對話中，Alpha 轉述）：**「甲」**\n${tight}`, { author: 'boss-acct', change: '1' });
+    const crossEval = evaluate([{ ...q, change: '1' }, { ...q2, change: '2' }, tightRuling], D);
+    assert.deepEqual(crossEval.ruled.map((x) => x.ask.id), [q.id], `跨 PR 以「${sep}」緊接時只關第一題`);
+    assert.deepEqual(crossEval.open.map((x) => x.id), [q2.id], `跨 PR 以「${sep}」緊接時第二題維持待裁`);
+  }
+  // r5〜r6 R10：自訂平台網址錨點前綴（如 #comment-<編號>、#comment:<編號>、#comment.<編號>、#comment/<編號>、#note_<編號>）同樣只認第一個網址錨點、並在該錨點內依完整編號邊界配對
+  for (const prefix of ['comment-', 'comment:', 'comment.', 'comment/', 'note_', 'issuecomment-', 'c-', '']) {
+    const customSingle = `原 ❓：https://platform.example/pr/7#${prefix}5560311732`;
+    assert.equal(cites(customSingle, '5560311732'), true, `#${prefix}5560311732 單一網址應命中`);
+    assert.equal(cites(customSingle, '556031173'), false, `#${prefix}5560311732 不得命中前綴子字串`);
+    const customMulti = `原 ❓：https://platform.example/pr/7#${prefix}5560311732\n操作化：另外 https://platform.example/pr/7#${prefix}5588918432 與 5599999999 他還沒回`;
+    assert.equal(cites(customMulti, '5560311732'), true, `#${prefix} 第一個網址錨點應命中`);
+    assert.equal(cites(customMulti, '5588918432'), false, `#${prefix} 第二個網址錨點不可誤中`);
+    assert.equal(cites(customMulti, '5599999999'), false, `#${prefix} 後方裸數字不可誤中`);
+    const qNum1 = { ...ask('自訂錨點第一題'), id: '5560311732', change: '7' };
+    const qNum2 = { ...ask('自訂錨點第二題'), id: '5588918432', change: '7' };
+    const customRuling = c(`## ⚖️ Boss 裁示（2026-09-13）：選甲\n原話（對話中，Alpha 轉述）：**「甲」**\n${customMulti}`, { author: 'boss-acct', change: '7' });
+    const customEval = evaluate([qNum1, qNum2, customRuling], D);
+    assert.deepEqual(customEval.ruled.map((x) => x.ask.id), ['5560311732'], `#${prefix} evaluate 應只關第一題`);
+    assert.deepEqual(customEval.open.map((x) => x.id), ['5588918432'], `#${prefix} evaluate 第二題維持待裁`);
+  }
+  // r9 R10：大寫網址 scheme（HTTPS://、Http://）與大小寫混合雙網址同樣只認第一個網址錨點，且無空白串接大寫第二網址不跨過（清單 run 與待裁閘 gateRun 整合）
+  const { gateRun: pendingGateRun } = require('../tools/gates/check-pending-rulings.js');
+  const gateSettings = { participants: [{ role: '裁示者（人）', id: 'Boss', account: 'boss-acct' }, { role: 'AI 甲', id: 'Alpha', account: 'ai-acct' }] };
+  const mkGatePlatform = (all) => ({
+    ask(op, args) {
+      if (op === 'change') return { id: String(args.change), headSha: 'abc' };
+      if (op === 'allComments') return all;
+      throw new Error(`unexpected ${op}`);
+    },
+  });
+  const qUp1 = { ...ask('大寫首網址第一題'), id: '5560311732', change: '7' };
+  const qUp2 = { ...ask('小寫次網址第二題'), id: '5560311733', change: '8' };
+  const upperSingleBody = '原題：HTTPS://github.com/teacherjung/ai-collab-kit/pull/7#issuecomment-5560311732';
+  assert.equal(cites(upperSingleBody, '5560311732'), true, '大寫 HTTPS:// 單一首網址應命中');
+  const upperSingleRuling = c(`## ⚖️ Boss 裁示（2026-09-13）：選甲\n原話（對話中，Alpha 轉述）：**「甲」**\n${upperSingleBody}`, { author: 'boss-acct', change: '7' });
+  const upperSingleEval = evaluate([qUp1, upperSingleRuling], D);
+  assert.deepEqual(upperSingleEval.ruled.map((x) => x.ask.id), ['5560311732'], '單一大寫首網址應將第一題列已裁');
+  assert.deepEqual(upperSingleEval.open, []);
+  const upperSingleList = run({ settings: gateSettings, platform: mkGatePlatform([qUp1, upperSingleRuling]) });
+  assert.equal(upperSingleList.code, 0);
+  assert.match(upperSingleList.lines.join('\n'), /還沒回：0 則[\s\S]*已裁：1 則/u);
+  assert.equal(pendingGateRun('7', { settings: gateSettings, platform: mkGatePlatform([qUp1, upperSingleRuling]) }).code, 0, '單一大寫首網址待裁閘應放行');
+
+  const upperMixedBody = '原題：HTTPS://github.com/teacherjung/ai-collab-kit/pull/7#issuecomment-5560311732\n其他題未答：https://github.com/teacherjung/ai-collab-kit/pull/8#issuecomment-5560311733';
+  assert.equal(cites(upperMixedBody, '5560311732'), true, '大寫首網址＋小寫次網址時，第一題應命中');
+  assert.equal(cites(upperMixedBody, '5560311733'), false, '大寫首網址＋小寫次網址時，第二題不可誤中');
+  const upperMixedRuling = c(`## ⚖️ Boss 裁示（2026-09-13）：選甲\n原話（對話中，Alpha 轉述）：**「甲」**\n${upperMixedBody}`, { author: 'boss-acct', change: '7' });
+  const upperMixedEval = evaluate([qUp1, qUp2, upperMixedRuling], D);
+  assert.deepEqual(upperMixedEval.ruled.map((x) => x.ask.id), ['5560311732'], '混合大小寫雙網址只關第一題');
+  assert.deepEqual(upperMixedEval.open.map((x) => x.id), ['5560311733'], '混合大小寫雙網址第二題維持待裁');
+  const upperMixedList = run({ settings: gateSettings, platform: mkGatePlatform([qUp1, qUp2, upperMixedRuling]) });
+  assert.equal(upperMixedList.code, 0);
+  assert.match(upperMixedList.lines.join('\n'), /還沒回：1 則[\s\S]*留言 5560311733[\s\S]*已裁：1 則[\s\S]*留言 5560311732/u);
+  assert.equal(pendingGateRun('7', { settings: gateSettings, platform: mkGatePlatform([qUp1, qUp2, upperMixedRuling]) }).code, 0, '混合大小寫雙網址：首網址所屬 PR #7 待裁閘應放行');
+  assert.equal(pendingGateRun('8', { settings: gateSettings, platform: mkGatePlatform([qUp1, qUp2, upperMixedRuling]) }).code, 1, '混合大小寫雙網址：次網址所屬 PR #8 待裁閘必須擋下');
+
+  const gluedUpperSecond = '原題：https://x/pull/7#issuecomment-5560311732HTTPS://x/pull/8#issuecomment-5560311733';
+  assert.equal(cites(gluedUpperSecond, '5560311732'), true, '無空白緊接大寫 HTTPS:// 次網址時，第一題應命中');
+  assert.equal(cites(gluedUpperSecond, '5560311733'), false, '無空白緊接大寫 HTTPS:// 次網址時，第二題不可誤中');
 });
 
 test('⑤長得像但不合形狀＝疑似，並說原因', () => {
@@ -389,3 +471,104 @@ test('指令列在輸出後面印 D1 與 I 節原文（開工看待裁、怎麼�
   assert.match(copy.stdout, /^待裁清單不收任何參數/u, '工具自己的輸出照舊在前面');
   assert.ok(copy.stdout.includes(`\n${excerpt(readRules(), RULES_SHOWN)}\n`), `沒印出 D1 與 I 節原文：\n${copy.stdout}`);
 });
+
+test('⑮真 CLI 長輸出經管線與普通檔案 fd 逐位元組一致；成功退 0、失敗與管線寫入錯誤退 2（刻意沒有 1）', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pending-rulings-pipe-'));
+  try {
+    const kitRoot = path.join(__dirname, '..');
+    fs.cpSync(path.join(kitRoot, 'tools'), path.join(dir, 'tools'), { recursive: true });
+    fs.copyFileSync(path.join(kitRoot, 'rules.json'), path.join(dir, 'rules.json'));
+    const comments = Array.from({ length: 2000 }, (_, i) => ({
+      id: String(100000 + i),
+      author: 'ai-acct',
+      createdAt: new Date(Date.UTC(2026, 8, 13, 0, Math.floor(i / 60), i % 60)).toISOString(),
+      change: String((i % 20) + 1),
+      body: `## ❓ 待裁（2026-09-13）：長輸出管線完整性第 ${String(i + 1).padStart(4, '0')} 題（避免超過 64 KiB 管線緩衝未排空即 process.exit 截短）\n選項：甲／乙\n建議：甲`,
+    }));
+    fs.writeFileSync(path.join(dir, 'comments.json'), JSON.stringify(comments));
+    fs.writeFileSync(path.join(dir, 'dump-comments.js'), "const fs = require('node:fs'); process.stdout.write(fs.readFileSync('comments.json'));\n");
+    const baseSettings = unfilled();
+    const settings = {
+      ...baseSettings,
+      owner: 'Boss',
+      participants: [
+        { role: '裁示者（人）', id: 'Boss', account: 'boss-acct' },
+        { role: 'AI 甲', id: 'Alpha', account: 'ai-acct' },
+      ],
+      platform: {
+        ...baseSettings.platform,
+        name: 'Fake',
+        project: 'fake/repo',
+        clearEnv: [],
+        operations: {
+          ...baseSettings.platform.operations,
+          allComments: [process.execPath, 'dump-comments.js'],
+        },
+      },
+    };
+    fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(settings));
+    const env = gitEnv();
+    delete env.NODE_TEST_CONTEXT;
+    const cli = path.join(dir, 'tools/pending-rulings.js');
+
+    // 1. 普通檔案 fd 對照組
+    const outFile = path.join(dir, 'out.txt');
+    const fd = fs.openSync(outFile, 'w');
+    let fileRes;
+    try {
+      fileRes = spawnSync(process.execPath, [cli], { cwd: dir, env, stdio: ['ignore', fd, 'pipe'] });
+    } finally {
+      fs.closeSync(fd);
+    }
+    assert.equal(fileRes.status, 0, fileRes.stderr && fileRes.stderr.toString('utf8'));
+    const fileBytes = fs.readFileSync(outFile);
+    assert.ok(fileBytes.length > 65536 * 4, `合成輸出需明顯大於 64 KiB 管線緩衝（實際 ${fileBytes.length} 位元組）`);
+    const fileText = fileBytes.toString('utf8');
+    assert.match(fileText, /^還沒回：2000 則$/mu);
+    assert.match(fileText, /長輸出管線完整性第 2000 題/u);
+    assert.ok(fileText.includes(`\n${excerpt(readRules(), RULES_SHOWN)}\n`), '檔案輸出尾端需含完整 D1 與 I 節條文');
+
+    // 2. 管線（pipe）輸出：必須與普通檔案 fd 逐位元組一致，不可只留前 65,536 位元組
+    const pipeRes = spawnSync(process.execPath, [cli], {
+      cwd: dir,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    assert.equal(pipeRes.status, 0, pipeRes.stderr && pipeRes.stderr.toString('utf8'));
+    assert.equal(pipeRes.stdout.length, fileBytes.length, `管線輸出位元組數（${pipeRes.stdout.length}）與檔案 fd（${fileBytes.length}）不一致`);
+    assert.equal(Buffer.compare(pipeRes.stdout, fileBytes), 0, '管線輸出與檔案 fd 必須逐位元組完全相同');
+
+    // 3. 失敗退出碼維持 2（平台失敗）
+    const failSettings = {
+      ...settings,
+      platform: {
+        ...settings.platform,
+        operations: {
+          ...settings.platform.operations,
+          allComments: [process.execPath, '-e', 'process.stderr.write("boom\\n"); process.exit(1);'],
+        },
+      },
+    };
+    fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(failSettings));
+    const failRes = spawnSync(process.execPath, [cli], { cwd: dir, env, encoding: 'utf8' });
+    assert.equal(failRes.status, 2, `平台失敗時退出碼應為 2（實際 ${failRes.status}）`);
+    assert.match(failRes.stdout, /待裁清單：問不到平台/u);
+
+    // 4. 下游提早關閉管線（EPIPE）：不可因未處理的 stream error 退 1，也不可假綠退 0，必須退 2
+    fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(settings));
+    const epipeExit = await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [cli], { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let errOut = '';
+      child.stderr.on('data', (chunk) => { errOut += chunk.toString('utf8'); });
+      child.stdout.once('data', () => { child.stdout.destroy(); });
+      child.on('error', reject);
+      child.on('close', (code, signal) => resolve({ code, signal, errOut }));
+    });
+    assert.equal(epipeExit.signal, null);
+    assert.equal(epipeExit.code, 2, `下游提早關閉管線（EPIPE）應退 2、不可退 0 或 1（實際 code=${epipeExit.code}, stderr=${epipeExit.errOut}）`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+

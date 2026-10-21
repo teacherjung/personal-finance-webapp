@@ -22,12 +22,22 @@ const outFile = path.join(root, 'PROJECT-SETTINGS.md');
 const LINE_BREAK = /[\n\r\u0085\u2028\u2029\v\f]/u;
 const hasNul = (s) => String(s).includes('\u0000');
 const STATES = ['未移植', '已安裝未啟用', '已啟用'];
-const PROVIDERS = ['未設定', '無', '工具自帶', '專案自建', '借用'];
-// 「借用」＝用別的專案現成的隔離與掃描（套件倉庫借理財專案的，擁有者 2026-10-05「A，先借用試試看」；Fable 2026-10-11 代裁加這個值）：
-// 前綴、盒子位置、禁區只住出借的那一份，這裡不抄（抄了會漂移）；填出借的專案名（關係，不是路徑）
-const BORROWED = '借用';
 // 風險級別只有這三種、從重到輕（規矩 D4 定的，不是專案的值）
 const RISK_TIERS = ['高', '中', '低'];
+const BINARY_EXT_RE = /^\.[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
+
+function customBinaryExtensions(data) {
+  if (!data || typeof data !== 'object' || !Object.hasOwn(data, 'binaryExtensions')) return [];
+  if (!Array.isArray(data.binaryExtensions)) {
+    throw new Error('二進位副檔名設定（binaryExtensions）：必須是字串陣列（例如 [".bmp"]）');
+  }
+  return data.binaryExtensions.map((ext, i) => {
+    if (typeof ext !== 'string' || ext.trim() !== ext || !BINARY_EXT_RE.test(ext)) {
+      throw new Error(`二進位副檔名設定（binaryExtensions[${i}]）：必須是以「.」開頭的半形副檔名（例如 .bmp）`);
+    }
+    return ext.toLowerCase();
+  });
+}
 
 function plain(value, what, { allowEmpty = false } = {}) {
   if (typeof value !== 'string') throw new Error(`${what} 不是字串`);
@@ -48,6 +58,7 @@ function argvText(argv) {
 }
 
 function build(data) {
+  customBinaryExtensions(data);
   const out = [
     '# 專案設定（每個使用這套架構的專案填一份；規矩本文與機器都從這裡取值）',
     '',
@@ -68,9 +79,9 @@ function build(data) {
     out.push(`| ${plain(p.role, '參與者角色')} | ${plain(p.id, '識別值')} | ${plain(p.account, '貼文帳號')} |`);
   }
   out.push('', `貼文帳號資格：${plain(data.accountRule, '貼文帳號資格')}`, '');
-  // 預設分工（A1）只排版、沒有機器讀它；要在這裡明寫——產生器不認得的欄位不會自己出現在說明書裡
+  // 分工設定（A1）只排版、沒有機器讀它；要在這裡明寫——產生器不認得的欄位不會自己出現在說明書裡
   const division = data.defaultDivision || {};
-  out.push(`預設分工（規矩 A1；裁示者沒有逐支指定時，PR說明的「實作者」「複審者」兩欄照這個填）：實作者＝${plain(division.implementer, '預設分工的實作者')}；複審者＝${plain(division.reviewer, '預設分工的複審者')}`, '');
+  out.push(`分工設定（規矩 A1；裁示者沒有逐支指定時，PR說明的「實作者」「複審者」兩欄照這個填）：實作者＝${plain(division.implementer, '分工設定的實作者')}；複審者＝${plain(division.reviewer, '分工設定的複審者')}`, '');
   // 擁有者另登一欄、不從參與者的角色字樣去猜：裁示者可以由擁有者指定給別人（A1），快速通道（擁有者）（F12）的複審者卻一定是擁有者
   const owner = data.owner === undefined ? '未設定' : data.owner;
   if (typeof owner === 'string' && owner.trim() !== '未設定' && !(data.participants || []).some((p) => p && typeof p.id === 'string' && p.id.trim() === owner.trim())) {
@@ -104,50 +115,19 @@ function build(data) {
     out.push(`- ${plain(p.name, '下游名稱')}：${plain(p.repo, '下游倉庫')} 的 ${plain(p.branch, '下游分支')}${v}`);
   }
   out.push('', `主幹分支名（原閘寫死 main，規矩 H2、H3、H4）：${plain(data.mainBranch, '主幹分支名')}`, '');
+  const sc = data.scanner || {};
+  const scParticipant = sc.participant === undefined ? '未設定' : sc.participant;
+  if (typeof scParticipant === 'string' && scParticipant.trim() !== '未設定' && scParticipant.trim() !== '無'
+    && !(data.participants || []).some((p) => p && typeof p.id === 'string' && p.id.trim() === scParticipant.trim())) {
+    throw new Error(`掃描者識別值「${scParticipant}」不是第一節登記的識別值`);
+  }
   out.push('## 四、掃描發射者（規矩 A1、G1、G4）', '');
-  out.push(`- 掃描者：${plain(data.scanner.tool, '掃描者')}（沒有掃描者＝照風險級別要掃的那幾支，掃描紀錄寫「未執行：本專案無掃描者」，由下面指定的那一方記錄並轉正式；表定不掃的照規矩 G1）`);
-  out.push(`- 誰指派、登記在哪：${plain(data.scanner.assignedBy, '掃描發射者的指派方式')}`);
-  out.push(`- 兩方都起得了時：${plain(data.scanner.tieBreak, '平手規則')}`);
-  out.push(`- 沒有合格者時，誰記錄未執行、誰轉正式：${plain(data.scanner.fallback, '無合格者時的替代')}`);
-  const iso = data.scanner.isolation || {};
-  if (!PROVIDERS.includes(iso.provider)) throw new Error(`隔離提供者「${iso.provider}」不在 ${PROVIDERS.join('／')} 裡`);
-  const borrowed = iso.provider === BORROWED;
-  // 掃描者的模型與推理（規矩 G1；擁有者 2026-10-04 的常設指示）：跟複審者那張表一樣，模型名只住這裡，換新模型只改這兩格。
-  // 借用時兩格只住出借的那一份：這裡只准省略或「未設定」、指路句由產生器自己印（#83 複審後掃：原本照印本機原值，抄了模型名也不會紅、會漂移）
-  if (borrowed) {
-    const own = (v) => v !== undefined && v !== '未設定';
-    if (own(data.scanner.strongest) || own(data.scanner.maxEffort)) throw new Error('借用時掃描的最強模型與最高推理只住出借的那一份：這裡不抄（省略或寫「未設定」）');
-    const lenderName = plain(iso.lender === undefined ? '未設定' : iso.lender, '出借隔離的專案');
-    out.push(`- 掃描用的最強模型（規矩 G1；借用時照出借的專案那一格，換新模型改那裡）：照出借的專案（${lenderName}）設定的那一格（掃描腳本讀那一格、配方聲明印實際值；這裡不抄一份）；最高推理：同上`);
-  } else {
-    out.push(`- 掃描用的最強模型（規矩 G1；換新模型只改這裡）：${plain(data.scanner.strongest === undefined ? '未設定' : data.scanner.strongest, '掃描的最強模型')}；最高推理：${plain(data.scanner.maxEffort === undefined ? '未設定' : data.scanner.maxEffort, '掃描的最高推理')}`);
-  }
-  const wrap = Array.isArray(iso.wrap) ? iso.wrap : [];
-  const forbidden = Array.isArray(iso.forbidden) ? iso.forbidden : [];
-  out.push('', '隔離（規矩 G2；裁示者 2026-09-12 裁「丙」：隔離本身不在套件裡，由這裡指定誰提供；套件只帶掃前檢查與掃後檢查兩支小工具）：', '');
-  if (borrowed) {
-    if (iso.lender === '未設定') throw new Error('提供者是「借用」卻沒填出借的專案');
-    const lender = plain(iso.lender, '出借隔離的專案');
-    // 專案名不會有的字一律擋：半形與全形斜線、百分號（編碼過的斜線）、冒號（磁碟機代號），`~`／`.`／空白開頭、空白結尾（#83 複審後掃抓到原本只看半形斜線與第一個字）
-    if (/[/\\／＼%:]|^[~.\s]|\s$/u.test(iso.lender)) throw new Error('出借隔離的專案要寫專案名（關係），不寫路徑');
-    // 前綴、禁區只准省略或空陣列：不是陣列的值（字串、null、帶 length 的物件）也算抄了（#83 複審後掃抓到原本只看長度）
-    const copied = (v) => v !== undefined && !(Array.isArray(v) && v.length === 0);
-    if (copied(iso.wrap) || copied(iso.forbidden) || (iso.boxRoot !== undefined && iso.boxRoot !== '未設定')) throw new Error('借用時前綴、盒子位置、禁區只住出借的那一份：這裡不抄（前綴與禁區省略或寫空陣列；盒子位置省略或寫「未設定」）');
-    out.push(`- 由誰提供：借用（出借的專案：${lender}）。試探、埋、比對、收都在出借的專案那邊、用它自己的工具與設定跑（測的就是真的要用的那個盒子）；怎麼跑寫在上面「掃描者」那一格。本專案的 node tools/scan-probe.js 試探與埋遇到借用一律退 2、指路過去，不假裝測過（收不讀設定、只刪清單上核對過的，借用時用出借那邊的收）。`);
-    out.push(`- 前綴、盒子位置、禁區清單：照出借的專案（${lender}）的設定，這裡不抄一份（抄了會漂移）。`);
-  } else {
-    if (iso.lender !== undefined && iso.lender !== '未設定') throw new Error('只有提供者是「借用」才填出借的專案（其他提供者留「未設定」）');
-    out.push(`- 由誰提供：${plain(iso.provider, '隔離提供者')}（「無」或「未設定」＝不掃，掃描紀錄寫「未執行：無隔離」；「借用」＝用別的專案現成的隔離）`);
-    out.push(`- 從盒內跑一條指令的前綴（{box} 會換成盒子路徑、{projectRoot} 會換成專案根目錄）：${plain(wrap.length ? argvText(wrap) : '未設定', '隔離指令前綴')}`);
-    out.push(`- 盒子建在：${plain(iso.boxRoot || '未設定', '盒子位置')}（未設定＝系統暫存區）`);
-    out.push(`- 盒內必須讀不到也寫不進的目錄（~ 代表家目錄；掃前檢查在每一個各埋一個假機密）：${plain(forbidden.length ? forbidden.join('、') : '未設定', '禁區清單')}`);
-    out.push('- 整條鏈（每一步退非零就停，掃描紀錄寫未執行）：');
-    out.push('  1. node tools/scan-probe.js：任一禁區用它的讀寫機制碰得到＝隔離是假的，不掃；連試探都做不成（含盒內起不了那個機制）＝不掃。');
-    out.push('  2. node tools/scan-probe.js --plant <清單檔>：在每個禁區埋一個掃描期間才有的假機密。清單檔不要貼進任何紀錄。');
-    out.push('  3. 起掃描者（本套件不代跑）。');
-    out.push('  4. node tools/scan-postmortem.js --secrets <清單檔> --reply <回覆檔> --logs <日誌目錄>：假機密或未給盒子的真值出現在任何輸出（含檔名）＝事故。');
-    out.push('  5. node tools/scan-probe.js --sweep <清單檔>：把埋下去的收掉。這一步一定要跑。');
-  }
+  out.push(`- 掃描者識別值：${plain(scParticipant, '掃描者識別值')}；怎麼起：${plain(sc.tool, '掃描者')}（沒有掃描者＝照風險級別要掃的那幾支，掃描紀錄寫「未執行：本專案無掃描者」，由下面指定的那一方記錄並轉正式；表定不掃的照規矩 G1）`);
+  out.push(`- 誰指派、登記在哪：${plain(sc.assignedBy, '掃描發射者的指派方式')}`);
+  out.push(`- 兩方都起得了時：${plain(sc.tieBreak, '平手規則')}`);
+  out.push(`- 沒有合格者時，誰記錄未執行、誰轉正式：${plain(sc.fallback, '無合格者時的替代')}`);
+  out.push(`- 掃描用的最強模型（規矩 G1；換新模型只改這裡）：${plain(sc.strongest === undefined ? '未設定' : sc.strongest, '掃描的最強模型')}；最高推理：${plain(sc.maxEffort === undefined ? '未設定' : sc.maxEffort, '掃描的最高推理')}`);
+  out.push(`- 掃描留言標頭的來源字串：${plain(sc.source === undefined ? '未設定' : sc.source, '掃描的來源字串')}；啟動指令樣板（tools/review-launch.js --scan 替換記號後印出）：${plain(sc.command === undefined ? '未設定' : sc.command, '掃描啟動指令樣板')}`);
   out.push('', '## 五、平台介面（規矩 E5、H1；閘要問平台的每一件事都走這裡）', '');
   out.push('套件只定「問什麼」與「答案長什麼樣」，每個動作填一條指令，指令要把答案印成約定形狀的 JSON。翻譯是這個專案的事，套件不碰任何平台的語彙。沒登記的動作被問到時一律不放行，不會回一個空答案假裝問過了。', '');
   out.push(`平台：${plain((data.platform && data.platform.name) || '未設定', '平台名稱')}；倉庫身分（指令裡的 {project}）：${plain((data.platform && data.platform.project) || '未設定', '倉庫身分')}；問平台前要清掉的選倉環境變數：${plain((data.platform && Array.isArray(data.platform.clearEnv) && data.platform.clearEnv.length) ? data.platform.clearEnv.join('、') : '（無）', '選倉環境變數')}`, '');
@@ -284,4 +264,4 @@ if (require.main === module) {
   process.stdout.write(`寫好 PROJECT-SETTINGS.md：${data.machines.length} 支機器\n`);
 }
 
-module.exports = { build, read, dataFile, outFile, STATES, PROVIDERS, BORROWED, RISK_TIERS };
+module.exports = { build, read, dataFile, outFile, STATES, RISK_TIERS, customBinaryExtensions };

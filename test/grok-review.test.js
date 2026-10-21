@@ -483,7 +483,7 @@ test('範本反讀不接受多出來的指令', () => {
 test('相關裁示重算跨支留言配對，任意加料、漏列與平台算不清皆停在外送前', async (t) => {
   const seed = (f) => f.allComments.push(
     { id: '10', change: '108', author: 'author', createdAt: '2026-10-15T01:00:00Z', body: '## ❓ 待裁（2026-10-15）：合成問題' },
-    { id: '11', change: '99', author: 'owner', createdAt: '2026-10-15T01:01:00Z', body: '## ⚖️ William 裁示（2026-10-15）：合成答案\n原話（對話中，Codex 轉述）：**「合成裁示」**\n回覆 issuecomment-10' });
+    { id: '11', change: '99', author: 'owner', createdAt: '2026-10-15T01:01:00Z', body: '## ⚖️ William 裁示（2026-10-15）：合成答案\n原話（對話中，Codex 轉述）：**「合成裁示」**\n回覆 https://github.com/example/other-project/pull/108#issuecomment-10' });
   const f = fixture(t); seed(f);
   f.values.rulings = 'https://github.com/example/other-project/pull/99#issuecomment-11'; f.write();
   const ready = prepareReview(f.args, f);

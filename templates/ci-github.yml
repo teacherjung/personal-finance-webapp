@@ -6,14 +6,13 @@ name: CI
 on:
   push:
     branches: [main]
-  # 轉正式（ready_for_review）也跑一場（擁有者 2026-10-04 選「A：留著」，取代 10/02 拿掉它的「甲」）：每一場考的是「這支＋那一刻的主幹」，
-  # 最後一次推送之後主幹若又變了（例如別支先合併），轉正式這一場是合併前唯一考到「這支＋最新主幹」的一場
-  # （跨PR試合併閘只把開著的PR合起來，不合主幹）；推送之後才公布的相依套件高風險通報也靠它在合併前看到。
-  # 拿掉的話，合起來才壞的要等合併後主幹紅了才知道：得另開一支PR修，修好之前其他PR的雲端跟著紅、全部卡住。
-  # 代價是每支合併前多等一場（本倉庫 #31 那一場 3 分 34 秒）。真考卷閘會等這一場跑完才放行。
+  # 轉正式（ready_for_review）不重跑雲端三關（擁有者 2026-10-20 裁「方案 A＋B納入」，取代 10/04 留著它的決定）：
+  # 原本留著轉正式那一場，是因為跨PR試合併閘只合開著的PR、不合主幹；現在跨PR試合併閘在主幹於分岔後有新提交時，
+  # 也會在本機把「這支＋最新主幹」真合起來跑三關（主幹沒前進就不重跑），省下每支轉正式後無條件重等一場雲端三關的 2〜3 分鐘；
+  # 同時真考卷閘（check-checks-really-ran.js）在必過檢查還在跑時會自動輪詢等待，消除合併指令跑兩趟的摩擦。
   # 要補考同一版（例如那一場被取消）：在平台上重跑那一場，或把PR關掉再重開；不要推空提交（版本一變，舊的「通過」就失效）。
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened]
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -21,6 +20,7 @@ jobs:
   checks:
     name: 三關
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

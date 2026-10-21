@@ -8,7 +8,7 @@
 
 <!--
 欄位與填法＝RULES A1、A2、D3、D4、E1 及 templates/pr-body.md；開頭四欄的位置限制見 tools/gates/check-collab-fields.js。
-本專案角色識別值與預設分工＝settings.json 的 participants 與預設分工；技術驗證補充見 docs/development-workflow.md。
+本專案角色識別值與分工設定＝settings.json 的 participants 與 defaultDivision；技術驗證補充見 docs/development-workflow.md。
 -->
 
 ## 改了什麼
@@ -21,7 +21,7 @@
 
 ### 複審後掃
 
-_待補——照 templates/scan-record.md 填；這行還在＝還沒填。_
+<有掃時以 `--scan-post` 代貼的 `🔍` 掃描留言為準（不必回頭改這一段）；不掃或沒掃成時寫 `未執行：<原因>`（見 templates/scan-record.md）>
 
 <!--
 時機與規格＝RULES G1〜G4 與 templates/scan-record.md（這裡不抄）；掃描發射者＝settings.json 的 scanner。
