@@ -172,6 +172,7 @@ test('標準來源字串表（settings.json 的 sources）與標頭範本的「�
     ['Claude 桌面 session', 'Claude 桌面'],
     ['William 本人（畫面驗收／產品裁決）', 'William 本人'],
     ['Grok CLI 隔離盒起的正式複審', 'Grok CLI'],
+    ['Gemini 原生 CLI 正式複審', 'Gemini CLI'],
   ];
   assert.deepEqual(sources.map((s) => [s.tool, s.string]), want,
     'settings.json 的 sources 與標準來源字串表對不上（少一筆、多一筆、或字串被改）\n（沒有建議值，每個人就會自己編一個；改了要連 PROJECT-SETTINGS.md 那張表一起改）');
