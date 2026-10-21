@@ -13,7 +13,7 @@ const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const templateFile = new URL('../templates/review-request.md', import.meta.url);
-const template = readFileSync(templateFile, 'utf8') + '\n';
+const template = readFileSync(templateFile, 'utf8');
 const response = `🤖 Gemini｜來源：Gemini CLI｜審 \`${HEAD.slice(0, 7)}\`｜r1｜結論：通過\n### 本輪實際用的設定\n合成結果\n### 清單逐項結果\n合成清單\n### 發現\n本輪提了 0 條\n未貼\n`;
 const result = body => ({ status: 0, signal: null, error: undefined, stdout: JSON.stringify({ response: body, stats: { models: { [MODEL]: {} }, tools: { totalCalls: 3 } } }), stderr: 'synthetic diagnostic\n' });
 const retry = '核對 scripts/gemini-review.js 後跑 node --test test/gemini-review.test.js';
@@ -60,7 +60,7 @@ function fixture(t) {
   mkdirSync(tree); mkdirSync(mutation); mkdirSync(join(tree, 'templates'));
   const settings = { platform: { project: 'synthetic/repo' }, reviewers: [{ participant: 'Gemini', strongest: MODEL, maxEffort: 'HIGH', source: 'Gemini CLI' }] };
   writeFileSync(join(tree, 'settings.json'), JSON.stringify(settings));
-  writeFileSync(join(tree, 'templates/review-request.md'), template.trimEnd() + '\n');
+  writeFileSync(join(tree, 'templates/review-request.md'), template);
   writeFileSync(join(tree, 'source.js'), 'export const value = 7;\n');
   const args = { model: MODEL, effort: 'HIGH', reviewTree: tree, mutationCopy: mutation, promptFile: join(dir, 'prompt.md'), outFile: join(dir, 'output.log'), change: '730', project: 'synthetic/repo' };
   const record = { reviewer: 'Gemini', change: 730, round: 1, head: HEAD, base: BASE, tree, mutation, promptFile: args.promptFile, outFile: args.outFile, root: tree };
@@ -210,4 +210,24 @@ test('不同二進位來源即使解碼相同也拒收', async t => {
   }), /未授權變動/u, retry);
   assert.equal(existsSync(f.args.outFile), false, retry);
   assert.match(JSON.parse(readFileSync(f.args.outFile + '.receipt.json')).failure, /未授權變動/u, retry);
+});
+
+
+test('官方範本原文可送完整入口，固定正文改字在模型前拒收', async t => {
+  const f = fixture(t);
+  assert.deepEqual(readFileSync(join(f.tree, 'templates/review-request.md')), readFileSync(templateFile), retry);
+  let calls = 0;
+  const options = { git: f.git, cli: process.execPath, preflight: async () => ({}), invoke: () => { calls++; return result(response); } };
+  await runReview(f.args, options);
+  assert.equal(calls, 1, retry);
+  assert.equal(readFileSync(f.args.outFile, 'utf8'), response, retry);
+  const changed = fixture(t);
+  const original = readFileSync(changed.args.promptFile, 'utf8');
+  const sentence = '3. 整份考題要不要跑，由你獨立判斷。';
+  assert.equal(original.split(sentence).length, 2, retry);
+  writeFileSync(changed.args.promptFile, original.replace(sentence, '3. 整份考題不可以跑。'));
+  calls = 0;
+  await assert.rejects(runReview(changed.args, { ...options, git: changed.git }), /範本事實格以外/u, retry);
+  assert.equal(calls, 0, retry);
+  assert.equal(existsSync(changed.args.outFile), false, retry);
 });

@@ -104,7 +104,7 @@ export function prepare(args, git = reviewGit) {
   const reviewer = registration.reviewers.find(item => item.participant === 'Gemini');
   requireThat(registration.platform.project === project && reviewer?.strongest === model && reviewer?.maxEffort === effort && reviewer?.source === 'Gemini CLI', '受審設定未登記本次模型與來源');
   const prompt = read(promptFile);
-  const values = promptValues(read(join(reviewTree, 'templates/review-request.md')) + '\n', prompt);
+  const values = promptValues(read(join(reviewTree, 'templates/review-request.md')), prompt);
   for (const [key, value] of Object.entries({ project, change: String(change), reviewer: 'Gemini', source: 'Gemini CLI', head: record.head, headShort: record.head.slice(0, 7), base: record.base, round: String(record.round), reviewTree, mutationCopy })) requireThat(values[key] === value, 'F3 提示與本輪正式紀錄不符');
   requireThat(values.implementer !== 'Gemini', '實作與複審角色不分離');
   for (const suffix of ['', '.stdout.json', '.stderr', '.receipt.json']) requireThat(!existsSync(outFile + suffix), '本輪輸出已存在');
