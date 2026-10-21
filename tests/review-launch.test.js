@@ -35,7 +35,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { gitEnv } = require('../tools/git-env.js');
-const { main, launch, close, post, prepareVerdict, scanPost, scanClose, prepareScan, resolveScannerSpec, deriveScanCommand, stripGrokPreamble, splitCommandArgs, defaultRunPost, defaultRunExec, substitute, fill, promptPart, scopeOf, roundsOf, twoMissesInARow, parseArgs, templateProblems, freshEntries, FILL, SCAN_FILL, SCAN_TEMPLATE, SAFE } = require('../tools/review-launch.js');
+const { main, launch, close, post, prepareVerdict, scanPost, scanClose, prepareScan, resolveScannerSpec, deriveScanCommand, stripGrokPreamble, splitCommandArgs, defaultRunPost, defaultRunExec, substitute, fill, promptPart, scopeOf, roundsOf, twoMissesInARow, parseArgs, templateProblems, freshEntries, materializeIsolatedGitRepo, runGrokExec, GROK_PINNED_ISSUER, GROK_PINNED_CLIENT_ID, FILL, SCAN_FILL, SCAN_TEMPLATE, SAFE, LaunchError } = require('../tools/review-launch.js');
 const { evaluate: evaluateVerdicts, VERDICTS } = require('../tools/gates/check-review-verdicts.js');
 const { read: readSettings } = require('../tools/build-settings.js');
 const { PlatformError } = require('../tools/platform.js');
@@ -2039,7 +2039,7 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
   }
 });
 
-test('⑭一鍵執行（--run）與收樹清除容器（--purge）：複審與掃描一鍵開樹→執行→驗樹代貼→收樹（含 --purge），任一步失敗即停並保留現場供查', () => {
+test('⑭一鍵執行（--run）與收樹清除容器（--purge）：複審與掃描一鍵開樹→執行→驗樹代貼→收樹（含 --purge），任一步失敗即停並保留現場供查', async () => {
   const r = repo();
   const dir = tmp('review-launch-run-');
   const scannerCfg = {
@@ -2942,6 +2942,1017 @@ test('⑭一鍵執行（--run）與收樹清除容器（--purge）：複審與�
     const aliasScanRetry = main(aliasScanParsed, { settings: s, leftoverRoots: [] });
     assert.equal(aliasScanRetry.code, 0, `含空白別名掃描恢復指令重跑應成功：${aliasScanRetry.lines.join('\n')}`);
     assert.ok(!fs.existsSync(scanFolder), '掃描容器已收樹並清除');
+
+    // (l) 專案相依套件（node_modules）自動準備、工作區連結重綁、防掉包驗樹、收樹內容保存與隔離複製驗退碼（R1〜R4）
+    const sharedPkgDir = path.join(r.dir, 'packages', 'shared');
+    fs.mkdirSync(sharedPkgDir, { recursive: true });
+    fs.writeFileSync(path.join(sharedPkgDir, 'package.json'), '{"name":"ws-shared","type":"module","main":"index.js"}\n');
+    fs.writeFileSync(path.join(sharedPkgDir, 'index.js'), 'export const wsValue = "HEAD_VALUE";\n');
+    fs.writeFileSync(path.join(r.dir, '.gitignore'), 'node_modules\n');
+    sh(r.dir, 'add', 'packages/shared/package.json', 'packages/shared/index.js', '.gitignore');
+    sh(r.dir, 'commit', '-q', '-m', 'add workspace package and gitignore node_modules');
+    const wsHead = sh(r.dir, 'rev-parse', 'HEAD');
+    // 主工作樹把 packages/shared/index.js 改成未提交的 BASE_VALUE，驗證審查樹與突變副本載入 ws-shared 時讀到受審 HEAD_VALUE 而非主目錄 BASE_VALUE
+    fs.writeFileSync(path.join(sharedPkgDir, 'index.js'), 'export const wsValue = "BASE_VALUE";\n');
+
+    const depDir = path.join(r.dir, 'node_modules', 'fake-dep');
+    fs.mkdirSync(depDir, { recursive: true });
+    const pkgJsonContent = '{"name":"fake-dep","type":"module","main":"index.js"}\n';
+    const revSeedContent = 'export const depValue = "REV_SEED_CONTENT_KEEP_EXACT";\n';
+    fs.writeFileSync(path.join(depDir, 'package.json'), pkgJsonContent);
+    fs.writeFileSync(path.join(depDir, 'index.js'), revSeedContent);
+    const wsLinkInMain = path.join(r.dir, 'node_modules', 'ws-shared');
+    fs.symlinkSync('../packages/shared', wsLinkInMain, 'dir');
+
+    const implWt = path.join(tmp('review-launch-impl-wt-'), 'wt');
+    sh(r.dir, 'worktree', 'add', '--detach', '-q', implWt, wsHead);
+    const wsAns = {
+      ...baseAns,
+      change: { id: '7', headSha: wsHead, baseBranch: 'main', changedFileCount: '2', body: '實作者：Alpha\n複審者：Beta\n' },
+      branchSha: { sha: r.base },
+      changedFiles: [{ path: 'a.txt', additions: 1, deletions: 0 }, { path: 'packages/shared/index.js', additions: 1, deletions: 0 }],
+      comments: [],
+    };
+    const wsWithPass = {
+      ...wsAns,
+      comments: [
+        {
+          id: '501',
+          createdAt: '2026-10-20T00:00:00Z',
+          body: `🤖 Beta｜來源：beta CLI｜審 \`${wsHead.slice(0, 7)}\`｜r1｜結論：通過\n\n### 本輪實際用的設定\n- ok\n\n### 清單逐項結果\n- ok\n`,
+        },
+      ],
+    };
+
+    let revPostCount = 0;
+    const depRevRes = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+      settings: s,
+      platform: fakePlatform(wsAns),
+      cwd: implWt,
+      template: TEMPLATE,
+      leftoverRoots: [],
+      runExec(_cmd, { record }) {
+        for (const [label, targetCwd] of [['tree', record.tree], ['mutation', record.mutation]]) {
+          const probe = spawnSync(
+            process.execPath,
+            [
+              '--input-type=module',
+              '-e',
+              'const m = await import("fake-dep"); const w = await import("ws-shared"); if (m.depValue !== "REV_SEED_CONTENT_KEEP_EXACT" || w.wsValue !== "HEAD_VALUE") process.exit(1);',
+            ],
+            { cwd: targetCwd, env: gitEnv(), encoding: 'utf8' },
+          );
+          if (probe.status !== 0) {
+            throw new LaunchError(`${label} 載入相依套件失敗（退 ${probe.status}）：${(probe.stderr || '').trim()}`);
+          }
+        }
+        // R2：只改突變副本的 node_modules 內容，不得影響主目錄與唯讀審查樹
+        fs.writeFileSync(
+          path.join(record.mutation, 'node_modules', 'fake-dep', 'index.js'),
+          'export const depValue = "MUTATED_ONLY_IN_MUTATION";\n',
+        );
+        assert.equal(fs.readFileSync(path.join(depDir, 'index.js'), 'utf8'), revSeedContent, '寫入突變副本 node_modules 不得汙染主目錄來源');
+        assert.equal(
+          fs.readFileSync(path.join(record.tree, 'node_modules', 'fake-dep', 'index.js'), 'utf8'),
+          revSeedContent,
+          '寫入突變副本 node_modules 不得汙染唯讀審查樹',
+        );
+        fs.writeFileSync(
+          record.outFile,
+          `🤖 Beta｜來源：beta CLI｜審 \`${wsHead.slice(0, 7)}\`｜r1｜結論：通過\n\n### 本輪實際用的設定\n- ok\n\n### 清單逐項結果\n- ok\n未貼\n`,
+        );
+      },
+      runPost() { revPostCount += 1; },
+    });
+    assert.equal(depRevRes.code, 0, `複審 --run 應自動準備獨立 node_modules、重綁工作區連結並完成代貼與收樹：${depRevRes.lines.join('\n')}`);
+    assert.equal(revPostCount, 1);
+    assert.ok(!fs.existsSync(reviewFolder), '複審容器應已收樹並清除');
+    assert.equal(fs.readFileSync(path.join(depDir, 'index.js'), 'utf8'), revSeedContent, 'R3：收樹與 --purge 後主目錄 node_modules 檔案內容必須逐字完好');
+
+    // R3：開樹且依賴掛載完成後，寫入提示檔失敗觸發回滾時，必須確認掛載已發生、回滾已清乾淨，且主目錄 node_modules 內容逐字完好
+    const rollbackSeedContent = 'export const depValue = "ROLLBACK_SEED_CONTENT_KEEP_EXACT";\n';
+    fs.writeFileSync(path.join(depDir, 'index.js'), rollbackSeedContent);
+    let revRollbackAfterLinkCount = 0;
+    const origWriteFileSync = fs.writeFileSync;
+    try {
+      fs.writeFileSync = function patchedWriteFileSync(filePath, data, options) {
+        if (typeof filePath === 'string' && filePath === path.join(reviewFolder, 'prompt.md')) {
+          assert.ok(fs.lstatSync(path.join(reviewFolder, 'tree', 'node_modules')).isSymbolicLink(), 'R3：回滾前 tree/node_modules 應已掛載');
+          assert.ok(fs.lstatSync(path.join(reviewFolder, 'mutation', 'node_modules')).isSymbolicLink(), 'R3：回滾前 mutation/node_modules 應已掛載');
+          assert.ok(fs.existsSync(path.join(reviewFolder, 'deps', 'tree', 'node_modules', 'fake-dep', 'index.js')), 'R3：回滾前獨立依賴複本應已建立');
+          revRollbackAfterLinkCount += 1;
+          throw new Error('simulated prompt write failure after linkNodeModules');
+        }
+        return origWriteFileSync.call(this, filePath, data, options);
+      };
+      const rollbackRevRes = main(['7', '--reviewer', 'Beta', '--dir', dir], {
+        settings: s,
+        platform: fakePlatform(wsAns),
+        cwd: implWt,
+        template: TEMPLATE,
+        leftoverRoots: [],
+      });
+      assert.equal(rollbackRevRes.code, 2, 'R3：寫入提示檔失敗應退 2');
+    } finally {
+      fs.writeFileSync = origWriteFileSync;
+    }
+    assert.equal(revRollbackAfterLinkCount, 1, 'R3：必須在依賴掛載完成後才觸發回滾');
+    assert.ok(!fs.existsSync(reviewFolder), 'R3：回滾後複審容器應已移除');
+    assert.ok(!sh(r.dir, 'worktree', 'list', '--porcelain').includes(reviewFolder), 'R3：回滾後不應殘留工作樹登記');
+    assert.equal(fs.readFileSync(path.join(depDir, 'index.js'), 'utf8'), rollbackSeedContent, 'R3：開樹異常回滾後主目錄 node_modules 檔案內容必須逐字完好');
+
+    let scanRollbackAfterLinkCount = 0;
+    try {
+      fs.writeFileSync = function patchedScanWriteFileSync(filePath, data, options) {
+        if (typeof filePath === 'string' && filePath === path.join(scanFolder, 'prompt.md')) {
+          assert.ok(fs.lstatSync(path.join(scanFolder, 'tree', 'node_modules')).isSymbolicLink(), 'R3：掃描回滾前 tree/node_modules 應已掛載');
+          assert.ok(fs.existsSync(path.join(scanFolder, 'deps', 'tree', 'node_modules', 'fake-dep', 'index.js')), 'R3：掃描回滾前獨立依賴複本應已建立');
+          scanRollbackAfterLinkCount += 1;
+          throw new Error('simulated scan prompt write failure after linkNodeModules');
+        }
+        return origWriteFileSync.call(this, filePath, data, options);
+      };
+      const rollbackScanRes = main(['--scan', '7', '--dir', dir], {
+        settings: s,
+        platform: fakePlatform(wsWithPass),
+        cwd: implWt,
+        leftoverRoots: [],
+      });
+      assert.equal(rollbackScanRes.code, 2, 'R3：掃描寫入提示檔失敗應退 2');
+    } finally {
+      fs.writeFileSync = origWriteFileSync;
+    }
+    assert.equal(scanRollbackAfterLinkCount, 1, 'R3：掃描必須在依賴掛載完成後才觸發回滾');
+    assert.ok(!fs.existsSync(scanFolder), 'R3：回滾後掃描容器應已移除');
+    assert.ok(!sh(r.dir, 'worktree', 'list', '--porcelain').includes(scanFolder), 'R3：掃描回滾後不應殘留工作樹登記');
+    assert.equal(fs.readFileSync(path.join(depDir, 'index.js'), 'utf8'), rollbackSeedContent, 'R3：掃描開樹異常回滾後主目錄 node_modules 檔案內容必須逐字完好');
+
+    // R5：收樹（close / scanClose）中途 git worktree remove 失敗時，應還原掛載連結並保留未收工作樹的獨立依賴，排除原因後重試可正常收完（退 0）
+    const retryRevLaunch = main(['7', '--reviewer', 'Beta', '--dir', dir], {
+      settings: s,
+      platform: fakePlatform(wsAns),
+      cwd: implWt,
+      template: TEMPLATE,
+      leftoverRoots: [],
+    });
+    assert.equal(retryRevLaunch.code, 0);
+    const retryRevClose1 = close('7', {
+      settings: s,
+      dir,
+      leftoverRoots: [],
+      remove(rootDir, t) {
+        if (t === retryRevLaunch.record.mutation) {
+          sh(rootDir, 'worktree', 'lock', t);
+        }
+        const rm = spawnSync('git', ['worktree', 'remove', t], { cwd: rootDir, env: gitEnv(), encoding: 'utf8' });
+        return rm.status === 0 ? null : (rm.stderr || 'remove failed').trim();
+      },
+    });
+    assert.equal(retryRevClose1.code, 1, 'R5：突變副本移除失敗時 close 應退 1');
+    assert.ok(fs.lstatSync(path.join(reviewFolder, 'mutation', 'node_modules')).isSymbolicLink(), 'R5：移除失敗時應還原 mutation/node_modules 連結');
+    assert.ok(fs.existsSync(path.join(reviewFolder, 'deps', 'mutation', 'node_modules', 'fake-dep', 'index.js')), 'R5：移除失敗時不得預先刪掉未收工作樹的獨立依賴');
+    sh(r.dir, 'worktree', 'unlock', retryRevLaunch.record.mutation);
+    const retryRevClose2 = main(['--close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] });
+    assert.equal(retryRevClose2.code, 0, `R5：解除鎖定後重試 --close --purge 應退 0：${retryRevClose2.lines.join('\n')}`);
+    assert.ok(!fs.existsSync(reviewFolder), 'R5：重試成功後複審容器應已清除');
+
+    const retryScanLaunch = main(['--scan', '7', '--dir', dir], {
+      settings: s,
+      platform: fakePlatform(wsWithPass),
+      cwd: implWt,
+      leftoverRoots: [],
+    });
+    assert.equal(retryScanLaunch.code, 0);
+    const retryScanClose1 = scanClose('7', {
+      settings: s,
+      dir,
+      leftoverRoots: [],
+      remove(rootDir, t) {
+        sh(rootDir, 'worktree', 'lock', t);
+        const rm = spawnSync('git', ['worktree', 'remove', t], { cwd: rootDir, env: gitEnv(), encoding: 'utf8' });
+        return rm.status === 0 ? null : (rm.stderr || 'remove failed').trim();
+      },
+    });
+    assert.equal(retryScanClose1.code, 1, 'R5：掃描樹移除失敗時 scanClose 應退 1');
+    assert.ok(fs.lstatSync(path.join(scanFolder, 'tree', 'node_modules')).isSymbolicLink(), 'R5：掃描樹移除失敗時應還原 tree/node_modules 連結');
+    assert.ok(fs.existsSync(path.join(scanFolder, 'deps', 'tree', 'node_modules', 'fake-dep', 'index.js')), 'R5：掃描樹移除失敗時不得預先刪掉獨立依賴');
+    sh(r.dir, 'worktree', 'unlock', retryScanLaunch.record.tree);
+    const retryScanClose2 = main(['--scan-close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] });
+    assert.equal(retryScanClose2.code, 0, `R5：解除鎖定後重試 --scan-close --purge 應退 0：${retryScanClose2.lines.join('\n')}`);
+    assert.ok(!fs.existsSync(scanFolder), 'R5：重試成功後掃描容器應已清除');
+    assert.equal(fs.readFileSync(path.join(depDir, 'index.js'), 'utf8'), rollbackSeedContent, 'R5：收樹失敗重試後主目錄 node_modules 內容必須逐字完好');
+
+    const scanSeedContent = 'export const depValue = "SCAN_SEED_CONTENT_KEEP_EXACT";\n';
+    fs.writeFileSync(path.join(depDir, 'index.js'), scanSeedContent);
+    let scanPostCount = 0;
+    const depScanRes = main(['--scan', '7', '--run', '--purge', '--dir', dir], {
+      settings: s,
+      platform: fakePlatform(wsWithPass),
+      cwd: implWt,
+      leftoverRoots: [],
+      runExec(_cmd, { record }) {
+        const probe = spawnSync(
+          process.execPath,
+          [
+            '--input-type=module',
+            '-e',
+            'const m = await import("fake-dep"); const w = await import("ws-shared"); if (m.depValue !== "SCAN_SEED_CONTENT_KEEP_EXACT" || w.wsValue !== "HEAD_VALUE") process.exit(1);',
+          ],
+          { cwd: record.tree, env: gitEnv(), encoding: 'utf8' },
+        );
+        if (probe.status !== 0) {
+          throw new LaunchError(`scanTree 載入相依套件失敗（退 ${probe.status}）：${(probe.stderr || '').trim()}`);
+        }
+        fs.writeFileSync(
+          record.outFile,
+          `🔍 Gamma｜來源：Grok CLI｜掃 \`${wsHead.slice(0, 7)}\`\n\n### 本次實際用的設定\n- ok\n\n### 掃描結果\n- 零發現\n未貼\n`,
+        );
+      },
+      runPost() { scanPostCount += 1; },
+    });
+    assert.equal(depScanRes.code, 0, `掃描 --run 應自動準備 node_modules 並完成代貼與收樹：${depScanRes.lines.join('\n')}`);
+    assert.equal(scanPostCount, 1);
+    assert.ok(!fs.existsSync(scanFolder), '掃描容器應已收樹並清除');
+    assert.equal(fs.readFileSync(path.join(depDir, 'index.js'), 'utf8'), scanSeedContent, 'R3：掃描收樹與 --purge 後主目錄 node_modules 檔案內容必須逐字完好');
+
+    // R1：專案 .gitignore 含 node_modules 時，把掛好的連結換成普通目錄（內含唯一現場證據）或改指其他目錄，
+    //     複審與掃描的代貼與收樹皆須退 1、代貼 0 次、保留容器與唯一證據
+    const altTargetDir = tmp('review-launch-alt-nm-');
+    try {
+      let r1RevPosts = 0;
+      const tamperDirRevRes = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+        settings: s,
+        platform: fakePlatform(wsAns),
+        cwd: implWt,
+        template: TEMPLATE,
+        leftoverRoots: [],
+        runExec(_cmd, { record }) {
+          const nm = path.join(record.tree, 'node_modules');
+          fs.unlinkSync(nm);
+          fs.mkdirSync(nm);
+          fs.writeFileSync(path.join(nm, 'evidence.txt'), 'UNIQUE_REVIEW_EVIDENCE=KEEP_ME\n');
+          fs.writeFileSync(
+            record.outFile,
+            `🤖 Beta｜來源：beta CLI｜審 \`${wsHead.slice(0, 7)}\`｜r1｜結論：通過\n\n### 本輪實際用的設定\n- ok\n\n### 清單逐項結果\n- ok\n未貼\n`,
+          );
+        },
+        runPost() { r1RevPosts += 1; },
+      });
+      assert.equal(tamperDirRevRes.code, 1, 'R1：.gitignore 忽略 node_modules 時掉包為普通目錄應退 1 拒貼');
+      assert.equal(r1RevPosts, 0, 'R1：掉包後代貼次數必須為 0');
+      assert.equal(
+        fs.readFileSync(path.join(reviewFolder, 'tree', 'node_modules', 'evidence.txt'), 'utf8'),
+        'UNIQUE_REVIEW_EVIDENCE=KEEP_ME\n',
+        'R1：--run --purge 失敗時不得刪掉掉包目錄內的現場證據',
+      );
+      const tamperCloseRevRes = main(['--close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] });
+      assert.equal(tamperCloseRevRes.code, 1, 'R1：--close --purge 遇掉包目錄應退 1 拒收');
+      assert.equal(
+        fs.readFileSync(path.join(reviewFolder, 'tree', 'node_modules', 'evidence.txt'), 'utf8'),
+        'UNIQUE_REVIEW_EVIDENCE=KEEP_ME\n',
+        'R1：--close --purge 拒收後現場證據仍須保留',
+      );
+      // 測試改指其他目錄同樣拒貼拒收
+      fs.rmSync(path.join(reviewFolder, 'tree', 'node_modules'), { recursive: true, force: true });
+      fs.symlinkSync(altTargetDir, path.join(reviewFolder, 'tree', 'node_modules'), 'dir');
+      assert.equal(main(['--post', '7', '--dir', dir], { settings: s, platform: fakePlatform(wsAns), runPost() { r1RevPosts += 1; } }).code, 1);
+      assert.equal(r1RevPosts, 0);
+      assert.equal(main(['--close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] }).code, 1);
+      // 還原正確連結後收樹清除
+      fs.unlinkSync(path.join(reviewFolder, 'tree', 'node_modules'));
+      fs.symlinkSync(path.join(reviewFolder, 'deps', 'tree', 'node_modules'), path.join(reviewFolder, 'tree', 'node_modules'), 'dir');
+      assert.equal(main(['--close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] }).code, 0);
+
+      let r1ScanPosts = 0;
+      const tamperScanRes = main(['--scan', '7', '--run', '--purge', '--dir', dir], {
+        settings: s,
+        platform: fakePlatform(wsWithPass),
+        cwd: implWt,
+        leftoverRoots: [],
+        runExec(_cmd, { record }) {
+          const nm = path.join(record.tree, 'node_modules');
+          fs.unlinkSync(nm);
+          fs.mkdirSync(nm);
+          fs.writeFileSync(path.join(nm, 'scan-evidence.txt'), 'UNIQUE_SCAN_EVIDENCE=KEEP_ME\n');
+          fs.writeFileSync(
+            record.outFile,
+            `🔍 Gamma｜來源：Grok CLI｜掃 \`${wsHead.slice(0, 7)}\`\n\n### 本次實際用的設定\n- ok\n\n### 掃描結果\n- 零發現\n未貼\n`,
+          );
+        },
+        runPost() { r1ScanPosts += 1; },
+      });
+      assert.equal(tamperScanRes.code, 1, 'R1：掃描樹 .gitignore 忽略 node_modules 時掉包為普通目錄應退 1 拒貼');
+      assert.equal(r1ScanPosts, 0);
+      assert.equal(
+        fs.readFileSync(path.join(scanFolder, 'tree', 'node_modules', 'scan-evidence.txt'), 'utf8'),
+        'UNIQUE_SCAN_EVIDENCE=KEEP_ME\n',
+      );
+      assert.equal(main(['--scan-close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] }).code, 1);
+      assert.equal(
+        fs.readFileSync(path.join(scanFolder, 'tree', 'node_modules', 'scan-evidence.txt'), 'utf8'),
+        'UNIQUE_SCAN_EVIDENCE=KEEP_ME\n',
+      );
+      fs.rmSync(path.join(scanFolder, 'tree', 'node_modules'), { recursive: true, force: true });
+      fs.symlinkSync(altTargetDir, path.join(scanFolder, 'tree', 'node_modules'), 'dir');
+      assert.equal(main(['--scan-post', '7', '--dir', dir], { settings: s, platform: fakePlatform(wsWithPass), runPost() { r1ScanPosts += 1; } }).code, 1);
+      assert.equal(r1ScanPosts, 0);
+      assert.equal(main(['--scan-close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] }).code, 1);
+
+      // BACKLOG.md 第 91 行負例：掃描樹就算連結已還原、同 HEAD 且乾淨，若不在原倉庫 git worktree 登記中，scanPost 仍須拒貼
+      fs.unlinkSync(path.join(scanFolder, 'tree', 'node_modules'));
+      fs.symlinkSync(path.join(scanFolder, 'deps', 'tree', 'node_modules'), path.join(scanFolder, 'tree', 'node_modules'), 'dir');
+      const unregScanTree = path.join(altTargetDir, 'unregistered-scan-tree');
+      sh(altTargetDir, 'clone', '-q', r.dir, unregScanTree);
+      sh(unregScanTree, 'checkout', '--detach', '-q', wsHead);
+      const scanRecPath = path.join(scanFolder, 'scan.json');
+      const origScanRecText = fs.readFileSync(scanRecPath, 'utf8');
+      const mutatedScanRec = JSON.parse(origScanRecText);
+      mutatedScanRec.tree = unregScanTree;
+      delete mutatedScanRec.linkedNodeModulesByTree;
+      delete mutatedScanRec.linkedNodeModules;
+      fs.writeFileSync(scanRecPath, `${JSON.stringify(mutatedScanRec, null, 1)}\n`);
+      const unregPostRes = main(['--scan-post', '7', '--dir', dir], {
+        settings: s,
+        platform: fakePlatform(wsWithPass),
+        runPost() { r1ScanPosts += 1; },
+      });
+      assert.equal(unregPostRes.code, 1, '未登記於原倉庫 git worktree 的乾淨同 HEAD 掃描樹應拒貼');
+      assert.match(unregPostRes.lines.join('\n'), /不在 git worktree 登記裡/u);
+      assert.equal(r1ScanPosts, 0);
+      fs.writeFileSync(scanRecPath, origScanRecText);
+      assert.equal(main(['--scan-close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] }).code, 0);
+
+      // R2 外部連結防呆（一）：若來源 node_modules 內含指向工作樹外的連結，應明確拒絕啟動
+      const extLinkPath = path.join(r.dir, 'node_modules', 'ext-escape');
+      fs.symlinkSync(altTargetDir, extLinkPath, 'dir');
+      try {
+        const extRes = main(['7', '--reviewer', 'Beta', '--dir', dir], {
+          settings: s,
+          platform: fakePlatform(wsAns),
+          cwd: implWt,
+          template: TEMPLATE,
+          leftoverRoots: [],
+        });
+        assert.equal(extRes.code, 2, '指向工作樹外的依賴連結應退 2 拒絕啟動');
+        assert.match(extRes.lines.join('\n'), /指向工作樹外的連結/u);
+      } finally {
+        fs.unlinkSync(extLinkPath);
+      }
+
+      // R2 外部連結防呆（二）：來源工作樹的 packages/shared 是普通目錄，但受審提交把 packages/shared（或其內部檔案）改成指向樹外的符號連結時，
+      //     必須在重綁與核驗時識破並退 2 拒絕啟動，防止審查樹與突變副本透過工作區連結共用或覆寫樹外檔案
+      const extSharedTarget = path.join(altTargetDir, 'ext-shared-pkg');
+      fs.mkdirSync(extSharedTarget, { recursive: true });
+      fs.writeFileSync(path.join(extSharedTarget, 'package.json'), '{"name":"ws-shared","type":"module","main":"index.js"}\n');
+      fs.writeFileSync(path.join(extSharedTarget, 'index.js'), 'export const wsValue = "EXTERNAL_UNREVIEWED";\n');
+      sh(implWt, 'rm', '-rf', 'packages/shared');
+      fs.mkdirSync(path.join(implWt, 'packages'), { recursive: true });
+      fs.symlinkSync(extSharedTarget, path.join(implWt, 'packages', 'shared'), 'dir');
+      sh(implWt, 'add', 'packages/shared');
+      sh(implWt, 'commit', '-q', '-m', 'replace workspace package with external symlink');
+      const badWsHead = sh(implWt, 'rev-parse', 'HEAD');
+      sh(implWt, 'checkout', '--detach', '-q', wsHead);
+      const badWsAns = {
+        ...wsAns,
+        change: { ...wsAns.change, headSha: badWsHead },
+      };
+      const badWsRevRes = main(['7', '--reviewer', 'Beta', '--dir', dir], {
+        settings: s,
+        platform: fakePlatform(badWsAns),
+        cwd: implWt,
+        template: TEMPLATE,
+        leftoverRoots: [],
+      });
+      assert.equal(badWsRevRes.code, 2, 'R2：受審提交將工作區套件改為樹外連結時應退 2 拒絕啟動');
+      assert.match(badWsRevRes.lines.join('\n'), /本機套件連結目標指向工作樹外/u);
+      assert.ok(!fs.existsSync(reviewFolder), 'R2：拒啟回滾後不應留下複審容器');
+      assert.equal(
+        fs.readFileSync(path.join(extSharedTarget, 'index.js'), 'utf8'),
+        'export const wsValue = "EXTERNAL_UNREVIEWED";\n',
+        'R2：樹外目錄內容不得被動到',
+      );
+
+      // R2 外部連結防呆（三）：間接外部連結（packages/shared/src -> ../../internal-bridge，而 internal-bridge/index.js 指向樹外）
+      sh(implWt, 'checkout', '--detach', '-q', wsHead);
+      fs.mkdirSync(path.join(implWt, 'internal-bridge'), { recursive: true });
+      fs.symlinkSync(path.join(extSharedTarget, 'index.js'), path.join(implWt, 'internal-bridge', 'index.js'));
+      fs.symlinkSync('../../internal-bridge', path.join(implWt, 'packages', 'shared', 'src'), 'dir');
+      fs.writeFileSync(path.join(implWt, 'packages', 'shared', 'index.js'), 'export { wsValue } from "./src/index.js";\n');
+      sh(implWt, 'add', 'internal-bridge/index.js', 'packages/shared/src', 'packages/shared/index.js');
+      sh(implWt, 'commit', '-q', '-m', 'indirect external symlink via internal directory link');
+      const indirectExtHead = sh(implWt, 'rev-parse', 'HEAD');
+      sh(implWt, 'checkout', '--detach', '-q', wsHead);
+      let indirectPosts = 0;
+      const indirectExtRes = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+        settings: s,
+        platform: fakePlatform({ ...wsAns, change: { ...wsAns.change, headSha: indirectExtHead } }),
+        cwd: implWt,
+        template: TEMPLATE,
+        leftoverRoots: [],
+        runPost() { indirectPosts += 1; },
+      });
+      assert.equal(indirectExtRes.code, 2, 'R2：經樹內目錄連結二階指向樹外時應退 2 拒絕啟動');
+      assert.match(indirectExtRes.lines.join('\n'), /本機套件內含指向工作樹外的連結/u);
+      assert.equal(indirectPosts, 0, 'R2：間接外部連結拒啟時代貼次數必須為 0');
+      assert.ok(!fs.existsSync(reviewFolder), 'R2：間接外部連結拒啟回滾後不應留下複審容器');
+
+      // R2 外部連結防呆（四）：巢狀 node_modules 指向樹外（packages/shared/node_modules -> 樹外目錄）
+      sh(implWt, 'checkout', '--detach', '-q', wsHead);
+      fs.symlinkSync(extSharedTarget, path.join(implWt, 'packages', 'shared', 'node_modules'), 'dir');
+      sh(implWt, 'add', '-f', 'packages/shared/node_modules');
+      sh(implWt, 'commit', '-q', '-m', 'nested node_modules symlink to outside');
+      const nestedNmExtHead = sh(implWt, 'rev-parse', 'HEAD');
+      sh(implWt, 'checkout', '--detach', '-q', wsHead);
+      let nestedNmPosts = 0;
+      const nestedNmExtRes = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+        settings: s,
+        platform: fakePlatform({ ...wsAns, change: { ...wsAns.change, headSha: nestedNmExtHead } }),
+        cwd: implWt,
+        template: TEMPLATE,
+        leftoverRoots: [],
+        runPost() { nestedNmPosts += 1; },
+      });
+      assert.equal(nestedNmExtRes.code, 2, 'R2：工作區套件內巢狀 node_modules 指向樹外時應退 2 拒絕啟動');
+      assert.match(nestedNmExtRes.lines.join('\n'), /本機套件內含指向工作樹外的連結/u);
+      assert.equal(nestedNmPosts, 0, 'R2：巢狀 node_modules 拒啟時代貼次數必須為 0');
+      assert.ok(!fs.existsSync(reviewFolder), 'R2：巢狀 node_modules 拒啟回滾後不應留下複審容器');
+
+      // R2 外部連結防呆（五）：工作樹內 symlink + .. 誘餌逃逸（packages/shared/src -> ../bridge/../leak，其中 packages/bridge -> deep/shared、packages/deep/leak -> 樹外，另設樹內 packages/leak 誘餌）
+      sh(implWt, 'checkout', '--detach', '-q', wsHead);
+      fs.mkdirSync(path.join(implWt, 'packages', 'deep', 'shared'), { recursive: true });
+      fs.writeFileSync(path.join(implWt, 'packages', 'deep', 'shared', '.keep'), '\n');
+      fs.mkdirSync(path.join(implWt, 'packages', 'leak'), { recursive: true });
+      fs.writeFileSync(path.join(implWt, 'packages', 'leak', 'index.js'), 'export const wsValue = "IN_TREE_DECOY";\n');
+      fs.symlinkSync('deep/shared', path.join(implWt, 'packages', 'bridge'), 'dir');
+      fs.symlinkSync(extSharedTarget, path.join(implWt, 'packages', 'deep', 'leak'), 'dir');
+      fs.symlinkSync('../bridge/../leak', path.join(implWt, 'packages', 'shared', 'src'), 'dir');
+      fs.writeFileSync(path.join(implWt, 'packages', 'shared', 'index.js'), 'export { wsValue } from "./src/index.js";\n');
+      sh(
+        implWt,
+        'add',
+        'packages/deep/shared/.keep',
+        'packages/leak/index.js',
+        'packages/bridge',
+        'packages/deep/leak',
+        'packages/shared/src',
+        'packages/shared/index.js',
+      );
+      sh(implWt, 'commit', '-q', '-m', 'symlink plus dotdot escape with in-tree decoy');
+      const dotdotExtHead = sh(implWt, 'rev-parse', 'HEAD');
+      sh(implWt, 'checkout', '--detach', '-q', wsHead);
+      let dotdotExtPosts = 0;
+      const dotdotExtRes = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+        settings: s,
+        platform: fakePlatform({ ...wsAns, change: { ...wsAns.change, headSha: dotdotExtHead } }),
+        cwd: implWt,
+        template: TEMPLATE,
+        leftoverRoots: [],
+        runPost() { dotdotExtPosts += 1; },
+      });
+      assert.equal(dotdotExtRes.code, 2, 'R2：工作樹內 symlink + .. 穿越指向樹外時應退 2 拒絕啟動');
+      assert.match(dotdotExtRes.lines.join('\n'), /本機套件內含指向工作樹外的連結/u);
+      assert.equal(dotdotExtPosts, 0, 'R2：symlink + .. 拒啟時代貼次數必須為 0');
+      assert.ok(!fs.existsSync(reviewFolder), 'R2：symlink + .. 拒啟回滾後不應留下複審容器');
+      assert.equal(
+        fs.readFileSync(path.join(extSharedTarget, 'index.js'), 'utf8'),
+        'export const wsValue = "EXTERNAL_UNREVIEWED";\n',
+        'R2：樹外目錄內容不得被動到',
+      );
+
+      // R2 外部連結防呆（六）：node_modules 內相對連結含 symlink + .. 穿過工作區連結指向樹外（node_modules/fake-dep/alias.js -> ../ws-shared/../payload.js，且設 node_modules/payload.js 誘餌）
+      const nmDecoyPayload = path.join(r.dir, 'node_modules', 'payload.js');
+      const nmAliasLink = path.join(depDir, 'alias.js');
+      const wsPayloadInMain = path.join(r.dir, 'packages', 'payload.js');
+      fs.writeFileSync(nmDecoyPayload, 'export const payload = "NM_DECOY";\n');
+      fs.writeFileSync(wsPayloadInMain, 'export const payload = "MAIN_SAFE_PAYLOAD";\n');
+      fs.symlinkSync('../ws-shared/../payload.js', nmAliasLink);
+      try {
+        sh(implWt, 'checkout', '--detach', '-q', wsHead);
+        fs.symlinkSync(path.join(extSharedTarget, 'index.js'), path.join(implWt, 'packages', 'payload.js'));
+        sh(implWt, 'add', 'packages/payload.js');
+        sh(implWt, 'commit', '-q', '-m', 'workspace payload symlink to outside via nm bridge dotdot');
+        const nmDotdotExtHead = sh(implWt, 'rev-parse', 'HEAD');
+        sh(implWt, 'checkout', '--detach', '-q', wsHead);
+        let nmDotdotPosts = 0;
+        const nmDotdotRes = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+          settings: s,
+          platform: fakePlatform({ ...wsAns, change: { ...wsAns.change, headSha: nmDotdotExtHead } }),
+          cwd: implWt,
+          template: TEMPLATE,
+          leftoverRoots: [],
+          runPost() { nmDotdotPosts += 1; },
+        });
+        assert.equal(nmDotdotRes.code, 2, 'R2：node_modules 內相對連結經 symlink + .. 穿過工作區連結指向樹外時應退 2 拒絕啟動');
+        assert.match(nmDotdotRes.lines.join('\n'), /指向工作樹外/u);
+        assert.equal(nmDotdotPosts, 0, 'R2：node_modules symlink + .. 拒啟時代貼次數必須為 0');
+        assert.ok(!fs.existsSync(reviewFolder), 'R2：node_modules symlink + .. 拒啟回滾後不應留下複審容器');
+      } finally {
+        fs.rmSync(nmAliasLink, { force: true });
+        fs.rmSync(nmDecoyPayload, { force: true });
+        fs.rmSync(wsPayloadInMain, { force: true });
+      }
+
+      // R2 控制組（七）：安全的樹內目錄連結（含工作區入口本身帶 symlink + ..、內部 symlink + .. 樹內路徑與循環連結防呆）應正常放行，且寫入突變副本不會影響審查樹或主目錄
+      sh(implWt, 'checkout', '--detach', '-q', wsHead);
+      fs.mkdirSync(path.join(implWt, 'safe-internal-src'), { recursive: true });
+      fs.writeFileSync(path.join(implWt, 'safe-internal-src', 'real.js'), 'export const wsValue = "COMMITTED_SAFE";\n');
+      fs.symlinkSync('../packages/shared', path.join(implWt, 'safe-internal-src', 'back-loop'), 'dir');
+      fs.mkdirSync(path.join(implWt, 'packages', 'deep', 'shared'), { recursive: true });
+      fs.writeFileSync(path.join(implWt, 'packages', 'deep', 'shared', '.keep'), '\n');
+      fs.mkdirSync(path.join(implWt, 'packages', 'deep', 'safe-dotdot'), { recursive: true });
+      fs.writeFileSync(path.join(implWt, 'packages', 'deep', 'safe-dotdot', 'real.txt'), 'COMMITTED_SAFE_DOTDOT\n');
+      fs.mkdirSync(path.join(implWt, 'packages', 'safe-dotdot'), { recursive: true });
+      fs.writeFileSync(path.join(implWt, 'packages', 'safe-dotdot', 'real.txt'), 'LEXICAL_DECOY_WRONG\n');
+      fs.mkdirSync(path.join(implWt, '..pkg'), { recursive: true });
+      fs.writeFileSync(path.join(implWt, '..pkg', 'data.txt'), 'DOTS_SAFE_VALUE\n');
+      fs.symlinkSync('deep/shared', path.join(implWt, 'packages', 'bridge'), 'dir');
+      fs.symlinkSync('../../safe-internal-src', path.join(implWt, 'packages', 'shared', 'src'), 'dir');
+      fs.symlinkSync('../bridge/../safe-dotdot', path.join(implWt, 'packages', 'shared', 'dotdot-src'), 'dir');
+      fs.writeFileSync(path.join(implWt, 'packages', 'shared', 'index.js'), 'export { wsValue } from "./src/real.js";\n');
+      sh(
+        implWt,
+        'add',
+        'safe-internal-src/real.js',
+        'safe-internal-src/back-loop',
+        'packages/deep/shared/.keep',
+        'packages/deep/safe-dotdot/real.txt',
+        'packages/safe-dotdot/real.txt',
+        '..pkg/data.txt',
+        'packages/bridge',
+        'packages/shared/src',
+        'packages/shared/dotdot-src',
+        'packages/shared/index.js',
+      );
+      sh(implWt, 'commit', '-q', '-m', 'safe internal directory symlink with dotdot, dotprefix, and cycle');
+      const safeInternalHead = sh(implWt, 'rev-parse', 'HEAD');
+      sh(implWt, 'checkout', '--detach', '-q', wsHead);
+
+      // 在主工作樹也準備對應的 packages/bridge -> deep/shared、node_modules/ws-dotdot-entry -> ../packages/bridge/../safe-dotdot 與 node_modules/ws-dotprefix -> ../..pkg
+      const mainDeepShared = path.join(r.dir, 'packages', 'deep', 'shared');
+      const mainDeepDotdot = path.join(r.dir, 'packages', 'deep', 'safe-dotdot');
+      const mainDecoyDotdot = path.join(r.dir, 'packages', 'safe-dotdot');
+      const mainDotPrefixDir = path.join(r.dir, '..pkg');
+      const mainBridgeLink = path.join(r.dir, 'packages', 'bridge');
+      const mainWsDotdotEntry = path.join(r.dir, 'node_modules', 'ws-dotdot-entry');
+      const mainWsDotPrefixEntry = path.join(r.dir, 'node_modules', 'ws-dotprefix');
+      fs.mkdirSync(mainDeepShared, { recursive: true });
+      fs.mkdirSync(mainDeepDotdot, { recursive: true });
+      fs.writeFileSync(path.join(mainDeepDotdot, 'real.txt'), 'MAIN_SAFE_DOTDOT\n');
+      fs.mkdirSync(mainDecoyDotdot, { recursive: true });
+      fs.writeFileSync(path.join(mainDecoyDotdot, 'real.txt'), 'MAIN_LEXICAL_DECOY\n');
+      fs.mkdirSync(mainDotPrefixDir, { recursive: true });
+      fs.writeFileSync(path.join(mainDotPrefixDir, 'data.txt'), 'MAIN_DOTS_SAFE\n');
+      fs.symlinkSync('deep/shared', mainBridgeLink, 'dir');
+      fs.symlinkSync('../packages/bridge/../safe-dotdot', mainWsDotdotEntry, 'dir');
+      fs.symlinkSync('../..pkg', mainWsDotPrefixEntry, 'dir');
+      try {
+        let safeInternalPosts = 0;
+        const safeInternalRes = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+          settings: s,
+          platform: fakePlatform({ ...wsAns, change: { ...wsAns.change, headSha: safeInternalHead } }),
+          cwd: implWt,
+          template: TEMPLATE,
+          leftoverRoots: [],
+          runExec(_cmd, { record }) {
+            for (const targetCwd of [record.tree, record.mutation]) {
+              const probe = spawnSync(
+                process.execPath,
+                ['--input-type=module', '-e', 'const w = await import("ws-shared"); if (w.wsValue !== "COMMITTED_SAFE") process.exit(1);'],
+                { cwd: targetCwd, env: gitEnv(), encoding: 'utf8' },
+              );
+              assert.equal(probe.status, 0, 'R2 控制組：安全內部連結應載入 COMMITTED_SAFE');
+              assert.equal(
+                fs.readFileSync(path.join(targetCwd, 'node_modules', 'ws-shared', 'dotdot-src', 'real.txt'), 'utf8'),
+                'COMMITTED_SAFE_DOTDOT\n',
+                'R2 控制組：安全樹內 symlink + .. 應讀到核心展開後的 COMMITTED_SAFE_DOTDOT',
+              );
+              assert.equal(
+                fs.readFileSync(path.join(targetCwd, 'node_modules', 'ws-dotdot-entry', 'real.txt'), 'utf8'),
+                'COMMITTED_SAFE_DOTDOT\n',
+                'R2 控制組：工作區入口本身含 symlink + .. 時應重綁並讀到受審版 COMMITTED_SAFE_DOTDOT',
+              );
+              assert.equal(
+                fs.readFileSync(path.join(targetCwd, 'node_modules', 'ws-dotprefix', 'data.txt'), 'utf8'),
+                'DOTS_SAFE_VALUE\n',
+                'R2 控制組：合法雙點前綴目錄 ..pkg 應重綁並讀到受審版 DOTS_SAFE_VALUE',
+              );
+            }
+            // 寫入突變副本的內部連結目標，確認審查樹仍讀到 COMMITTED_SAFE，再還原突變副本以通過乾淨檢查
+            const mutRealFile = path.join(record.mutation, 'node_modules', 'ws-shared', 'src', 'real.js');
+            const origMutReal = fs.readFileSync(mutRealFile, 'utf8');
+            fs.writeFileSync(mutRealFile, 'export const wsValue = "MUTATED_INTERNAL";\n');
+            const mutDotdotFile = path.join(record.mutation, 'node_modules', 'ws-dotdot-entry', 'real.txt');
+            const origMutDotdot = fs.readFileSync(mutDotdotFile, 'utf8');
+            fs.writeFileSync(mutDotdotFile, 'MUTATED_DOTDOT\n');
+            const treeCheck = spawnSync(
+              process.execPath,
+              ['--input-type=module', '-e', 'const w = await import("ws-shared"); if (w.wsValue !== "COMMITTED_SAFE") process.exit(1);'],
+              { cwd: record.tree, env: gitEnv(), encoding: 'utf8' },
+            );
+            assert.equal(treeCheck.status, 0, 'R2 控制組：改寫突變副本內部連結目標不得影響唯讀審查樹');
+            assert.equal(
+              fs.readFileSync(path.join(record.tree, 'node_modules', 'ws-dotdot-entry', 'real.txt'), 'utf8'),
+              'COMMITTED_SAFE_DOTDOT\n',
+              'R2 控制組：改寫突變副本入口 symlink + .. 目標不得影響唯讀審查樹',
+            );
+            fs.writeFileSync(mutRealFile, origMutReal);
+            fs.writeFileSync(mutDotdotFile, origMutDotdot);
+            fs.writeFileSync(
+              record.outFile,
+              `🤖 Beta｜來源：beta CLI｜審 \`${safeInternalHead.slice(0, 7)}\`｜r1｜結論：通過\n\n### 本輪實際用的設定\n- ok\n\n### 清單逐項結果\n- ok\n未貼\n`,
+            );
+          },
+          runPost() { safeInternalPosts += 1; },
+        });
+        assert.equal(safeInternalRes.code, 0, `R2 控制組：安全樹內目錄連結應成功執行並收樹：${safeInternalRes.lines.join('\n')}`);
+        assert.equal(safeInternalPosts, 1, 'R2 控制組：代貼次數應為 1');
+        assert.ok(!fs.existsSync(reviewFolder), 'R2 控制組：完成後容器應已清除');
+
+        // 驗證工作區入口本身含 symlink + .. 與雙點前綴目錄 ..pkg 時，掃描（--scan）、直接 materializeIsolatedGitRepo 皆可正常完成
+        const safeScanWithPass = {
+          ...wsAns,
+          change: { ...wsAns.change, headSha: safeInternalHead },
+          comments: [
+            {
+              id: '502',
+              createdAt: '2026-10-20T00:00:00Z',
+              body: `🤖 Beta｜來源：beta CLI｜審 \`${safeInternalHead.slice(0, 7)}\`｜r1｜結論：通過\n\n### 本輪實際用的設定\n- ok\n\n### 清單逐項結果\n- ok\n`,
+            },
+          ],
+        };
+        const safeDotdotScanLaunch = main(['--scan', '7', '--dir', dir], {
+          settings: s,
+          platform: fakePlatform(safeScanWithPass),
+          cwd: implWt,
+          leftoverRoots: [],
+        });
+        assert.equal(safeDotdotScanLaunch.code, 0, `R2 控制組：含 symlink + .. 與 ..pkg 入口之 --scan 應退 0：${safeDotdotScanLaunch.lines.join('\n')}`);
+        const isoDotdotDest = path.join(altTargetDir, 'iso-dotdot-ok');
+        materializeIsolatedGitRepo(safeDotdotScanLaunch.record.tree, isoDotdotDest, {
+          rootRepo: r.dir,
+          baseSha: r.base,
+          headSha: safeInternalHead,
+        });
+        assert.equal(
+          fs.readFileSync(path.join(isoDotdotDest, 'node_modules', 'ws-dotdot-entry', 'real.txt'), 'utf8'),
+          'COMMITTED_SAFE_DOTDOT\n',
+          'R2 控制組：materializeIsolatedGitRepo 複製含 symlink + .. 入口後應讀到 COMMITTED_SAFE_DOTDOT',
+        );
+        assert.equal(
+          fs.readFileSync(path.join(isoDotdotDest, 'node_modules', 'ws-dotprefix', 'data.txt'), 'utf8'),
+          'DOTS_SAFE_VALUE\n',
+          'R2 控制組：materializeIsolatedGitRepo 複製含 ..pkg 雙點前綴入口後應讀到 DOTS_SAFE_VALUE',
+        );
+        const isoDotdotDirect = path.join(altTargetDir, 'iso-dotdot-direct-ok');
+        materializeIsolatedGitRepo(r.dir, isoDotdotDirect, {
+          rootRepo: r.dir,
+          baseSha: r.base,
+          headSha: safeInternalHead,
+        });
+        assert.equal(
+          fs.readFileSync(path.join(isoDotdotDirect, 'node_modules', 'ws-dotdot-entry', 'real.txt'), 'utf8'),
+          'COMMITTED_SAFE_DOTDOT\n',
+          'R2 控制組：直接對含原始 ../packages/bridge/../safe-dotdot 之來源樹執行 materializeIsolatedGitRepo 亦應讀到 COMMITTED_SAFE_DOTDOT',
+        );
+        assert.equal(
+          fs.readFileSync(path.join(isoDotdotDirect, 'node_modules', 'ws-dotprefix', 'data.txt'), 'utf8'),
+          'DOTS_SAFE_VALUE\n',
+          'R2 控制組：直接對含原始 ../..pkg 之來源樹執行 materializeIsolatedGitRepo 亦應讀到 DOTS_SAFE_VALUE',
+        );
+        assert.equal(main(['--scan-close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] }).code, 0);
+      } finally {
+        fs.rmSync(mainWsDotPrefixEntry, { force: true });
+        fs.rmSync(mainWsDotdotEntry, { force: true });
+        fs.rmSync(mainBridgeLink, { force: true });
+        fs.rmSync(mainDotPrefixDir, { recursive: true, force: true });
+        fs.rmSync(path.join(r.dir, 'packages', 'deep'), { recursive: true, force: true });
+        fs.rmSync(mainDecoyDotdot, { recursive: true, force: true });
+      }
+
+      // (八) 來源 node_modules 指向 .git、工作樹根目錄、或含 symlink + .. 之 gitdir／commondir 及目錄型 .git/commondir 時，複審、掃描與隔離複製皆須退 2 拒啟且不得複製 config
+      const mainNm = path.join(r.dir, 'node_modules');
+      const mainDotGit = path.join(r.dir, '.git');
+      const mainGitConfigPath = path.join(mainDotGit, 'config');
+      const origGitConfig = fs.readFileSync(mainGitConfigPath, 'utf8');
+      const backupMainNm = path.join(altTargetDir, 'backup-main-node-modules');
+      const backupDotGit = path.join(altTargetDir, 'backup-main-dotgit');
+      fs.renameSync(mainNm, backupMainNm);
+      fs.writeFileSync(mainGitConfigPath, `${origGitConfig}\n# SYNTHETIC_GIT_CONFIG_SECRET_9999\n`);
+      fs.cpSync(mainDotGit, backupDotGit, { recursive: true });
+      try {
+        const assertRejectedGitSource = (label, targetRel) => {
+          fs.symlinkSync(targetRel, mainNm, 'dir');
+          try {
+            let badExecCalled = false;
+            let badPosts = 0;
+            const badRevRes = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+              settings: s,
+              platform: fakePlatform(wsAns),
+              cwd: r.dir,
+              template: TEMPLATE,
+              leftoverRoots: [],
+              runExec() { badExecCalled = true; },
+              runPost() { badPosts += 1; },
+            });
+            assert.equal(badRevRes.code, 2, `R2（${label}）：複審應退 2 拒絕啟動`);
+            assert.equal(badExecCalled, false, `R2（${label}）：拒絕啟動時不得呼叫模型`);
+            assert.equal(badPosts, 0, `R2（${label}）：拒絕啟動時代貼次數應為 0`);
+            assert.ok(!fs.existsSync(reviewFolder), `R2（${label}）：回滾後不應殘留複審容器`);
+
+            const badScanRes = main(['--scan', '7', '--run', '--purge', '--dir', dir], {
+              settings: s,
+              platform: fakePlatform(wsWithPass),
+              cwd: r.dir,
+              leftoverRoots: [],
+              runExec() { badExecCalled = true; },
+              runPost() { badPosts += 1; },
+            });
+            assert.equal(badScanRes.code, 2, `R2（${label}）：掃描應退 2 拒絕啟動`);
+            assert.equal(badExecCalled, false, `R2（${label}）：掃描拒絕啟動時不得呼叫模型`);
+
+            const badIsoDest = path.join(altTargetDir, `iso-bad-${Buffer.from(label).toString('hex').slice(0, 24)}`);
+            assert.throws(
+              () => materializeIsolatedGitRepo(r.dir, badIsoDest, {
+                rootRepo: r.dir,
+                baseSha: r.base,
+                headSha: wsHead,
+              }),
+              /管理目錄|工作樹/u,
+              `R2（${label}）：materializeIsolatedGitRepo 應拒絕複製`,
+            );
+            assert.ok(
+              !fs.existsSync(path.join(badIsoDest, 'node_modules', 'config')),
+              `R2（${label}）：不得將 .git/config 複製進 node_modules`,
+            );
+          } finally {
+            fs.rmSync(mainNm, { force: true });
+          }
+        };
+
+        assertRejectedGitSource('來源 node_modules -> .git', '.git');
+        assertRejectedGitSource('來源 node_modules -> 工作樹根目錄', '.');
+
+        // 配置 1：.git 檔案寫 gitdir: bridge/../admin，其中 bridge -> deep/leaf（實際 gitdir 為 deep/admin）
+        const deepLeaf = path.join(r.dir, 'deep', 'leaf');
+        const deepAdmin = path.join(r.dir, 'deep', 'admin');
+        const topBridge = path.join(r.dir, 'bridge');
+        fs.mkdirSync(deepLeaf, { recursive: true });
+        fs.symlinkSync('deep/leaf', topBridge, 'dir');
+        fs.renameSync(mainDotGit, deepAdmin);
+        fs.writeFileSync(mainDotGit, 'gitdir: bridge/../admin\n');
+        try {
+          assertRejectedGitSource('gitfile 含 symlink + ..（bridge/../admin）', 'deep/admin');
+        } finally {
+          fs.rmSync(mainDotGit, { force: true });
+          fs.renameSync(deepAdmin, mainDotGit);
+          fs.rmSync(topBridge, { force: true });
+          fs.rmSync(path.join(r.dir, 'deep'), { recursive: true, force: true });
+        }
+
+        // 配置 2：.git 檔案指 per-tree，其中 commondir 寫 bridge/../common，bridge -> ../deep/leaf（實際 commondir 為 deep/common）
+        const perTreeDir = path.join(r.dir, 'per-tree');
+        const deepCommon = path.join(r.dir, 'deep', 'common');
+        fs.mkdirSync(path.join(r.dir, 'deep', 'leaf'), { recursive: true });
+        fs.renameSync(mainDotGit, deepCommon);
+        fs.mkdirSync(perTreeDir, { recursive: true });
+        fs.copyFileSync(path.join(deepCommon, 'HEAD'), path.join(perTreeDir, 'HEAD'));
+        fs.symlinkSync('../deep/leaf', path.join(perTreeDir, 'bridge'), 'dir');
+        fs.writeFileSync(path.join(perTreeDir, 'commondir'), 'bridge/../common\n');
+        fs.writeFileSync(mainDotGit, 'gitdir: per-tree\n');
+        try {
+          assertRejectedGitSource('gitfile + commondir 含 symlink + ..（bridge/../common）', 'deep/common');
+        } finally {
+          fs.rmSync(mainDotGit, { force: true });
+          fs.renameSync(deepCommon, mainDotGit);
+          fs.rmSync(perTreeDir, { recursive: true, force: true });
+          fs.rmSync(path.join(r.dir, 'deep'), { recursive: true, force: true });
+        }
+
+        // 配置 3：.git 是目錄，其中 commondir 寫 ../deep/common（實際共享管理目錄為 deep/common）
+        const dirCommon = path.join(r.dir, 'deep', 'common');
+        fs.mkdirSync(path.join(r.dir, 'deep'), { recursive: true });
+        fs.cpSync(mainDotGit, dirCommon, { recursive: true });
+        fs.writeFileSync(path.join(mainDotGit, 'commondir'), '../deep/common\n');
+        try {
+          assertRejectedGitSource('目錄型 .git 含 commondir（../deep/common）', 'deep/common');
+        } finally {
+          fs.rmSync(path.join(mainDotGit, 'commondir'), { force: true });
+          fs.rmSync(path.join(r.dir, 'deep'), { recursive: true, force: true });
+        }
+      } finally {
+        fs.rmSync(mainDotGit, { recursive: true, force: true });
+        fs.cpSync(backupDotGit, mainDotGit, { recursive: true });
+        fs.writeFileSync(mainGitConfigPath, origGitConfig);
+        fs.renameSync(backupMainNm, mainNm);
+      }
+
+      // 配置 4 與 5（r9 正向控制）：當 gitdir 或目錄型 .git/commondir 含 symlink + .. 且其實際管理目錄在 deep/node_modules、
+      // 但 path.resolve 詞法折疊位置恰好是工作樹根下的正常 node_modules 時，複審、掃描與隔離複製皆不得誤擋普通依賴
+      const assertAllowedOrdinaryNm = (label) => {
+        let okRevPosts = 0;
+        const okRevRes = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+          settings: s,
+          platform: fakePlatform(wsAns),
+          cwd: r.dir,
+          template: TEMPLATE,
+          leftoverRoots: [],
+          runExec(_cmd, { record }) {
+            assert.equal(
+              fs.readFileSync(path.join(record.tree, 'node_modules', 'fake-dep', 'index.js'), 'utf8'),
+              scanSeedContent,
+              `R2 正例（${label}）：審查樹應正常掛載並讀到普通依賴`,
+            );
+            fs.writeFileSync(
+              record.outFile,
+              `🤖 Beta｜來源：beta CLI｜審 \`${wsHead.slice(0, 7)}\`｜r1｜結論：通過\n\n### 本輪實際用的設定\n- ok\n\n### 清單逐項結果\n- ok\n未貼\n`,
+            );
+          },
+          runPost() { okRevPosts += 1; },
+        });
+        assert.equal(okRevRes.code, 0, `R2 正例（${label}）：複審應退 0 正常完成：${okRevRes.lines.join('\n')}`);
+        assert.equal(okRevPosts, 1, `R2 正例（${label}）：複審應代貼 1 次`);
+
+        let okScanPosts = 0;
+        const okScanRes = main(['--scan', '7', '--run', '--purge', '--dir', dir], {
+          settings: s,
+          platform: fakePlatform(wsWithPass),
+          cwd: r.dir,
+          leftoverRoots: [],
+          runExec(_cmd, { record }) {
+            assert.equal(
+              fs.readFileSync(path.join(record.tree, 'node_modules', 'fake-dep', 'index.js'), 'utf8'),
+              scanSeedContent,
+              `R2 正例（${label}）：掃描樹應正常掛載並讀到普通依賴`,
+            );
+            fs.writeFileSync(
+              record.outFile,
+              `🔍 Gamma｜來源：Grok CLI｜掃 \`${wsHead.slice(0, 7)}\`\n\n### 本次實際用的設定\n- ok\n\n### 掃描結果\n- 零發現\n未貼\n`,
+            );
+          },
+          runPost() { okScanPosts += 1; },
+        });
+        assert.equal(okScanRes.code, 0, `R2 正例（${label}）：掃描應退 0 正常完成：${okScanRes.lines.join('\n')}`);
+        assert.equal(okScanPosts, 1, `R2 正例（${label}）：掃描應代貼 1 次`);
+
+        const okIsoDest = path.join(altTargetDir, `iso-ok-${Buffer.from(label).toString('hex').slice(0, 24)}`);
+        materializeIsolatedGitRepo(r.dir, okIsoDest, {
+          rootRepo: r.dir,
+          baseSha: r.base,
+          headSha: wsHead,
+        });
+        assert.equal(
+          fs.readFileSync(path.join(okIsoDest, 'node_modules', 'fake-dep', 'index.js'), 'utf8'),
+          scanSeedContent,
+          `R2 正例（${label}）：materializeIsolatedGitRepo 應正常複製普通依賴`,
+        );
+      };
+
+      // 配置 4：.git 檔案寫 gitdir: bridge/../node_modules（bridge -> deep/leaf，實際管理目錄為 deep/node_modules，詞法折疊位置為根目錄普通 node_modules）
+      try {
+        const posDeepLeaf = path.join(r.dir, 'deep', 'leaf');
+        const posActualGit = path.join(r.dir, 'deep', 'node_modules');
+        const posTopBridge = path.join(r.dir, 'bridge');
+        fs.mkdirSync(posDeepLeaf, { recursive: true });
+        fs.symlinkSync('deep/leaf', posTopBridge, 'dir');
+        fs.renameSync(mainDotGit, posActualGit);
+        fs.writeFileSync(mainDotGit, 'gitdir: bridge/../node_modules\n');
+        assertAllowedOrdinaryNm('gitdir: bridge/../node_modules 詞法折疊至普通 node_modules');
+      } finally {
+        fs.rmSync(path.join(r.dir, 'bridge'), { force: true });
+        fs.rmSync(mainDotGit, { recursive: true, force: true });
+        fs.cpSync(backupDotGit, mainDotGit, { recursive: true });
+        fs.rmSync(path.join(r.dir, 'deep'), { recursive: true, force: true });
+      }
+
+      // 配置 5：.git 為目錄，.git/bridge -> ../deep/nested/leaf，.git/commondir 寫 bridge/../../node_modules（實際共享管理目錄為 deep/node_modules，詞法折疊位置為根目錄普通 node_modules）
+      try {
+        const posNestedLeaf = path.join(r.dir, 'deep', 'nested', 'leaf');
+        const posCommonGit = path.join(r.dir, 'deep', 'node_modules');
+        fs.mkdirSync(posNestedLeaf, { recursive: true });
+        fs.cpSync(mainDotGit, posCommonGit, { recursive: true });
+        fs.symlinkSync('../deep/nested/leaf', path.join(mainDotGit, 'bridge'), 'dir');
+        fs.writeFileSync(path.join(mainDotGit, 'commondir'), 'bridge/../../node_modules\n');
+        assertAllowedOrdinaryNm('.git/commondir: bridge/../../node_modules 詞法折疊至普通 node_modules');
+      } finally {
+        fs.rmSync(mainDotGit, { recursive: true, force: true });
+        fs.cpSync(backupDotGit, mainDotGit, { recursive: true });
+        fs.rmSync(path.join(r.dir, 'deep'), { recursive: true, force: true });
+      }
+
+      // R4 與 BACKLOG.md 第 89 行：materializeIsolatedGitRepo 驗證 cp 退非零、啟動失敗、部分複製皆須拋錯並阻止 runGrokExec 啟動模型或代貼
+      const isoScanLaunch = main(['--scan', '7', '--dir', dir], {
+        settings: s,
+        platform: fakePlatform(wsWithPass),
+        cwd: implWt,
+        leftoverRoots: [],
+      });
+      assert.equal(isoScanLaunch.code, 0);
+      const isoDestOk = path.join(altTargetDir, 'iso-ok');
+      materializeIsolatedGitRepo(isoScanLaunch.record.tree, isoDestOk, {
+        rootRepo: r.dir,
+        baseSha: r.base,
+        headSha: wsHead,
+        extraShas: [r.head],
+      });
+      assert.equal(
+        spawnSync('git', ['cat-file', '-e', `${r.head}^{commit}`], { cwd: isoDestOk, env: gitEnv() }).status,
+        0,
+        '非祖先 extraShas 提交仍須保留在盒內物件庫',
+      );
+      const isoProbe = spawnSync(
+        process.execPath,
+        ['--input-type=module', '-e', 'const m = await import("fake-dep"); const w = await import("ws-shared"); if (m.depValue !== "SCAN_SEED_CONTENT_KEEP_EXACT" || w.wsValue !== "HEAD_VALUE") process.exit(1);'],
+        { cwd: isoDestOk, env: gitEnv(), encoding: 'utf8' },
+      );
+      assert.equal(isoProbe.status, 0, '盒內隔離工作樹應可正常載入一般依賴與工作區依賴');
+
+      // 驗證 cp 退 42（含已完整複製檔案但退 42）、啟動失敗（ENOENT）、部分複製（退 0 但漏拷檔案）時 materializeIsolatedGitRepo 與 runGrokExec 皆拒絕啟動模型且不代貼
+      const r4AuthFile = path.join(altTargetDir, 'r4-auth.json');
+      const r4EntryKey = `${GROK_PINNED_ISSUER}::${GROK_PINNED_CLIENT_ID}`;
+      fs.writeFileSync(
+        r4AuthFile,
+        JSON.stringify({
+          [r4EntryKey]: {
+            auth_mode: 'oidc',
+            user_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+            create_time: '2026-10-19T00:00:00.000Z',
+            expires_at: '2026-10-19T02:00:00.000Z',
+            oidc_issuer: GROK_PINNED_ISSUER,
+            oidc_client_id: GROK_PINNED_CLIENT_ID,
+            key: 'R4-KEY-SECRET-9999',
+            refresh_token: 'R4-REFRESH-SECRET-9999',
+          },
+        }),
+        { mode: 0o600 },
+      );
+      const r4GrokBin = path.join(altTargetDir, 'fake-grok');
+      fs.writeFileSync(r4GrokBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      for (const [caseLabel, fakeCopySpawn] of [
+        [
+          'cp 退 42（已複製但狀態碼非零）',
+          (cmd, args) => {
+            spawnSync(cmd, args, { encoding: 'utf8' });
+            return { status: 42, signal: null, error: null, stdout: '', stderr: 'simulated cp failure' };
+          },
+        ],
+        ['cp 起不來', () => ({ status: null, signal: null, error: Object.assign(new Error('spawn cp ENOENT'), { code: 'ENOENT' }), stdout: '', stderr: '' })],
+        [
+          'cp 部分複製（退 0 但漏檔）',
+          (_cmd, args) => {
+            const dst = args[args.length - 1];
+            fs.mkdirSync(path.join(dst, 'fake-dep'), { recursive: true });
+            fs.writeFileSync(path.join(dst, 'fake-dep', 'package.json'), pkgJsonContent);
+            // 故意漏拷 fake-dep/index.js 與 ws-shared
+            return { status: 0, signal: null, error: null, stdout: '', stderr: '' };
+          },
+        ],
+      ]) {
+        assert.throws(
+          () => materializeIsolatedGitRepo(isoScanLaunch.record.tree, path.join(altTargetDir, `iso-fail-${ Buffer.from(caseLabel).toString('hex') }`), {
+            rootRepo: r.dir,
+            baseSha: r.base,
+            headSha: wsHead,
+            copySpawn: fakeCopySpawn,
+          }),
+          /node_modules/u,
+          `R4（${caseLabel}）：materializeIsolatedGitRepo 應拋出 LaunchError`,
+        );
+        let childCalled = false;
+        let r4Posts = 0;
+        const grokFailRes = await runGrokExec([
+          '--mode', 'scan',
+          '--cwd', isoScanLaunch.record.tree,
+          '--model', 'grok-4.7',
+          '--reasoning-effort', 'xhigh',
+          '--prompt-file', isoScanLaunch.record.promptFile,
+          '--out', isoScanLaunch.record.outFile,
+        ], {
+          authFile: r4AuthFile,
+          authOpts: { now: () => Date.parse('2026-10-19T00:05:00.000Z') },
+          grokBin: r4GrokBin,
+          probeFn: () => ({ ok: true }),
+          copySpawn: fakeCopySpawn,
+          spawnGrok: async () => {
+            childCalled = true;
+            return { status: 0, stdout: `🔍 Gamma｜來源：Grok CLI｜掃 \`${wsHead.slice(0, 7)}\`\n\n- 零發現\n`, stderr: '' };
+          },
+        });
+        assert.equal(grokFailRes.code, 2, `R4（${caseLabel}）：runGrokExec 應退 2 拒絕啟動`);
+        assert.equal(childCalled, false, `R4（${caseLabel}）：不可啟動模型子程序`);
+        const postAfterFail = main(['--scan-post', '7', '--dir', dir], {
+          settings: s,
+          platform: fakePlatform(wsWithPass),
+          runPost() { r4Posts += 1; },
+        });
+        assert.notEqual(postAfterFail.code, 0, `R4（${caseLabel}）：未完成隔離準備時 --scan-post 不可代貼`);
+        assert.equal(r4Posts, 0, `R4（${caseLabel}）：代貼次數必須為 0`);
+      }
+      assert.equal(main(['--scan-close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] }).code, 0);
+    } finally {
+      fs.rmSync(altTargetDir, { recursive: true, force: true });
+    }
+
+    spawnSync('git', ['worktree', 'remove', '--force', implWt], { cwd: r.dir, env: gitEnv() });
   } finally {
     spawnSync('git', ['worktree', 'prune'], { cwd: r.dir, env: gitEnv() });
     for (const d of [dir, r.dir]) fs.rmSync(d, { recursive: true, force: true });
