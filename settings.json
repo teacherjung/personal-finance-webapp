@@ -24,6 +24,11 @@
    "role": "本工作線技術裁示者（GPT‑6.1 Sol）",
    "id": "Sol",
    "account": "teacherjung"
+  },
+  {
+   "role": "AI 丁（本人指定的單輪複審）",
+   "id": "Gemini",
+   "account": "teacherjung"
   }
  ],
  "accountRule": "只採計登記在參與者表裡的貼文帳號貼的 ❓／⚖️／🚫；沒登記的帳號貼的不採計為有效留痕——它貼的 ❓ 不入待裁，它貼的 ⚖️／🚫 不能替已採計的問題收口（原題繼續待裁），形狀合規的會另列成疑似。⚖️ 另外要由裁示者那一位的帳號貼。結論閘只認識別值、不認帳號。多方共用同一個帳號時，機器分不出是誰親自貼的——那是這套機制的邊界，不是保證。",
@@ -57,6 +62,10 @@
   {
    "tool": "Grok CLI 隔離盒起的正式複審",
    "string": "Grok CLI"
+  },
+  {
+   "tool": "Gemini 原生 CLI 正式複審",
+   "string": "Gemini CLI"
   }
  ],
  "locations": [
@@ -906,7 +915,7 @@
     "tier": "E（不需驗收）"
    },
    {
-    "pattern": "^scripts/(audit-grok-scan|grok-scan|grok-review|grok-final-reply|grok-disk-snapshots|grok-bump|grok-relay|grok-auth-refresh|grok-sandbox-canary|gemini-auth|gemini-client|gemini-relay|gemini-scan|c6-adversarial)\\.js$",
+    "pattern": "^scripts/(audit-grok-scan|grok-scan|grok-review|grok-final-reply|grok-disk-snapshots|grok-bump|grok-relay|grok-auth-refresh|grok-sandbox-canary|gemini-auth|gemini-client|gemini-relay|gemini-scan|gemini-review|c6-adversarial)\\.js$",
     "tier": "E（不需驗收）"
    },
    {
@@ -1058,6 +1067,20 @@
    "machine": "借用 grok-scan.js 的 OS 隔離、試探、執行檔釘值、假鑰匙中繼與掃後比對；正式用途另核材料與原文雜湊。GitHub 憑證不進盒，前端不代貼結論。",
    "promptOnly": "受審材料不改檔靠提示與前後雜湊核對；突變只改盒內副本。盒內沒有原倉庫的 .git，版本以外層核過的清單表示。輸出零不代表通過或已貼文。",
    "verified": "2026-10-15 合成材料與假 runner 行為題；真模型執行與逐字貼文另以每輪 PR 證據核對。"
+  },
+  {
+   "participant": "Gemini",
+   "strongest": "gemini-3.1-pro-preview",
+   "second": "未設定",
+   "maxEffort": "HIGH",
+   "autoMode": "自動選模",
+   "source": "Gemini CLI",
+   "launch": "僅在本人另行指定的 PR 使用；#730 單輪授權及原生接法見 docs/project-collaboration.md。先由官方產生器備樹與掛相依捷徑。",
+   "command": "node {reviewTree}/scripts/gemini-review.js --model {model} --effort {effort} --review-tree {reviewTree} --mutation-copy {mutationCopy} --prompt-file {promptFile} --out-file {outFile} --change {change} --project {project}",
+   "machine": "原生固定模型、workspace HIGH 設定解析、非命中 MCP 排他名單、停用擴充與 hooks/skills/agents；原生 JSON 完整 response 收件，前後核受審來源與本輪準備設定。",
+   "promptOnly": "來源唯讀、僅改突變副本、不得讀真資料與憑證或提交合併靠角色提示；Shell 考題可跑任意程式，沒有 OS 隔離，前後相同不能排除中途改回。CLI 自行處理既有登入，未讀認證到模型材料。",
+   "verified": "2026-10-21：0.64.0 公開設定接線核對；真模型、實跑及正式結論按各輪收據，不把先前靜態掃描算作正式通過。",
+   "preflightSha256": "b20c325932d55a3f453dc49a483102ba8def630f51c71b510a4070674ca7bc1e"
   }
  ],
  "reviewLaunch": {

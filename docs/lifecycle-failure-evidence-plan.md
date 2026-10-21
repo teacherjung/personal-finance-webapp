@@ -10,10 +10,14 @@
 
 原例外繼續拋出，無摘要、終止、殘留、對照損傷、故意失敗、跳過對帳及 contained 反例照原判準。保存失敗也不能把驗證改成成功。finally 照原程序只清本題夾具；刻意留的失敗證據與產品資料分離，預期拒收的合成考題自行清掉自己的證據。
 
-保存射程從 verifyLifecycle 的判讀開始；spawn 啟動或觀察紀錄讀取等更早失敗，不在本支新增保存的射程。新增 helper 僅服務此驗證，不建立通用掃描框架。既有 reporter 的事件轉換與 suite 跳過計數不改；CLI 新接法、GS-D02、產品、前端、HOSTED、實際 App 重啟不在本支。
+保存射程從 verifyLifecycle 的判讀開始；spawn 啟動或觀察紀錄讀取等更早失敗，不在本支新增保存的射程。新增 helper 僅服務此驗證，不建立通用掃描框架。既有 reporter 的事件轉換與 suite 跳過計數不改；GS-D02、產品、前端、HOSTED、實際 App 重啟不在本支。正式複審所需的原生接線前置依下節單輪授權另列。
 
 ## 驗證與復原
 
 用原生 Node child、既有觀察器與 reporter 製造同時有錯誤與根殘留的合成案例，斷言原錯誤可從私有證據讀回、原拒收仍發生、finally 清理後根消失。無摘要與終止訊號另以明示反例驗拒收及證據；正常 child 不產生失敗證據。容量與檔案權限以合成字串核對，不讀真資料。
 
 先確認新題能在沒有保存時因證據斷言失敗，再驗補上後通過。突變分別移除保存與根狀態觀察，須在對應證據斷言紅；不是靠語法錯誤代打。保留既有生命週期全檔及相關考題、三關與當版正式複審。若要復原，回復本支 squash 提交；已有失敗紀錄保留供查核，不修改歷史結果。
+
+## #730 本輪正式複審前置
+
+依[本人單輪授權](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6308077455)與[Sol 完整裁示](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6308173885)，同支只補 Gemini 參與者／來源／命令、專案自有原生薄入口及其行為題，預設分工仍為 Grok。模型固定 gemini-3.1-pro-preview，effort 真正寫入並核得 HIGH；正式讀來源、跑考題及副本突變，完整 JSON.response 不裁切。審查來源與本輪 runtime 設定前後核對，唯讀／秘密邊界如實列 promptOnly。非零、錯版本／角色／模型、缺回覆／格式或來源變動拒收；正常新 HEAD 三關、CI 與正式全審完成才合併。套件同步仍等待其獨立缺陷修復，不改共享入口。

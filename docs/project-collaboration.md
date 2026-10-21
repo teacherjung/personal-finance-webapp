@@ -100,7 +100,7 @@
 |---|---|---|
 | William | 產品決定、需求優先序、畫面驗收、合併前的兩種例外（叫停、改到禁區清單的 PR 點頭，RULES A5）；**審查回饋的例外**（清單刻意不複述在這裡——見「審查回饋處置」） | 不需判斷程式實作細節；**一般的審查回饋修不修不必問他**（2026-08-14 起由**實作者**判斷；⚠️ 2026-09-10 對稱化前這裡寫死 Claude） |
 | Grok | 教學線「外部記者」三職：腳本查核／選題雷達／就地解釋文案讀者測試；程式線＝**唯讀顧問（個案）**及**正式複審（現行分工見下方本人更新）**；操作與界線見下方「Grok（本專案）」 | 正式程式實作、轉正式與合併；不進任何 repo 樹，採隔離材料制；X 輿情不得用於投資決策線 |
-| Gemini | **本人已結束此工作線，停止複審與掃描**；現行分工見AGENTS.md及本檔「本次分工更新」 | 不啟動、登記或等待切換；歷史接線不授予登入憑證、真實資料、程式實作或合併權限 |
+| Gemini | #730 依本人單輪授權做正式複審；其他 PR 不因這次登記自動啟用；接法見「Gemini 原生單輪複審」 | 不讀真實資料或憑證、不做產品實作、提交或合併；歷史 GN 接線不因本輪恢復 |
 | 工讀生×2（教學線，人類；2026-08-17 入列） | 教學影片的**製作與營運**：詞彙短片量產線（圖卡／配音合成／剪輯／品檢／YouTube 上架／頻道數據）＋EPxx 正片線的剪輯與上架＋生產看板（Notion 財金詞彙庫）維護（完整邊界與治理＝教學影片 repo（`../teaching-videos/`，GitHub `teacherjung/teaching-videos`） 的 `AGENTS.md`「治理」節，此處不重抄——**該線 2026-08-25 已分家獨立，規矩層不在本 repo**） | 一切程式實作、正式複審與合併；**不進 repo、無 GitHub 權限**（**與本 repo 的接點一律經 `docs/learning-hub-contract.md`**——它涵蓋 EPxx 與詞彙短片兩條產線，不只詞彙牆 metadata；2026-08-25 分家後這句原本仍寫舊的窄射程，`Grok 掃 #3` 抓到）；不接觸真實財務資料（`data/store.db`）與券商帳號憑證；語音合成與分身生成有閘（判準全文＝該檔「治理」節，**此處刻意不重抄**——重抄過一次就漂成較鬆的一份，`Codex #487 r2 High②`）；分身素材僅 EPxx |
 | CI | 型別、格式、考題的自動守門 | 不判斷產品是否好用、金額口徑是否符合使用者的意思 |
 
@@ -140,7 +140,17 @@
 - **C42｜2026-10-03 UTC 更新**：「掃描啟用」。〔本次操作化〕啟用掃描前試探、掃描後比對；裁示留痕：https://github.com/teacherjung/personal-finance-webapp/pull/659#issuecomment-5971978555 。取代 2026-10-03 UTC 的原話「等等，我反悔了，先不啟用」。
 - **本次分工與隔離｜2026-10-15 UTC**：「本人在旁支已決定：Codex 繼續實作，正式複審暫用 Grok，掃描者改用 Gemini。保留現有沙盒的隔離保護，補上 Gemini 所需接線，驗證成功後再啟用；不取消沙盒、不放寬真實資料與憑證的界線。請依此留痕並安排施工，留意既有分工衝突。」[本人留痕](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6188273106)。
 
-### Gemini 接線沿革（工作線已停止）
+### Gemini 原生單輪複審
+
+- **本人單輪授權（2026-10-21 UTC）**：「本輪正式複審改用 Gemini（建議）」（[原話](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6308077455)）；限 #730，預設分工仍為 Codex／Grok。依 [Sol 技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6308173885)，本輪例外更新下方舊停止文字，不復活 GN 事件協議，也不把靜態掃描當正式複審或後掃。
+- 用官方 `tools/review-launch.js` 的 `--reviewer Gemini` 備同版 detached 審查樹／突變副本、掛相依捷徑，再執行產生器依 reviewers 印出的 `scripts/gemini-review.js` 指令。F3 提示不加料；設定的模型與 HIGH 必須傳入原生 workspace 設定並解析生效。來源為 Gemini CLI；只有本次登記的模型可採計，不自動退檔。
+- 實作者可在原先沒有 .gemini 的審查樹準備本輪 .gemini/settings.json；獨立列為 runtime，不當受審 commit 來源。先核來源／HEAD／乾淨狀態，前後核來源及 runtime 雜湊；只移除本輪實建且未變的設定，空目錄才移除，未知產物不廣刪。不改 ignore、system 或 admin，不覆寫私人設定。正式工具可讀來源、跑考題及改突變副本；MCP 使用非命中排他名單，-e none、hooks／skills／agents／自動記憶停用。
+- 每輪樹外 `native-preflight.mjs` 由實作者按[已公開原碼](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6308323138)準備；`settings.json` 的 Gemini `preflightSha256` 釘來源。入口在送模型前執行並核本輪 launch／HEAD／runtime 設定／CLI／公開 bundle 雜湊與有效 HIGH、工具表、MCP 名單；缺失、非零或不匹配即停。診斷 stdout／stderr 與獨立 JSON 結果分別保留，不裁輸出。這是發審環境核對，原碼使用 literal imports，不改專案 lint。
+- 原生 core 使用實際工具名，兼有排他工具表與免確認授權；其放行優先於本場 policy，不能把 policy 的 Shell 字首列當排他限制。Shell 內考題仍可跑任意程式。審查樹唯讀、禁止讀真資料／憑證及突變只在副本靠提示與前後有限核對，不是 OS 隔離，不證明中途未改回。CLI 自行處理既有登入，內部仍可能讀擴充資料；不把認證或私人記憶放進模型材料。不得建立／修改／送出交易、移動資金、提交、安裝套件、轉正式或合併。
+- 公開平台材料由 reviewer 的唯讀查詢取得。若貼文工具未放行，依固定範本把完整結論留在最後回覆並寫未貼，由 Codex 逐字代貼。公開結論用 repo 相對路徑，不包含本機路徑、憑證或 session 包裝；完整 response 若不宜公開就保留拒收，不改正文。
+- 原生 stdout／stderr 與退出碼保留私有，完整 JSON.response 不裁前言、不挑範例標頭；格式／角色／版本與模型皆核對後才輸出待貼全文。原生程序零不等於通過，仍須當版 F7、F6 對帳、後掃紀錄、合併與驗收。審完按官方程序收樹。
+
+### Gemini 接線沿革（舊工作線已停止；單輪例外見上）
 
 - 原生與網頁方案均停止；[原生準備計畫](gemini-native-formal-plan.md)與[網頁接線計畫](gemini-browser-formal-plan.md)只供追溯，不是施工、資格試跑或啟用授權。#702 已關閉未合併，不移植或追認其未合併成果。
 - 舊固定 provider、launcher、CUA loader、部署與資格／隔離收據均不能作為繼續執行依據。不得換舊工作樹、資格用途、原生 CLI 或等待容量解決後自動續跑；恢復須有本人新的明確指示。

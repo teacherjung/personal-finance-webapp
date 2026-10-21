@@ -85,6 +85,14 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
   assert.deepEqual(tierOf('scripts/check-runtime-health.js'), { path: 'scripts/check-runtime-health.js', tier: settings.acceptance.unknownTier, known: false });
 });
 
+test('Gemini 正式入口精確登記 E，近名維持未知 C', () => {
+  const path = 'scripts/gemini-review.js';
+  assert.deepEqual(tierOf(path), { path, tier: tierId('E'), known: true }, '核 settings.json 後重產 PROJECT-SETTINGS.md，跑 node --test test/acceptance-table.test.js');
+  for (const path of ['scripts/gemini-review-future.js', 'scripts/gemini-review.mjs', 'scripts/gemini-review.js.bak', 'other/scripts/gemini-review.js']) {
+    assert.deepEqual(tierOf(path), { path, tier: tierId('C'), known: false });
+  }
+});
+
 test('來源帳 helper：精確新檔登記為 E', () => {
   const path = 'scripts/grok-disk-snapshots.js';
   assert.deepEqual(tierOf(path), { path, tier: tierId('E'), known: true }, '核對 settings.json 的 acceptance 精確名稱；執行 node tools/build-settings.js 重產，再跑 node --test test/acceptance-table.test.js');

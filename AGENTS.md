@@ -140,6 +140,8 @@
 
 ## William 的常設指示
 
+- **#730 單輪正式複審例外｜2026-10-21 UTC**：本人：「本輪正式複審改用 Gemini（建議）」。[原話](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6308077455)；預設 Codex／Grok 不變，本輪原生接法與界線見[協作附則](docs/project-collaboration.md)。
+
 收到跨 PR 都適用的指示時，收到的那一方當下寫進這一節。
 
 以下日期為 UTC；原話照錄。括號外的背景與解讀依 2026-10-03 經 William 指示採用的交接，與原話分開標示。
