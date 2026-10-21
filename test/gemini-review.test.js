@@ -15,7 +15,13 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const templateFile = new URL('../templates/review-request.md', import.meta.url);
 const template = readFileSync(templateFile, 'utf8');
 const response = `🤖 Gemini｜來源：Gemini CLI｜審 \`${HEAD.slice(0, 7)}\`｜r1｜結論：通過\n### 本輪實際用的設定\n合成結果\n### 清單逐項結果\n合成清單\n### 發現\n本輪提了 0 條\n未貼\n`;
-const result = body => ({ status: 0, signal: null, error: undefined, stdout: JSON.stringify({ response: body, stats: { models: { [MODEL]: {} }, tools: { totalCalls: 3 } } }), stderr: 'synthetic diagnostic\n' });
+const LOOP_MODEL = 'gemini-3-flash-preview';
+const role = (totalRequests = 1, totalErrors = 0) => ({ totalRequests, totalErrors });
+const metrics = roles => ({ api: {
+  totalRequests: Object.values(roles).reduce((sum, item) => sum + item.totalRequests, 0),
+  totalErrors: Object.values(roles).reduce((sum, item) => sum + item.totalErrors, 0),
+}, roles });
+const result = (body, models = { [MODEL]: metrics({ main: role() }) }) => ({ status: 0, signal: null, error: undefined, stdout: JSON.stringify({ response: body, stats: { models, tools: { totalCalls: 3 } } }), stderr: 'synthetic diagnostic\n' });
 const retry = '核對 scripts/gemini-review.js 後跑 node --test test/gemini-review.test.js';
 
 test('完整原生 response 與尾端換行原樣保留', () => {
@@ -230,4 +236,62 @@ test('官方範本原文可送完整入口，固定正文改字在模型前拒�
   await assert.rejects(runReview(changed.args, { ...options, git: changed.git }), /範本事實格以外/u, retry);
   assert.equal(calls, 0, retry);
   assert.equal(existsSync(changed.args.outFile), false, retry);
+});
+
+
+test('完整入口按 main 與已核循環偵測分列模型觀測', async t => {
+  for (const models of [
+    { [MODEL]: metrics({ main: role(2, 1) }), [LOOP_MODEL]: metrics({ utility_loop_detector: role() }) },
+    { [MODEL]: metrics({ main: role(2) }) },
+    { [MODEL]: metrics({ main: role(), utility_loop_detector: role(2) }) },
+  ]) {
+    const f = fixture(t); let calls = 0;
+    const r = result(response, models);
+    await runReview(f.args, { git: f.git, cli: process.execPath, preflight: async () => ({}), invoke: () => { calls++; return r; } });
+    assert.equal(calls, 1, retry);
+    assert.equal(readFileSync(f.args.outFile, 'utf8'), response, retry);
+    const receipt = JSON.parse(readFileSync(f.args.outFile + '.receipt.json'));
+    assert.equal(receipt.mainModel, MODEL, retry);
+    const auxiliary = Object.entries(models).filter(([, value]) => Object.hasOwn(value.roles, 'utility_loop_detector'))
+      .map(([model, value]) => ({ model, role: 'utility_loop_detector', ...value.roles.utility_loop_detector }));
+    assert.deepEqual(receipt.auxiliaryRoles, auxiliary, retry);
+    assert.equal(readFileSync(f.args.outFile + '.stdout.json', 'utf8'), r.stdout, retry);
+  }
+});
+
+test('完整入口拒收錯主審、未知角色及未歸屬請求', async t => {
+  const valid = () => ({ [MODEL]: metrics({ main: role(2) }) });
+  const cases = [
+    ['錯主審', { [LOOP_MODEL]: metrics({ main: role() }) }],
+    ['主模型僅輔助', { [MODEL]: metrics({ utility_loop_detector: role() }), [LOOP_MODEL]: metrics({ main: role() }) }],
+    ['額外模型混入 main', { ...valid(), [LOOP_MODEL]: metrics({ main: role(), utility_loop_detector: role() }) }],
+    ['未知輔助模型', { ...valid(), other: metrics({ utility_loop_detector: role() }) }],
+    ['未知角色', { [MODEL]: metrics({ main: role(), utility_other: role() }) }],
+    ['助手角色', { [MODEL]: metrics({ main: role(), subagent: role() }) }],
+    ['缺角色', { [MODEL]: { api: role(2) } }],
+    ['角色為陣列', { [MODEL]: { api: role(2), roles: [] } }],
+    ['未歸屬請求', { [MODEL]: { api: role(3), roles: { main: role(2) } } }],
+    ['未歸屬錯誤', { [MODEL]: { api: role(2, 1), roles: { main: role(2) } } }],
+    ['沒有成功 main', { [MODEL]: metrics({ main: role(2, 2) }) }],
+    ['沒有 main', { [MODEL]: metrics({ utility_loop_detector: role() }) }],
+    ['缺請求計數', { [MODEL]: { api: role(), roles: { main: { totalErrors: 0 } } } }],
+    ['字串計數', { [MODEL]: { api: role(), roles: { main: role('1') } } }],
+    ['負數計數', { [MODEL]: { api: role(), roles: { main: role(-1) } } }],
+    ['非整數', { [MODEL]: { api: role(), roles: { main: role(0.5) } } }],
+    ['超安全整數', { [MODEL]: { api: role(), roles: { main: role(Number.MAX_SAFE_INTEGER + 1) } } }],
+    ['錯誤超過請求', { [MODEL]: { api: role(), roles: { main: role(1, 2) } } }],
+    ['模型表為陣列', []],
+    ['模型表為 null', null],
+    ['保留字角色', { [MODEL]: { api: role(), roles: JSON.parse('{"__proto__":{"totalRequests":1,"totalErrors":0}}') } }],
+  ];
+  for (const [name, models] of cases) {
+    const f = fixture(t); let calls = 0;
+    const r = result(response, models);
+    await assert.rejects(runReview(f.args, { git: f.git, cli: process.execPath, preflight: async () => ({}), invoke: () => { calls++; return r; } }), /模型|角色|計數|歸屬/u, name + '；' + retry);
+    assert.equal(calls, 1, name + '；' + retry);
+    assert.equal(existsSync(f.args.outFile), false, name + '；' + retry);
+    const receipt = JSON.parse(readFileSync(f.args.outFile + '.receipt.json'));
+    assert.ok(receipt.failure, name + '；' + retry);
+    assert.equal(readFileSync(f.args.outFile + '.stdout.json', 'utf8'), r.stdout, name + '；' + retry);
+  }
 });

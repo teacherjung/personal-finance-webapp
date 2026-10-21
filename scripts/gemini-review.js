@@ -73,19 +73,55 @@ export function requireUnchanged(before, after) {
   requireThat(JSON.stringify(before) === JSON.stringify(after), '受審來源或 runtime 設定有未授權變動');
 }
 
+// 原生循環偵測也會記入 models；資格須按角色判斷，不能把整個集合當主審。
+function modelObservation(models, model) {
+  const ordinary = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+    && [Object.prototype, null].includes(Object.getPrototypeOf(value));
+  const counts = value => {
+    requireThat(ordinary(value), '原生模型計數形狀不符');
+    for (const key of ['totalRequests', 'totalErrors']) requireThat(Object.hasOwn(value, key)
+      && Number.isSafeInteger(value[key]) && value[key] >= 0, '原生模型計數不符');
+    requireThat(value.totalErrors <= value.totalRequests, '原生模型錯誤計數超過請求');
+    return value;
+  };
+  requireThat(model === MODEL && ordinary(models) && Object.keys(models).length > 0, '原生回報模型不符');
+  let successfulMain = false;
+  const auxiliaryRoles = [];
+  for (const [name, row] of Object.entries(models)) {
+    requireThat(name === model || name === 'gemini-3-flash-preview', '原生回報模型不符');
+    requireThat(ordinary(row) && Object.hasOwn(row, 'api') && Object.hasOwn(row, 'roles')
+      && ordinary(row.roles) && Object.keys(row.roles).length > 0, '原生模型缺可用角色');
+    const api = counts(row.api);
+    let requests = 0, errors = 0;
+    for (const [role, value] of Object.entries(row.roles)) {
+      requireThat(role === 'main' || role === 'utility_loop_detector', '原生模型角色未核實');
+      const count = counts(value);
+      if (role === 'main') {
+        requireThat(name === model, '原生主審模型不符');
+        successfulMain ||= name === model && count.totalRequests > count.totalErrors;
+      } else auxiliaryRoles.push({ model: name, role, totalRequests: count.totalRequests, totalErrors: count.totalErrors });
+      requests += count.totalRequests; errors += count.totalErrors;
+    }
+    requireThat(Number.isSafeInteger(requests) && Number.isSafeInteger(errors)
+      && requests === api.totalRequests && errors === api.totalErrors, '原生模型請求或錯誤未完整歸屬角色');
+  }
+  requireThat(successfulMain, '原生模型沒有成功 main 角色請求');
+  return { mainModel: model, auxiliaryRoles };
+}
+
 export function parseReply(raw, result, record, model) {
   requireThat(!result.error && result.status === 0 && !result.signal, '原生 Gemini 未正常完成');
   const json = JSON.parse(raw);
   requireThat(!json.error && typeof json.response === 'string' && json.response.trim(), '原生 JSON 缺完整 response');
-  const models = Object.keys(json.stats?.models ?? {});
-  requireThat(models.length === 1 && models[0] === model, '原生回報模型不符');
+  const observation = modelObservation(json.stats?.models, model);
+  const models = Object.keys(json.stats.models);
   const response = json.response;
   const prefix = `🤖 Gemini｜來源：Gemini CLI｜審 \`${record.head.slice(0, 7)}\`｜r${record.round}｜結論：`;
   const first = response.split(/\r?\n/u)[0];
   requireThat(['通過', '需修改後再審', '不可合併'].some(verdict => first === prefix + verdict), '完整回覆首行不是本輪正式標頭');
   for (const title of ['### 本輪實際用的設定', '### 清單逐項結果']) requireThat(response.split(/\r?\n/u).includes(title), '正式回覆缺固定小標');
   publicReply(response);
-  return { response, models, tools: json.stats?.tools ?? null };
+  return { response, models, ...observation, tools: json.stats?.tools ?? null };
 }
 
 export function prepare(args, git = reviewGit) {
@@ -181,7 +217,7 @@ export async function runReview(args, { git = reviewGit, invoke = nativeCommand,
       unlinkSync(configFile); rmdirSync(runtime);
       requireThat(git(reviewTree, ['status', '--porcelain', '--untracked-files=all']) === '', '審查樹有未知產物');
     } catch (error) { failure ??= error; }
-    save(outFile + '.receipt.json', JSON.stringify({ startedAt, finishedAt: new Date().toISOString(), record: p.record, cli: executable, args: commandArgs, native, status: result?.status ?? null, signal: result?.signal ?? null, error: result?.error?.message ?? null, failure: failure?.message ?? null, sourceBefore: before, preparedRuntime: [{ path: configFile, sha256: hash(settingsText) }], policySha256: hash(policyText), promptSha256: hash(p.prompt), responseSha256: received ? hash(received.response) : null, observedModels: received?.models ?? [], toolStats: received?.tools ?? null, promptOnly: '審查樹唯讀與突變目的地靠提示及前後核對；不是 OS 隔離，也不能證明中途未改回。' }, null, 2) + '\n');
+    save(outFile + '.receipt.json', JSON.stringify({ startedAt, finishedAt: new Date().toISOString(), record: p.record, cli: executable, args: commandArgs, native, status: result?.status ?? null, signal: result?.signal ?? null, error: result?.error?.message ?? null, failure: failure?.message ?? null, sourceBefore: before, preparedRuntime: [{ path: configFile, sha256: hash(settingsText) }], policySha256: hash(policyText), promptSha256: hash(p.prompt), responseSha256: received ? hash(received.response) : null, observedModels: received?.models ?? [], mainModel: received?.mainModel ?? null, auxiliaryRoles: received?.auxiliaryRoles ?? [], toolStats: received?.tools ?? null, promptOnly: '審查樹唯讀與突變目的地靠提示及前後核對；不是 OS 隔離，也不能證明中途未改回。' }, null, 2) + '\n');
   }
   if (failure) throw failure;
   if (!received) throw new Error(`未收到完整正式回覆；${HELP}`);
