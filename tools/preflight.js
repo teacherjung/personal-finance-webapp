@@ -311,8 +311,9 @@ if (require.main === module) {
   } catch (e) {
     result = { code: 2, lines: [`體檢總表：沒預期到的錯誤（${(e && e.code) || (e && e.message) || '不明'}）——算不出來。`] };
   }
+  process.exitCode = result.code;
+  process.stdout.on('error', () => { process.exitCode = 2; });
   process.stdout.write(`${result.lines.join('\n')}\n`);
-  process.exit(result.code);
 }
 
 module.exports = { run, parseArgs, checkSeats, extractCommandSpec, defaultWhich, USAGE };

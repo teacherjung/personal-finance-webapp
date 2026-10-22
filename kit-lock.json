@@ -1,6 +1,6 @@
 {
   "repo": "teacherjung/ai-collab-kit",
-  "version": "8088bcf0b1bfdd9f8697d1ec40101e3e32775f7d",
+  "version": "0d4f3b904b7654f54c152bcac4f7828187f8d126",
   "syncedAt": "2026-10-22",
   "entries": [
     {
@@ -120,7 +120,7 @@
     },
     {
       "mode": "100644",
-      "blob": "f6d089a94123469b8c079214753fb4978d2fe54c",
+      "blob": "832229474e61fcc6c868508df1bf3d5d983a29db",
       "path": "templates/scan-record.md"
     },
     {
@@ -320,12 +320,12 @@
     },
     {
       "mode": "100644",
-      "blob": "d77eaf4fe775dfa4c6faccb3bf02843cf74bd5f8",
+      "blob": "ea5551d21f56d053f322188d8df7d1c140e8b73f",
       "path": "tests/preflight.test.js"
     },
     {
       "mode": "100644",
-      "blob": "2c9fea5862173878e1a2fe6f718db5ff4712296a",
+      "blob": "d1209228c596816d320ac40b6b8a9c6e614da93e",
       "path": "tests/review-launch.test.js"
     },
     {
@@ -500,12 +500,12 @@
     },
     {
       "mode": "100644",
-      "blob": "4bfdb8085523dfd8ecd95aed81e48ff25c97e284",
+      "blob": "ccc54a3791f981f1c6025d8efeece1ae92b91158",
       "path": "tools/preflight.js"
     },
     {
       "mode": "100644",
-      "blob": "0129a7bfab370afc9b8d8e228a777bdfd1e69bac",
+      "blob": "8f049e3a0d18794500366bdf5c8649bc33140ba5",
       "path": "tools/review-launch.js"
     },
     {

@@ -744,12 +744,75 @@ function traceSymlinkInSource(startDirReal, entryName, sourceDir, sourceWorktree
   return { realTarget, wsRawRelTarget };
 }
 
+function isRegisteredMainWorktreeNodeModulesLink(linkPath, realWt, mainWt, realMainWt) {
+  if (!mainWt || !realMainWt || realWt === realMainWt) return false;
+  if (
+    gitOk(realWt, ['ls-files', '--error-unmatch', '--', 'node_modules'])
+    || gitOk(realWt, ['cat-file', '-e', 'HEAD:node_modules'])
+  ) {
+    return false;
+  }
+  try {
+    const lst = fs.lstatSync(linkPath);
+    if (!lst.isSymbolicLink()) return false;
+    const trimmed = String(fs.readlinkSync(linkPath) || '').replace(/[\\/]+$/u, '');
+    if (!trimmed || path.basename(trimmed) !== 'node_modules') return false;
+    const parentSpec = path.dirname(trimmed);
+    let commonAnc = realWt;
+    while (
+      commonAnc !== path.dirname(commonAnc)
+      && commonAnc !== realMainWt
+      && !isInsideDir(realMainWt, commonAnc)
+    ) {
+      commonAnc = path.dirname(commonAnc);
+    }
+    if (path.isAbsolute(trimmed)) {
+      if (trimmed.split(/[\\/]+/u).includes('..')) return false;
+      if (nativeRealpath(parentSpec) !== realMainWt) return false;
+      let cur = parentSpec;
+      while (true) {
+        if (fs.lstatSync(cur).isSymbolicLink()) return false;
+        const realCur = nativeRealpath(cur);
+        if (realCur === commonAnc || !isInsideDir(realCur, commonAnc)) break;
+        const next = path.dirname(cur);
+        if (next === cur) break;
+        cur = next;
+      }
+      return true;
+    }
+    const segs = parentSpec.split(/[\\/]+/u);
+    let cur = realWt;
+    let wentDown = false;
+    for (const seg of segs) {
+      if (!seg || seg === '.') continue;
+      if (seg === '..') {
+        if (wentDown) return false;
+        const up = path.dirname(cur);
+        if (up === cur || !isInsideDir(realWt, up)) return false;
+        cur = up;
+      } else {
+        wentDown = true;
+        const next = path.join(cur, seg);
+        if (fs.lstatSync(next).isSymbolicLink() || !fs.statSync(next).isDirectory()) return false;
+        if (next !== realMainWt && !isInsideDir(realMainWt, next)) return false;
+        cur = next;
+      }
+    }
+    return cur === realMainWt;
+  } catch {
+    return false;
+  }
+}
+
 function findNodeModulesSource(root) {
   const worktrees = [root];
+  let mainWt = null;
+  let realMainWt = null;
   try {
     const firstLine = git(root, ['worktree', 'list', '--porcelain']).split('\n').find((l) => l.startsWith('worktree '));
     if (firstLine) {
-      const mainWt = firstLine.slice(9);
+      mainWt = firstLine.slice(9);
+      realMainWt = nativeRealpath(mainWt);
       if (!worktrees.includes(mainWt)) worktrees.push(mainWt);
     }
   } catch { /* ignore */ }
@@ -770,6 +833,9 @@ function findNodeModulesSource(root) {
       realNm = nativeRealpath(c);
     } catch (e) {
       throw new LaunchError(`來源相依套件目錄連結無效（${c}）：${(e && e.message) || '讀不到目標'}`);
+    }
+    if (isRegisteredMainWorktreeNodeModulesLink(c, realWt, mainWt, realMainWt)) {
+      continue;
     }
     if (!fs.statSync(realNm).isDirectory()) continue;
     if (!isInsideDir(realNm, realWt) || realNm === realWt || isInsideDir(realWt, realNm) || isGitManagementPath(realNm, realWt)) {
@@ -1044,7 +1110,50 @@ function cloneNodeModulesForTree(source, targetTree, storeDir, inspected) {
   verifyCopiedNodeModulesTree(storeDir, inspected, realTree);
 }
 
+function validatePreexistingTreeNodeModules(treeDir) {
+  const dst = path.join(treeDir, 'node_modules');
+  let lst;
+  try {
+    lst = fs.lstatSync(dst);
+  } catch (e) {
+    if (!e || e.code === 'ENOENT') return false;
+    throw e;
+  }
+  if (!lst) return false;
+  let realTree;
+  let realDst;
+  try {
+    realTree = nativeRealpath(treeDir);
+    realDst = nativeRealpath(dst);
+  } catch (e) {
+    throw new LaunchError(`受審工作樹既存的相依套件目錄連結無效（${dst}）：${(e && e.message) || '讀不到目標'}，為保受審版本隔離拒絕啟動`);
+  }
+  if (
+    !fs.statSync(realDst).isDirectory()
+    || !isInsideDir(realDst, realTree)
+    || realDst === realTree
+    || isInsideDir(realTree, realDst)
+    || isGitManagementPath(realDst, realTree)
+  ) {
+    throw new LaunchError(`受審工作樹既存的相依套件目錄連結指向工作樹外或管理目錄（${dst} -> ${realDst}），為保受審版本隔離拒絕啟動`);
+  }
+  try {
+    resolveKernelPathInBoundary(realTree, 'node_modules', realTree, { dotGitPath: path.join(realTree, '.git') });
+  } catch {
+    throw new LaunchError(`受審工作樹既存的相依套件目錄連結指向工作樹外或管理目錄（${dst} -> ${realDst}），為保受審版本隔離拒絕啟動`);
+  }
+  const inspected = inspectNodeModulesTree(realDst, realTree);
+  verifyCopiedNodeModulesTree(realDst, inspected, realTree);
+  return true;
+}
+
 function linkNodeModules(root, folder, trees, rec = null) {
+  const preexisting = new Set();
+  for (const t of trees) {
+    if (validatePreexistingTreeNodeModules(t)) {
+      preexisting.add(t);
+    }
+  }
   const source = findNodeModulesSource(root);
   if (!source) return null;
   const inspected = inspectNodeModulesTree(source.sourceDir, source.worktreeDir);
@@ -1056,13 +1165,8 @@ function linkNodeModules(root, folder, trees, rec = null) {
     }
   }
   for (const t of trees) {
+    if (preexisting.has(t)) continue;
     const dst = path.join(t, 'node_modules');
-    try {
-      fs.lstatSync(dst);
-      continue;
-    } catch (e) {
-      if (!e || e.code !== 'ENOENT') throw e;
-    }
     const storeDir = path.join(folder, 'deps', path.basename(t), 'node_modules');
     cloneNodeModulesForTree(source, t, storeDir, inspected);
     fs.symlinkSync(storeDir, dst, 'dir');
@@ -2930,6 +3034,7 @@ function materializeIsolatedGitRepo(srcTree, destTree, { rootRepo = null, baseSh
     }
   }
 
+  const dstPreexisting = validatePreexistingTreeNodeModules(destTree);
   const nodeModulesSrc = path.join(srcTree, 'node_modules');
   let srcNmStat = null;
   try {
@@ -2937,7 +3042,7 @@ function materializeIsolatedGitRepo(srcTree, destTree, { rootRepo = null, baseSh
   } catch (e) {
     if (!e || e.code !== 'ENOENT') throw e;
   }
-  if (srcNmStat) {
+  if (!dstPreexisting && srcNmStat) {
     let realNodeModulesSrc;
     try {
       realNodeModulesSrc = nativeRealpath(nodeModulesSrc);
@@ -2951,22 +3056,35 @@ function materializeIsolatedGitRepo(srcTree, destTree, { rootRepo = null, baseSh
     const realSrcTree = nativeRealpath(srcTree);
     const realDestTree = nativeRealpath(destTree);
     const allowedContainerDeps = path.join(path.dirname(realSrcTree), 'deps');
+    let inspectWorktree = realSrcTree;
+    let mainWtForIso = null;
+    let realMainWtForIso = null;
+    try {
+      const firstLine = git(srcTree, ['worktree', 'list', '--porcelain']).split('\n').find((l) => l.startsWith('worktree '));
+      if (firstLine) {
+        mainWtForIso = firstLine.slice(9);
+        realMainWtForIso = nativeRealpath(mainWtForIso);
+      }
+    } catch { /* ignore */ }
+    if (isRegisteredMainWorktreeNodeModulesLink(nodeModulesSrc, realSrcTree, mainWtForIso, realMainWtForIso)) {
+      inspectWorktree = realMainWtForIso;
+    }
     if (
-      (!isInsideDir(realNodeModulesSrc, realSrcTree) && !isInsideDir(realNodeModulesSrc, allowedContainerDeps))
-      || realNodeModulesSrc === realSrcTree
-      || isInsideDir(realSrcTree, realNodeModulesSrc)
-      || isGitManagementPath(realNodeModulesSrc, realSrcTree)
+      (!isInsideDir(realNodeModulesSrc, inspectWorktree) && !isInsideDir(realNodeModulesSrc, allowedContainerDeps))
+      || realNodeModulesSrc === inspectWorktree
+      || isInsideDir(inspectWorktree, realNodeModulesSrc)
+      || isGitManagementPath(realNodeModulesSrc, inspectWorktree)
     ) {
       throw new LaunchError(`隔離工作樹的 node_modules 指向工作樹外或管理目錄（${realNodeModulesSrc}），拒絕複製`);
     }
-    if (isInsideDir(realNodeModulesSrc, realSrcTree)) {
+    if (isInsideDir(realNodeModulesSrc, inspectWorktree)) {
       try {
-        resolveKernelPathInBoundary(realSrcTree, 'node_modules', realSrcTree, { dotGitPath: path.join(realSrcTree, '.git') });
+        resolveKernelPathInBoundary(inspectWorktree, 'node_modules', inspectWorktree, { dotGitPath: path.join(inspectWorktree, '.git') });
       } catch {
         throw new LaunchError(`隔離工作樹的 node_modules 指向工作樹外或管理目錄（${realNodeModulesSrc}），拒絕複製`);
       }
     }
-    const inspected = inspectNodeModulesTree(realNodeModulesSrc, realSrcTree);
+    const inspected = inspectNodeModulesTree(realNodeModulesSrc, inspectWorktree);
     const dstNm = path.join(destTree, 'node_modules');
     const cpArgs = process.platform === 'darwin' ? ['-cRP', realNodeModulesSrc, dstNm] : ['-RP', realNodeModulesSrc, dstNm];
     const cpRes = copySpawn('cp', cpArgs, { encoding: 'utf8' });

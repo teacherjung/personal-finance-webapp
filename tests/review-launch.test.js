@@ -3948,6 +3948,304 @@ test('⑭一鍵執行（--run）與收樹清除容器（--purge）：複審與�
         assert.equal(r4Posts, 0, `R4（${caseLabel}）：代貼次數必須為 0`);
       }
       assert.equal(main(['--scan-close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] }).code, 0);
+
+      // (九) 實作工作樹已將 node_modules 連結至同倉庫主工作樹（相對與絕對連結）時，一般備樹、一鍵執行（--run）、掃描與隔離複製皆應通過並保留實作樹連結；指向任意外部目錄仍須拒啟
+      const implNmLink = path.join(implWt, 'node_modules');
+      for (const [linkKind, linkTarget] of [
+        ['相對連結指向主工作樹 node_modules', path.relative(implWt, path.join(r.dir, 'node_modules'))],
+        ['絕對連結指向主工作樹 node_modules', path.join(r.dir, 'node_modules')],
+      ]) {
+        fs.symlinkSync(linkTarget, implNmLink, 'dir');
+        try {
+          // 1. 一般備樹 + 收樹
+          const manualPrepRes = main(['7', '--reviewer', 'Beta', '--dir', dir], {
+            settings: s,
+            platform: fakePlatform(wsAns),
+            cwd: implWt,
+            template: TEMPLATE,
+            leftoverRoots: [],
+          });
+          assert.equal(manualPrepRes.code, 0, `${linkKind}：一般備樹應退 0：${manualPrepRes.lines.join('\n')}`);
+          assert.ok(fs.lstatSync(path.join(reviewFolder, 'tree', 'node_modules')).isSymbolicLink(), `${linkKind}：備樹應掛載獨立 tree/node_modules`);
+          assert.ok(fs.lstatSync(path.join(reviewFolder, 'mutation', 'node_modules')).isSymbolicLink(), `${linkKind}：備樹應掛載獨立 mutation/node_modules`);
+          const manualCloseRes = main(['--close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] });
+          assert.equal(manualCloseRes.code, 0, `${linkKind}：一般備樹後 --close --purge 應退 0`);
+          assert.equal(fs.readlinkSync(implNmLink), linkTarget, `${linkKind}：收樹後實作樹原本的 node_modules 連結必須完好`);
+
+          // 2. 一鍵執行（--run）複審與突變隔離
+          let linkedRunPosts = 0;
+          const linkedRunRes = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+            settings: s,
+            platform: fakePlatform(wsAns),
+            cwd: implWt,
+            template: TEMPLATE,
+            leftoverRoots: [],
+            runExec(_cmd, { record }) {
+              for (const [label, targetCwd] of [['tree', record.tree], ['mutation', record.mutation]]) {
+                const p = spawnSync(
+                  process.execPath,
+                  [
+                    '--input-type=module',
+                    '-e',
+                    'const m = await import("fake-dep"); const w = await import("ws-shared"); if (m.depValue !== "SCAN_SEED_CONTENT_KEEP_EXACT" || w.wsValue !== "HEAD_VALUE") process.exit(1);',
+                  ],
+                  { cwd: targetCwd, env: gitEnv(), encoding: 'utf8' },
+                );
+                assert.equal(p.status, 0, `${linkKind}（${label}）：應載入相依與受審版工作區套件：${p.stderr || ''}`);
+              }
+              fs.writeFileSync(
+                path.join(record.mutation, 'node_modules', 'fake-dep', 'index.js'),
+                'export const depValue = "MUTATED_IN_LINKED_WT_RUN";\n',
+              );
+              assert.equal(fs.readFileSync(path.join(depDir, 'index.js'), 'utf8'), scanSeedContent, `${linkKind}：突變副本寫入不得汙染主工作樹 node_modules`);
+              fs.writeFileSync(
+                record.outFile,
+                `🤖 Beta｜來源：beta CLI｜審 \`${wsHead.slice(0, 7)}\`｜r1｜結論：通過\n\n### 本輪實際用的設定\n- ok\n\n### 清單逐項結果\n- ok\n未貼\n`,
+              );
+            },
+            runPost() { linkedRunPosts += 1; },
+          });
+          assert.equal(linkedRunRes.code, 0, `${linkKind}：複審 --run --purge 應退 0：${linkedRunRes.lines.join('\n')}`);
+          assert.equal(linkedRunPosts, 1, `${linkKind}：應完成代貼`);
+          assert.equal(fs.readlinkSync(implNmLink), linkTarget, `${linkKind}：--run 後實作樹原本的 node_modules 連結必須完好`);
+          assert.equal(fs.readFileSync(path.join(depDir, 'index.js'), 'utf8'), scanSeedContent, `${linkKind}：主工作樹 node_modules 內容必須逐字完好`);
+
+          // 3. 掃描一鍵執行（--scan --run）與直接隔離複製
+          let linkedScanPosts = 0;
+          const linkedScanRes = main(['--scan', '7', '--run', '--purge', '--dir', dir], {
+            settings: s,
+            platform: fakePlatform(wsWithPass),
+            cwd: implWt,
+            leftoverRoots: [],
+            runExec(_cmd, { record }) {
+              const p = spawnSync(
+                process.execPath,
+                [
+                  '--input-type=module',
+                  '-e',
+                  'const m = await import("fake-dep"); const w = await import("ws-shared"); if (m.depValue !== "SCAN_SEED_CONTENT_KEEP_EXACT" || w.wsValue !== "HEAD_VALUE") process.exit(1);',
+                ],
+                { cwd: record.tree, env: gitEnv(), encoding: 'utf8' },
+              );
+              assert.equal(p.status, 0, `${linkKind}（scanTree）：應載入相依與受審版工作區套件`);
+              fs.writeFileSync(
+                record.outFile,
+                `🔍 Gamma｜來源：Grok CLI｜掃 \`${wsHead.slice(0, 7)}\`\n\n### 本次實際用的設定\n- ok\n\n### 掃描結果\n- 零發現\n未貼\n`,
+              );
+            },
+            runPost() { linkedScanPosts += 1; },
+          });
+          assert.equal(linkedScanRes.code, 0, `${linkKind}：掃描 --scan --run --purge 應退 0`);
+          assert.equal(linkedScanPosts, 1);
+
+          const isoFromLinkedWt = path.join(altTargetDir, `iso-linked-${Buffer.from(linkKind).toString('hex').slice(0, 16)}`);
+          materializeIsolatedGitRepo(implWt, isoFromLinkedWt, {
+            rootRepo: r.dir,
+            baseSha: r.base,
+            headSha: wsHead,
+          });
+          assert.equal(
+            fs.readFileSync(path.join(isoFromLinkedWt, 'node_modules', 'fake-dep', 'index.js'), 'utf8'),
+            scanSeedContent,
+            `${linkKind}：直接從實作樹執行 materializeIsolatedGitRepo 應可複製主工作樹相依`,
+          );
+        } finally {
+          fs.rmSync(implNmLink, { force: true });
+        }
+      }
+
+      // 反向驗證：實作工作樹的 node_modules 若指向非主工作樹的外部目錄，仍須退 2 拒絕啟動
+      const outsideNmDir = path.join(altTargetDir, 'outside-nm', 'node_modules');
+      fs.mkdirSync(outsideNmDir, { recursive: true });
+      fs.symlinkSync(outsideNmDir, implNmLink, 'dir');
+      try {
+        const badExtImplRes = main(['7', '--reviewer', 'Beta', '--dir', dir], {
+          settings: s,
+          platform: fakePlatform(wsAns),
+          cwd: implWt,
+          template: TEMPLATE,
+          leftoverRoots: [],
+        });
+        assert.equal(badExtImplRes.code, 2, '實作樹 node_modules 指向任意外部目錄時仍應退 2 拒啟');
+        assert.match(badExtImplRes.lines.join('\n'), /工作樹外/u);
+      } finally {
+        fs.rmSync(implNmLink, { force: true });
+      }
+
+      // R2-1：受審提交若已追蹤指向主工作樹的頂層 node_modules 絕對連結（git add -f node_modules），
+      //       無論從實作樹或主工作樹發動一般備樹、--run --purge 或隔離複製皆須退 2 拒啟，執行與代貼皆為 0 次、來源哨兵不變
+      fs.writeFileSync(path.join(implWt, 'packages', 'shared', 'index.js'), 'export const wsValue = "R2_HEAD_VALUE_20261022";\n');
+      fs.symlinkSync(path.join(r.dir, 'node_modules'), implNmLink, 'dir');
+      sh(implWt, 'add', '-f', 'node_modules', 'packages/shared/index.js');
+      sh(implWt, 'commit', '-q', '-m', 'tracked top-level node_modules symlink to main worktree');
+      const trackedNmHead = sh(implWt, 'rev-parse', 'HEAD');
+      try {
+        const trackedNmAns = {
+          ...wsAns,
+          change: { ...wsAns.change, headSha: trackedNmHead },
+        };
+        let trackedExecCount = 0;
+        let trackedPostCount = 0;
+        for (const [cwdLabel, testCwd] of [['從實作樹啟動', implWt], ['從主工作樹啟動', r.dir]]) {
+          const prepTrackedRes = main(['7', '--reviewer', 'Beta', '--dir', dir], {
+            settings: s,
+            platform: fakePlatform(trackedNmAns),
+            cwd: testCwd,
+            template: TEMPLATE,
+            leftoverRoots: [],
+          });
+          assert.equal(prepTrackedRes.code, 2, `R2-1（${cwdLabel}）：受審提交含已追蹤頂層 node_modules 連結時備樹應退 2 拒啟`);
+          assert.match(prepTrackedRes.lines.join('\n'), /工作樹外|管理目錄/u);
+          assert.ok(!fs.existsSync(reviewFolder), `R2-1（${cwdLabel}）：拒啟回滾後不應留下複審容器`);
+
+          const runTrackedRes = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+            settings: s,
+            platform: fakePlatform(trackedNmAns),
+            cwd: testCwd,
+            template: TEMPLATE,
+            leftoverRoots: [],
+            runExec(_cmd, { record }) {
+              trackedExecCount += 1;
+              fs.writeFileSync(
+                path.join(record.mutation, 'node_modules', 'fake-dep', 'index.js'),
+                'export const depValue = "CORRUPTED_MAIN_SOURCE";\n',
+              );
+            },
+            runPost() { trackedPostCount += 1; },
+          });
+          assert.equal(runTrackedRes.code, 2, `R2-1（${cwdLabel}）：--run --purge 應退 2 拒啟`);
+          assert.equal(trackedExecCount, 0, `R2-1（${cwdLabel}）：拒啟時執行次數必須為 0`);
+          assert.equal(trackedPostCount, 0, `R2-1（${cwdLabel}）：拒啟時代貼次數必須為 0`);
+          assert.equal(fs.readFileSync(path.join(depDir, 'index.js'), 'utf8'), scanSeedContent, `R2-1（${cwdLabel}）：主工作樹相依哨兵必須完好`);
+          assert.ok(!fs.existsSync(reviewFolder), `R2-1（${cwdLabel}）：--run 拒啟回滾後不應留下複審容器`);
+        }
+
+        assert.throws(
+          () => materializeIsolatedGitRepo(implWt, path.join(altTargetDir, 'iso-tracked-nm'), {
+            rootRepo: r.dir,
+            baseSha: r.base,
+            headSha: trackedNmHead,
+          }),
+          /工作樹外|管理目錄/u,
+          'R2-1：受審提交含已追蹤頂層 node_modules 連結時 materializeIsolatedGitRepo 應拒絕複製',
+        );
+      } finally {
+        sh(implWt, 'checkout', '--detach', '-f', wsHead);
+        fs.rmSync(implNmLink, { force: true });
+      }
+
+      // R3-1：受審提交若追蹤實體 node_modules 目錄且內含工作區套件連結（node_modules/ws -> ../packages/ws），
+      //       純樹內巢狀連結（控制組）應放行並讀到受審控制哨兵；若 packages/ws/escape 巢狀連向樹外，
+      //       無論一般備樹、--run --purge 或 materializeIsolatedGitRepo 皆須在執行模型前拒啟
+      const extEscapeDir = path.join(altTargetDir, 'r3-external-escape');
+      fs.mkdirSync(extEscapeDir, { recursive: true });
+      fs.writeFileSync(path.join(extEscapeDir, 'sentinel.txt'), 'R3_EXTERNAL_ONLY_SENTINEL_7A91\n');
+
+      // 控制組：已追蹤實體 node_modules/ws -> ../packages/ws，且 packages/ws/inner -> ./sub 仍在樹內
+      fs.mkdirSync(path.join(implWt, 'packages', 'ws', 'sub'), { recursive: true });
+      fs.writeFileSync(path.join(implWt, 'packages', 'ws', 'sub', 'sentinel.txt'), 'R3_CONTROL_SENTINEL_7A91\n');
+      fs.symlinkSync('./sub', path.join(implWt, 'packages', 'ws', 'inner'), 'dir');
+      fs.mkdirSync(path.join(implWt, 'node_modules', 'fake-dep'), { recursive: true });
+      fs.copyFileSync(path.join(depDir, 'package.json'), path.join(implWt, 'node_modules', 'fake-dep', 'package.json'));
+      fs.writeFileSync(path.join(implWt, 'node_modules', 'fake-dep', 'index.js'), scanSeedContent);
+      fs.symlinkSync('../packages/ws', path.join(implWt, 'node_modules', 'ws'), 'dir');
+      sh(implWt, 'add', '-f', 'node_modules/fake-dep/package.json', 'node_modules/fake-dep/index.js', 'node_modules/ws', 'packages/ws/sub/sentinel.txt', 'packages/ws/inner');
+      sh(implWt, 'commit', '-q', '-m', 'tracked node_modules with safe workspace internal link');
+      const r3ControlHead = sh(implWt, 'rev-parse', 'HEAD');
+
+      // 反例：在 packages/ws 新增指向樹外目錄的巢狀連結 escape
+      fs.symlinkSync(extEscapeDir, path.join(implWt, 'packages', 'ws', 'escape'), 'dir');
+      sh(implWt, 'add', '-f', 'packages/ws/escape');
+      sh(implWt, 'commit', '-q', '-m', 'tracked node_modules with workspace nested external escape link');
+      const r3EscapeHead = sh(implWt, 'rev-parse', 'HEAD');
+      try {
+        // 1. 控制組驗證
+        sh(implWt, 'checkout', '--detach', '-f', r3ControlHead);
+        const r3ControlIsoDir = path.join(altTargetDir, 'iso-r3-control');
+        materializeIsolatedGitRepo(implWt, r3ControlIsoDir, {
+          rootRepo: r.dir,
+          baseSha: r.base,
+          headSha: r3ControlHead,
+        });
+        assert.equal(
+          fs.readFileSync(path.join(r3ControlIsoDir, 'node_modules', 'ws', 'inner', 'sentinel.txt'), 'utf8'),
+          'R3_CONTROL_SENTINEL_7A91\n',
+          'R3-1 控制組：隔離建樹應成功並讀到樹內控制哨兵',
+        );
+        let r3ControlPosts = 0;
+        const r3ControlRunRes = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+          settings: s,
+          platform: fakePlatform({ ...wsAns, change: { ...wsAns.change, headSha: r3ControlHead } }),
+          cwd: implWt,
+          template: TEMPLATE,
+          leftoverRoots: [],
+          runExec(_cmd, { record }) {
+            for (const targetCwd of [record.tree, record.mutation]) {
+              assert.equal(
+                fs.readFileSync(path.join(targetCwd, 'node_modules', 'ws', 'inner', 'sentinel.txt'), 'utf8'),
+                'R3_CONTROL_SENTINEL_7A91\n',
+                'R3-1 控制組：--run 審查樹與突變副本皆應讀到樹內控制哨兵',
+              );
+            }
+            fs.writeFileSync(
+              record.outFile,
+              `🤖 Beta｜來源：beta CLI｜審 \`${r3ControlHead.slice(0, 7)}\`｜r1｜結論：通過\n\n### 本輪實際用的設定\n- ok\n\n### 清單逐項結果\n- ok\n未貼\n`,
+            );
+          },
+          runPost() { r3ControlPosts += 1; },
+        });
+        assert.equal(r3ControlRunRes.code, 0, `R3-1 控制組：--run --purge 應退 0：${r3ControlRunRes.lines.join('\n')}`);
+        assert.equal(r3ControlPosts, 1, 'R3-1 控制組：應完成 1 次代貼');
+
+        // 2. 反例驗證：工作區套件內含指向樹外假目錄的巢狀連結時，隔離建樹、一般備樹與 --run 均須拒啟
+        sh(implWt, 'checkout', '--detach', '-f', r3EscapeHead);
+        const r3EscapeIsoDir = path.join(altTargetDir, 'iso-r3-escape');
+        assert.throws(
+          () => materializeIsolatedGitRepo(implWt, r3EscapeIsoDir, {
+            rootRepo: r.dir,
+            baseSha: r.base,
+            headSha: r3EscapeHead,
+          }),
+          /本機套件內含指向工作樹外的連結/u,
+          'R3-1 反例：已追蹤 node_modules 工作區套件含巢狀外部連結時 materializeIsolatedGitRepo 應拋錯拒啟',
+        );
+
+        const r3EscapeAns = {
+          ...wsAns,
+          change: { ...wsAns.change, headSha: r3EscapeHead },
+        };
+        let r3EscapeExecCount = 0;
+        let r3EscapePostCount = 0;
+        const r3PrepRes = main(['7', '--reviewer', 'Beta', '--dir', dir], {
+          settings: s,
+          platform: fakePlatform(r3EscapeAns),
+          cwd: implWt,
+          template: TEMPLATE,
+          leftoverRoots: [],
+        });
+        assert.equal(r3PrepRes.code, 2, 'R3-1 反例：一般備樹應退 2 拒啟');
+        assert.match(r3PrepRes.lines.join('\n'), /本機套件內含指向工作樹外的連結/u);
+        assert.ok(!fs.existsSync(reviewFolder), 'R3-1 反例：一般備樹拒啟回滾後不應留下複審容器');
+
+        const r3RunRes = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+          settings: s,
+          platform: fakePlatform(r3EscapeAns),
+          cwd: implWt,
+          template: TEMPLATE,
+          leftoverRoots: [],
+          runExec() { r3EscapeExecCount += 1; },
+          runPost() { r3EscapePostCount += 1; },
+        });
+        assert.equal(r3RunRes.code, 2, 'R3-1 反例：--run --purge 應在執行模型前退 2 拒啟');
+        assert.match(r3RunRes.lines.join('\n'), /本機套件內含指向工作樹外的連結/u);
+        assert.equal(r3EscapeExecCount, 0, 'R3-1 反例：執行模型次數必須為 0');
+        assert.equal(r3EscapePostCount, 0, 'R3-1 反例：代貼次數必須為 0');
+        assert.ok(!fs.existsSync(reviewFolder), 'R3-1 反例：--run 拒啟回滾後不應留下複審容器');
+      } finally {
+        sh(implWt, 'checkout', '--detach', '-f', wsHead);
+        fs.rmSync(implNmLink, { recursive: true, force: true });
+        fs.rmSync(path.join(implWt, 'packages', 'ws'), { recursive: true, force: true });
+      }
     } finally {
       fs.rmSync(altTargetDir, { recursive: true, force: true });
     }

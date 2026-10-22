@@ -4,15 +4,18 @@
 //   ②總退出碼：全部子項目退 0 才退 0；任一子項目退非 0（或拋錯）時總退出碼為 2，但後續子項目仍照常跑完印出；
 //   ③AI 座位體檢（checkSeats）：從 reviewers 與 scanner 收集座位、辨識一般指令與 --grok-exec 沙盒指令；
 //     只驗執行檔與 Grok 盒外 auth.json 一般檔案存在（連結檔不算），絕不讀取或輸出 auth.json 裡的私密內容；
-//   ④真的跑一遍指令（空白設定的複本）：設定未填時退 2。
+//   ④真的跑一遍指令（空白設定的複本）：設定未填時退 2；
+//   ⑤真 CLI 長輸出經管線與普通檔案 fd 逐位元組一致（避免超過 64 KiB 管線緩衝未排空即截斷尾段），且 EPIPE 退 2。
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { gitEnv } = require('../tools/git-env.js');
 const { run, parseArgs, checkSeats, extractCommandSpec, defaultWhich } = require('../tools/preflight.js');
-const { runInCopy } = require('./helpers/kit-copy.js');
+const { runInCopy, unfilled } = require('./helpers/kit-copy.js');
 
 test('① parseArgs 與 extractCommandSpec：合法參數與壞參數分類', () => {
   assert.deepEqual(parseArgs([]), { change: undefined, base: undefined, skipDownstream: false, skipSeats: false });
@@ -226,4 +229,100 @@ test('③ checkSeats 與 defaultWhich：4 家 AI 座位檢核、保留明確路�
 
 test('④ 真的跑一遍指令（空白設定的複本）：設定未填，退 2', () => {
   assert.equal(runInCopy('tools/preflight.js', ['--skip-downstream', '--skip-seats']).status, 2);
+});
+
+test('⑤ 真 CLI 長輸出經管線與普通檔案 fd 逐位元組一致；成功退 0、管線寫入錯誤（EPIPE）退 2', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'preflight-pipe-'));
+  try {
+    const kitRoot = path.join(__dirname, '..');
+    fs.cpSync(path.join(kitRoot, 'tools'), path.join(dir, 'tools'), { recursive: true });
+    fs.copyFileSync(path.join(kitRoot, 'rules.json'), path.join(dir, 'rules.json'));
+    const env = gitEnv();
+    delete env.NODE_TEST_CONTEXT;
+    spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: dir, env });
+    spawnSync('git', ['config', 'user.email', 't@e.st'], { cwd: dir, env });
+    spawnSync('git', ['config', 'user.name', 'T'], { cwd: dir, env });
+    fs.writeFileSync(path.join(dir, 'BACKLOG.md'), '# 待辦\n\n- 哨兵待辦項目（TAIL_BACKLOG_SENTINEL_9999）｜settings.json｜當動到設定時\n');
+    spawnSync('git', ['add', 'BACKLOG.md', 'tools/preflight.js'], { cwd: dir, env });
+    spawnSync('git', ['commit', '-q', '-m', 'init'], { cwd: dir, env });
+    spawnSync('git', ['update-ref', 'refs/remotes/origin/main', 'HEAD'], { cwd: dir, env });
+
+    const comments = Array.from({ length: 1200 }, (_, i) => ({
+      id: String(100000 + i),
+      author: 'ai-acct',
+      createdAt: new Date(Date.UTC(2026, 8, 13, 0, Math.floor(i / 60), i % 60)).toISOString(),
+      change: String((i % 20) + 1),
+      body: `## ❓ 待裁（2026-09-13）：體檢總表長輸出管線完整性第 ${String(i + 1).padStart(4, '0')} 題（避免超過 64 KiB 管線緩衝未排空即 process.exit 截斷尾段）\n選項：甲／乙\n建議：甲`,
+    }));
+    fs.writeFileSync(path.join(dir, 'comments.json'), JSON.stringify(comments));
+    fs.writeFileSync(path.join(dir, 'dump-comments.js'), "const fs = require('node:fs'); process.stdout.write(fs.readFileSync('comments.json'));\n");
+    const baseSettings = unfilled();
+    const settings = {
+      ...baseSettings,
+      owner: 'Boss',
+      participants: [
+        { role: '裁示者（人）', id: 'Boss', account: 'boss-acct' },
+        { role: 'AI 甲', id: 'Alpha', account: 'ai-acct' },
+      ],
+      mainBranch: 'main',
+      backlog: { file: 'BACKLOG.md', section: '# 待辦' },
+      platform: {
+        ...baseSettings.platform,
+        name: 'Fake',
+        project: 'fake/repo',
+        clearEnv: [],
+        operations: {
+          ...baseSettings.platform.operations,
+          allComments: [process.execPath, 'dump-comments.js'],
+        },
+      },
+    };
+    fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(settings));
+    const cli = path.join(dir, 'tools/preflight.js');
+    const cliArgs = ['--skip-downstream', '--skip-seats'];
+
+    // 1. 普通檔案 fd 對照組
+    const outFile = path.join(dir, 'out.txt');
+    const fd = fs.openSync(outFile, 'w');
+    let fileRes;
+    try {
+      fileRes = spawnSync(process.execPath, [cli, ...cliArgs], { cwd: dir, env, stdio: ['ignore', fd, 'pipe'] });
+    } finally {
+      fs.closeSync(fd);
+    }
+    assert.equal(fileRes.status, 0, fileRes.stderr && fileRes.stderr.toString('utf8'));
+    const fileBytes = fs.readFileSync(outFile);
+    assert.ok(fileBytes.length > 65536 * 2, `合成輸出需明顯大於 64 KiB 管線緩衝（實際 ${fileBytes.length} 位元組）`);
+    const fileText = fileBytes.toString('utf8');
+    assert.match(fileText, /體檢總表長輸出管線完整性第 1200 題/u);
+    assert.match(fileText, /=== \[2\/2\] 開工印待辦（F6） ===/u, '檔案輸出尾端需含最後一節開工印待辦');
+    assert.match(fileText, /TAIL_BACKLOG_SENTINEL_9999/u, '檔案輸出尾端需含待辦哨兵');
+
+    // 2. 管線（pipe）輸出：必須與普通檔案 fd 逐位元組完全一致，不可在 65,536 位元組處截斷尾段
+    const pipeRes = spawnSync(process.execPath, [cli, ...cliArgs], {
+      cwd: dir,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    assert.equal(pipeRes.status, 0, pipeRes.stderr && pipeRes.stderr.toString('utf8'));
+    assert.equal(pipeRes.stdout.length, fileBytes.length, `管線輸出位元組數（${pipeRes.stdout.length}）與檔案 fd（${fileBytes.length}）不一致`);
+    assert.equal(Buffer.compare(pipeRes.stdout, fileBytes), 0, '管線輸出與檔案 fd 必須逐位元組完全相同');
+    assert.match(pipeRes.stdout.toString('utf8'), /=== \[2\/2\] 開工印待辦（F6） ===/u, '管線輸出不得丟失末尾待辦節');
+    assert.match(pipeRes.stdout.toString('utf8'), /TAIL_BACKLOG_SENTINEL_9999/u, '管線輸出不得丟失末尾待辦哨兵');
+
+    // 3. 下游提早關閉管線（EPIPE）：必須退 2，不可假綠退 0 或未處理錯誤退 1
+    const epipeExit = await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [cli, ...cliArgs], { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let errOut = '';
+      child.stderr.on('data', (chunk) => { errOut += chunk.toString('utf8'); });
+      child.stdout.once('data', () => { child.stdout.destroy(); });
+      child.on('error', reject);
+      child.on('close', (code, signal) => resolve({ code, signal, errOut }));
+    });
+    assert.equal(epipeExit.signal, null);
+    assert.equal(epipeExit.code, 2, `下游提早關閉管線（EPIPE）應退 2（實際 code=${epipeExit.code}, stderr=${epipeExit.errOut}）`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
