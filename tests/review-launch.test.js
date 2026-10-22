@@ -1140,26 +1140,35 @@ test('⑪同輪並行代貼（--post）：每輪排他鎖、殘留鎖拒收與�
 test('⑪defaultRunPost：不開 shell 直接執行，並清掉整個 GIT_* 家族與 clearEnv；失敗或起不來丟 LaunchError', () => {
   const d = tmp('review-launch-runpost-');
   const out = path.join(d, 'env.json');
-  const savedGit = process.env.GIT_DIR;
-  const savedIdx = process.env.GIT_INDEX_FILE;
-  const savedCustom = process.env.SECRET_TOKEN_FOR_TEST;
+  const dirtyEntries = {
+    GIT_DIR: '/decoy/git',
+    GIT_INDEX_FILE: '/decoy/index',
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.excludesFile',
+    GIT_CONFIG_VALUE_0: '/decoy/excludes',
+    GIT_BOGUS_FUTURE_KEY_731: 'unlisted-future-member',
+    SECRET_TOKEN_FOR_TEST: 'should-be-cleared',
+  };
+  const saved = {};
+  for (const k of Object.keys(dirtyEntries)) saved[k] = process.env[k];
   try {
-    process.env.GIT_DIR = '/decoy/git';
-    process.env.GIT_INDEX_FILE = '/decoy/index';
-    process.env.SECRET_TOKEN_FOR_TEST = 'should-be-cleared';
+    for (const [k, v] of Object.entries(dirtyEntries)) process.env[k] = v;
     defaultRunPost(process.execPath, [
       '-e',
-      'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({ git: Object.keys(process.env).filter((k) => k.startsWith("GIT_")), token: process.env.SECRET_TOKEN_FOR_TEST || null }))',
+      'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({ git: Object.keys(process.env).filter((k) => k.startsWith("GIT_")).sort(), token: process.env.SECRET_TOKEN_FOR_TEST || null }))',
       out,
     ], { clearEnv: ['SECRET_TOKEN_FOR_TEST'] });
     const got = JSON.parse(fs.readFileSync(out, 'utf8'));
     assert.deepEqual(got, { git: [], token: null });
+    for (const [k, v] of Object.entries(dirtyEntries)) {
+      assert.equal(process.env[k], v, `defaultRunPost 不得改動母行程的 ${k}`);
+    }
     assert.throws(() => defaultRunPost(process.execPath, ['-e', 'console.error("貼失敗"); process.exit(3)']), /貼結論指令退 3：貼失敗/u);
     assert.throws(() => defaultRunPost(path.join(d, 'no-such-bin'), []), /貼結論指令起不來/u);
   } finally {
-    if (savedGit === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = savedGit;
-    if (savedIdx === undefined) delete process.env.GIT_INDEX_FILE; else process.env.GIT_INDEX_FILE = savedIdx;
-    if (savedCustom === undefined) delete process.env.SECRET_TOKEN_FOR_TEST; else process.env.SECRET_TOKEN_FOR_TEST = savedCustom;
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
     fs.rmSync(d, { recursive: true, force: true });
   }
 });
@@ -2065,26 +2074,38 @@ test('⑭一鍵執行（--run）與收樹清除容器（--purge）：複審與�
 
   // (a) defaultRunExec：清 GIT_* 與 clearEnv、以 record.root 為工作目錄執行 shell 指令，非零退出丟 LaunchError
   const envOut = path.join(dir, 'exec-env.json');
-  const savedGit = process.env.GIT_DIR;
-  const savedCustom = process.env.SECRET_EXEC_TOKEN;
+  const dirtyExecEntries = {
+    GIT_DIR: '/decoy/git',
+    GIT_INDEX_FILE: '/decoy/index',
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.excludesFile',
+    GIT_CONFIG_VALUE_0: '/decoy/excludes',
+    GIT_BOGUS_FUTURE_KEY_731: 'unlisted-future-member',
+    SECRET_EXEC_TOKEN: 'secret',
+  };
+  const savedExec = {};
+  for (const k of Object.keys(dirtyExecEntries)) savedExec[k] = process.env[k];
   try {
-    process.env.GIT_DIR = '/decoy/git';
-    process.env.SECRET_EXEC_TOKEN = 'secret';
+    for (const [k, v] of Object.entries(dirtyExecEntries)) process.env[k] = v;
     defaultRunExec(
-      `${JSON.stringify(process.execPath)} -e 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({ cwd: process.cwd(), git: Object.keys(process.env).filter((k) => k.startsWith("GIT_")), token: process.env.SECRET_EXEC_TOKEN || null }))' ${JSON.stringify(envOut)}`,
+      `${JSON.stringify(process.execPath)} -e 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({ cwd: process.cwd(), git: Object.keys(process.env).filter((k) => k.startsWith("GIT_")).sort(), token: process.env.SECRET_EXEC_TOKEN || null }))' ${JSON.stringify(envOut)}`,
       { record: { root: r.dir }, clearEnv: ['SECRET_EXEC_TOKEN'] },
     );
     const gotEnv = JSON.parse(fs.readFileSync(envOut, 'utf8'));
     assert.equal(fs.realpathSync(gotEnv.cwd), fs.realpathSync(r.dir));
     assert.deepEqual(gotEnv.git, []);
     assert.equal(gotEnv.token, null);
+    for (const [k, v] of Object.entries(dirtyExecEntries)) {
+      assert.equal(process.env[k], v, `defaultRunExec 不得改動母行程的 ${k}`);
+    }
     assert.throws(
       () => defaultRunExec(`${JSON.stringify(process.execPath)} -e 'console.error("exec boom"); process.exit(5)'`, { record: { root: r.dir } }),
       /啟動指令退 5：exec boom/u,
     );
   } finally {
-    if (savedGit === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = savedGit;
-    if (savedCustom === undefined) delete process.env.SECRET_EXEC_TOKEN; else process.env.SECRET_EXEC_TOKEN = savedCustom;
+    for (const [k, v] of Object.entries(savedExec)) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
     fs.rmSync(envOut, { force: true });
   }
 

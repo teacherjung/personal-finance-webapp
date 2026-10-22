@@ -4,13 +4,17 @@
 //   套件自己的呼叫點題（tests/platform.test.js:160 等四處）只斷言子行程看不到 GIT_DIR——清法退化成「只刪 GIT_DIR」的列名版
 //   照樣綠；關得起門的是題②：注入整組髒 GIT_*（含 git -c 會長出來的 GIT_CONFIG_* 與一個世上還不存在的名字），
 //   斷言子行程**一個 GIT_* 都看不到**。這裡對套件那份 `tools/git-env.js` 與執行器各釘一次。
-// ⚠️ 誠實劃界：只釘 `runCommand()` 這一個呼叫點（gh 的統一入口）；`tools/merge.js`、`tools/run-checks.js`、
-//    `tools/gates/check-cross-merge.js` 自己 spawn 的那三處仍只有套件的 GIT_DIR 題＝套件側待辦（PROJECT.md 第 7 步結案⑤）。
+// ⚠️ 誠實劃界：釘 `runCommand()`（gh 的統一入口）與 `tools/review-launch.js` 的 `defaultRunPost()`／`defaultRunExec()`；
+//    `tools/merge.js`、`tools/run-checks.js`、`tools/gates/check-cross-merge.js` 自己 spawn 的那三處仍只有套件的 GIT_DIR 題＝套件側待辦（PROJECT.md 第 7 步結案⑤）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { injectDirtyGitEnv, DIRTY_GIT_ENV } from './helpers/dirty-git-env.js';
 import { runCommand } from '../tools/platform.js';
+import { defaultRunPost, defaultRunExec } from '../tools/review-launch.js';
 import { gitEnv } from '../tools/git-env.js';
 
 const PRINT_GIT_KEYS = 'process.stdout.write(Object.keys(process.env).filter((k) => k.startsWith("GIT_")).sort().join(","))';
@@ -53,4 +57,46 @@ test('⭐ 題②：runCommand() 的子行程直接看環境，不可以有任何
     const seenKeys = String(seen.stdout).split(',').filter(Boolean);
     for (const k of Object.keys(DIRTY_GIT_ENV)) assert.ok(seenKeys.includes(k), `對照組：不清的子行程應該看得到 ${k}，實際只看到：${seen.stdout}`);
   } finally { restore(); }
+});
+
+test('⭐ 題②：defaultRunPost() 與 defaultRunExec() 的子行程直接看環境，不可以有任何 GIT_*（含 GIT_CONFIG_* 與沒列過名的）', () => {
+  const d = mkdtempSync(join(tmpdir(), 'kit-review-launch-env-'));
+  const postOut = join(d, 'post-env.json');
+  const execOut = join(d, 'exec-env.json');
+  const restore = injectDirtyGitEnv();
+  const savedIdx = process.env.GIT_INDEX_FILE;
+  const savedPostTok = process.env.SECRET_POST_TOK;
+  const savedExecTok = process.env.SECRET_EXEC_TOK;
+  try {
+    process.env.GIT_INDEX_FILE = '/decoy/index';
+    process.env.SECRET_POST_TOK = 'post-secret';
+    process.env.SECRET_EXEC_TOK = 'exec-secret';
+
+    defaultRunPost(process.execPath, [
+      '-e',
+      'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({ git: Object.keys(process.env).filter((k) => k.startsWith("GIT_")).sort(), tok: process.env.SECRET_POST_TOK || null }))',
+      postOut,
+    ], { clearEnv: ['SECRET_POST_TOK'] });
+    const gotPost = JSON.parse(readFileSync(postOut, 'utf8'));
+    assert.deepEqual(gotPost, { git: [], tok: null });
+
+    defaultRunExec(
+      `${JSON.stringify(process.execPath)} -e 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({ cwd: process.cwd(), git: Object.keys(process.env).filter((k) => k.startsWith("GIT_")).sort(), tok: process.env.SECRET_EXEC_TOK || null }))' ${JSON.stringify(execOut)}`,
+      { record: { root: d }, clearEnv: ['SECRET_EXEC_TOK'] },
+    );
+    const gotExec = JSON.parse(readFileSync(execOut, 'utf8'));
+    assert.equal(realpathSync(gotExec.cwd), realpathSync(d));
+    assert.deepEqual(gotExec.git, []);
+    assert.equal(gotExec.tok, null);
+
+    for (const [k, v] of Object.entries(DIRTY_GIT_ENV)) {
+      assert.equal(process.env[k], v, `呼叫後不得改動母行程的 ${k}`);
+    }
+  } finally {
+    if (savedIdx === undefined) delete process.env.GIT_INDEX_FILE; else process.env.GIT_INDEX_FILE = savedIdx;
+    if (savedPostTok === undefined) delete process.env.SECRET_POST_TOK; else process.env.SECRET_POST_TOK = savedPostTok;
+    if (savedExecTok === undefined) delete process.env.SECRET_EXEC_TOK; else process.env.SECRET_EXEC_TOK = savedExecTok;
+    restore();
+    rmSync(d, { recursive: true, force: true });
+  }
 });
