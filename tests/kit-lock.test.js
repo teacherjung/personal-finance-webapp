@@ -13,6 +13,7 @@
 //   換到一半對不上、刪檔失敗、換完寫清單失敗時印的還原指令，原字串交給 shell 跑（路徑有空白、$、單引號）真的還原得回來；
 //   套件舊版的共用範圍比新版小時，清單照舊版的範圍核（不把新加進範圍的檔誤判成清單少列）；版本不在套件主幹上（主幹名照套件設定）、往回同步、清單指到沒合併的版本、
 //   跑的工具不是那一版的、沒有 origin/<主幹>＝拒絕；--write 只收第一次裝（歷史裡有過清單也拒）；--touch 的分類；一行固定提醒；
+//   --sync 三種非阻擋預檢提醒（其他工作樹未提交或未合併、退場共用檔仍被專案自己的檔案引用、改動範本在專案裡有對應抄出去的檔案）；
 //   帶不帶只看設定的登記，登記跟清單在不在對不上就紅。
 // ⚠️ 守不到的：同一支 PR 連清單、工具、這一題一起改（絆線不是鎖）；--check 不驗清單內容真的出自套件；套件有沒有新的；
 //   --check 看不到被 .gitignore 忽略的檔與只差大小寫的同名路徑（下面有一題照實驗它看不到忽略的檔；--sync 看得到）；共用路徑以外的檔；
@@ -71,6 +72,8 @@ function makeRepos(t, { projName = 'proj' } = {}) {
   const kgit = gitIn(kit);
   const git = gitIn(root);
   kgit('init', '-q');
+  kgit('config', 'maintenance.auto', 'false');
+  kgit('config', 'gc.auto', '0');
   for (const [rel, body] of Object.entries(KIT_FILES)) put(kit, rel, body);
   put(kit, 'tools/run.sh', '#!/bin/sh\n', 0o755);
   put(kit, 'README.md', '# 套件自己的，不是共用檔\n');
@@ -92,6 +95,8 @@ function makeRepos(t, { projName = 'proj' } = {}) {
     assert.equal(untar.status, 0, String(untar.stderr));
   };
   git('init', '-q');
+  git('config', 'maintenance.auto', 'false');
+  git('config', 'gc.auto', '0');
   syncFrom(v1);
   // 專案自己的檔，含 docs/、cases/ 底下跟共用檔當鄰居的（同步只能換那一個共用檔、不能清整個資料夾）
   put(root, 'settings.json', '{"x":1}\n');
@@ -647,6 +652,62 @@ test('--sync 的提醒是固定的一行：不論這次改了什麼（一般檔�
     assert.ok(!out.some((l) => /沒動到|不用換|這支 PR 對 /u.test(l)), `不做判斷：\n${out.join('\n')}`);
   }
   for (const item of [...lock.FINGERPRINT_SHARED, 'settings.json 的 forbidden 那一塊', lock.CODEX_TEMPLATE]) assert.ok(FIXED.includes(item), item);
+});
+
+test('--sync 非阻擋預檢提醒：①同一倉庫其他工作樹有未提交改動或未合併提交、②退場共用檔仍被專案自己的追蹤檔引用、③改動範本在專案裡有對應抄出去的檔案；都沒命中時不印', (t) => {
+  const r = makeRepos(t);
+  r.put('templates/ci-github.yml', '# 舊雲端範本\n');
+  r.putKit('templates/ci-github.yml', '# 舊雲端範本\n');
+  const vBase = r.nextKit(() => {}, '補 ci 範本');
+  r.syncFrom(vBase);
+  // 專案自己的檔案引用將被刪掉的 templates/c.md，並有從範本抄出去的 .github/workflows/ci.yml
+  r.put('lib/own.js', "// 專案自己的\nconst tpl = '../templates/c.md';\nconst notHit = 'my-templates/c.md';\n");
+  r.put('.github/workflows/ci.yml', '# 專案抄出去的雲端工作流\n');
+  r.write({ version: vBase });
+  r.commit('建立清單與專案檔案');
+
+  // 建立另一棵連結工作樹：先做未合併提交＋未提交改動（含共用路徑 tools/a.js）
+  const otherWt = path.join(r.scratch, 'proj-other-ai');
+  r.git('worktree', 'add', '-q', '-b', 'feat/other-ai', otherWt, 'HEAD');
+  fs.writeFileSync(path.join(otherWt, 'lib', 'own.js'), '// 另一位 AI 已提交的改動\n');
+  assert.equal(spawnSync('git', ['add', 'lib/own.js'], { cwd: otherWt, env: r.env }).status, 0);
+  assert.equal(spawnSync('git', ['commit', '-q', '-m', 'other ai commit'], { cwd: otherWt, env: r.env }).status, 0);
+  fs.writeFileSync(path.join(otherWt, 'tools', 'a.js'), '// 另一位 AI 尚未提交的共用檔改動\n');
+
+  const vNext = r.nextKit(() => {
+    r.kgit('rm', '-q', 'templates/c.md');
+    r.putKit('templates/ci-github.yml', '# 新雲端範本\n');
+  }, '刪 templates/c.md 並改 ci 範本');
+
+  const dry = r.doSync(vNext);
+  assert.equal(dry.ok, true, dry.lines.join('\n'));
+  const text = dry.lines.join('\n');
+  assert.match(text, /提醒（其他工作樹）：查到同一倉庫的其他工作樹有未提交改動或未合併提交/u, text);
+  assert.match(text, new RegExp(`工作樹 ${otherWt.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}（分支 feat/other-ai）：有 1 處未提交改動（含共用路徑：tools/a\\.js），且有尚未併入目前 HEAD 的提交`, 'u'), text);
+  assert.match(text, /提醒（退場共用檔引用）：套件這一版刪掉的共用檔仍被專案自己的檔案引用/u, text);
+  assert.match(text, / {2}・lib\/own\.js:2（引用已刪共用檔 templates\/c\.md）/u, text);
+  assert.doesNotMatch(text, /lib\/own\.js:3/u, '前綴帶連字號的 my-templates/c.md 不誤報');
+  assert.match(text, /提醒（範本對照）：套件這一版改動了範本，且專案裡有對應抄出去的檔案/u, text);
+  assert.match(text, / {2}・templates\/ci-github\.yml（內容不同）→ 請對照專案的 \.github\/workflows\/ci\.yml/u, text);
+
+  // 孤立分支（尚無提交、HEAD 為 40 個零）：先測試乾淨孤立分支不印提醒，再測試有未提交內容時印「分支 pages-new，尚無提交」提醒，預演與 --apply 均不中止
+  assert.equal(spawnSync('git', ['checkout', '--', 'tools/a.js'], { cwd: otherWt, env: r.env }).status, 0);
+  assert.equal(spawnSync('git', ['switch', '-q', '--orphan', 'pages-new'], { cwd: otherWt, env: r.env }).status, 0);
+  r.put('lib/own.js', '// 專案自己的乾淨內容\n');
+  r.git('rm', '-q', '.github/workflows/ci.yml');
+  r.commit('清掉三項預檢條件（保留乾淨孤立分支工作樹）');
+  const cleanDry = r.doSync(vNext);
+  assert.equal(cleanDry.ok, true, cleanDry.lines.join('\n'));
+  assert.doesNotMatch(cleanDry.lines.join('\n'), /提醒（其他工作樹）|提醒（退場共用檔引用）|提醒（範本對照）/u, cleanDry.lines.join('\n'));
+
+  fs.mkdirSync(path.join(otherWt, 'tools'), { recursive: true });
+  fs.writeFileSync(path.join(otherWt, 'tools', 'a.js'), '// 孤立分支裡未提交的共用檔\n');
+  const orphanDirty = r.doSync(vNext);
+  assert.equal(orphanDirty.ok, true, orphanDirty.lines.join('\n'));
+  assert.match(orphanDirty.lines.join('\n'), new RegExp(`工作樹 ${otherWt.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}（分支 pages-new，尚無提交）：有 1 處未提交改動（含共用路徑：tools/a\\.js）`, 'u'));
+  assert.doesNotMatch(orphanDirty.lines.join('\n'), /尚未併入目前 HEAD|無法比對提交歷史/u);
+  const applied = r.doSync(vNext, { apply: true });
+  assert.equal(applied.ok, true, applied.lines.join('\n'));
 });
 
 test('名單對得上：指紋清單、Codex 接線範本、工具自己的路徑；SHARED_PATHS 那一行的寫法讀得回來（--sync 從套件舊版讀它）', () => {

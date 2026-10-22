@@ -18,7 +18,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
-const { gateRun, evaluate } = require('../tools/gates/check-checks-really-ran.js');
+const { gateRun, evaluate, parseCliArgs, DEFAULT_WAIT_MS, DEFAULT_POLL_MS } = require('../tools/gates/check-checks-really-ran.js');
 const { PlatformError } = require('../tools/platform.js');
 const { runInCopy } = require('./helpers/kit-copy.js');
 
@@ -158,6 +158,133 @@ test('問場次用的是這一支的頭，讀名單用的是設定裡的主幹',
   const asked = Object.fromEntries(platform.asked);
   assert.deepEqual(asked.checks, { sha: 'deadbeef' }, '要問這一支的頭');
   assert.deepEqual(asked.requiredChecks, { branch: '主線' }, '要讀設定裡的主幹，不是寫死的 main');
+});
+
+test('還在跑時自動輪詢等待（方案 A）：轉完正式還在跑的場次完成後自動放行；逾時＝1；等待途中換版本或問不到平台＝2；失敗結論不空等', () => {
+  // 1. 第一輪還在跑、第二輪完成且成功＝放行
+  let checkCalls = 0;
+  let clock = 1000;
+  const slept = [];
+  const p1 = {
+    ask(op) {
+      if (op === 'change') return change({ headSha: 'abc123' });
+      if (op === 'requiredChecks') return [need()];
+      if (op === 'checks') {
+        checkCalls += 1;
+        return checkCalls === 1
+          ? [run({ status: 'in_progress', conclusion: null, completedAt: null })]
+          : [run()];
+      }
+      throw new PlatformError(`unexpected ${op}`);
+    },
+  };
+  const r1 = gateRun('7', {
+    settings,
+    platform: p1,
+    waitMs: 15000,
+    pollMs: 5000,
+    now: () => clock,
+    sleep: (ms) => { slept.push(ms); clock += ms; },
+  });
+  assert.equal(r1.code, 0, r1.lines.join('\n'));
+  assert.deepEqual(slept, [5000]);
+  assert.match(r1.lines.join('\n'), /輪詢等待 1 次/u);
+
+  // 2. 一直還在跑到逾時＝退 1（理由仍是還有場次在跑）
+  let clock2 = 0;
+  const slept2 = [];
+  const p2 = {
+    ask(op) {
+      if (op === 'change') return change({ headSha: 'abc123' });
+      if (op === 'requiredChecks') return [need()];
+      return [run({ status: 'in_progress', conclusion: null, completedAt: null })];
+    },
+  };
+  const r2 = gateRun('7', {
+    settings,
+    platform: p2,
+    waitMs: 12000,
+    pollMs: 5000,
+    now: () => clock2,
+    sleep: (ms) => { slept2.push(ms); clock2 += ms; },
+  });
+  assert.equal(r2.code, 1);
+  assert.deepEqual(slept2, [5000, 5000, 2000]);
+  assert.match(r2.lines.join('\n'), /還有場次在跑.*輪詢等待 3 次/u);
+
+  // 3. 等待途中版本變了＝立刻退 2 不放行
+  let changeCalls = 0;
+  let clock3 = 0;
+  const p3 = {
+    ask(op) {
+      if (op === 'change') {
+        changeCalls += 1;
+        return change({ headSha: changeCalls === 1 ? 'abc123' : 'def456' });
+      }
+      if (op === 'requiredChecks') return [need()];
+      return [run({ status: 'in_progress', conclusion: null, completedAt: null })];
+    },
+  };
+  const r3 = gateRun('7', {
+    settings,
+    platform: p3,
+    waitMs: 10000,
+    pollMs: 5000,
+    now: () => clock3,
+    sleep: (ms) => { clock3 += ms; },
+  });
+  assert.equal(r3.code, 2);
+  assert.match(r3.lines.join('\n'), /等待必過檢查完成期間版本變了/u);
+
+  // 3b. 等待途中問不到平台（輪詢第二次查詢拋 PlatformError）＝立刻退 2 不放行（r3 Finding 1）
+  for (const failOp of ['change', 'checks']) {
+    let pollStep = 0;
+    let clock3b = 0;
+    const p3b = {
+      ask(op) {
+        if (op === 'requiredChecks') return [need()];
+        if (op === 'change') {
+          pollStep += 1;
+          if (pollStep >= 2 && failOp === 'change') throw new PlatformError('輪詢期間平台中斷');
+          return change({ headSha: 'abc123' });
+        }
+        if (op === 'checks') {
+          if (pollStep >= 2 && failOp === 'checks') throw new PlatformError('輪詢期間查場次中斷');
+          return [run({ status: 'in_progress', conclusion: null, completedAt: null })];
+        }
+        throw new PlatformError(`unexpected ${op}`);
+      },
+    };
+    const r3b = gateRun('7', {
+      settings,
+      platform: p3b,
+      waitMs: 10000,
+      pollMs: 5000,
+      now: () => clock3b,
+      sleep: (ms) => { clock3b += ms; },
+    });
+    assert.ok(pollStep >= 2, `${failOp} 確實進入第二次輪詢查詢`);
+    assert.equal(r3b.code, 2, `輪詢期間 ${failOp} 查詢失敗必須退 2`);
+    assert.match(r3b.lines.join('\n'), /問不到平台.*不放行/u);
+  }
+
+  // 4. 已經完成的失敗結論不輪詢空等
+  const slept4 = [];
+  const p4 = fakePlatform({ change: change(), requiredChecks: [need()], checks: [run({ conclusion: 'failure' })] });
+  const r4 = gateRun('7', { settings, platform: p4, waitMs: 10000, pollMs: 5000, sleep: (ms) => slept4.push(ms) });
+  assert.equal(r4.code, 1);
+  assert.deepEqual(slept4, []);
+
+  // 5. CLI 參數解析：預設等待 300000ms（輪詢間隔 5000ms）；--no-wait＝0；--wait-ms 指定毫秒；壞參數回 error
+  assert.equal(DEFAULT_WAIT_MS, 300000);
+  assert.equal(DEFAULT_POLL_MS, 5000);
+  assert.deepEqual(parseCliArgs(['7']), { changeId: '7', waitMs: 300000 });
+  assert.deepEqual(parseCliArgs(['7', '--no-wait']), { changeId: '7', waitMs: 0 });
+  assert.deepEqual(parseCliArgs(['7', '--wait-ms', '12000']), { changeId: '7', waitMs: 12000 });
+  assert.ok(parseCliArgs([]).error);
+  assert.ok(parseCliArgs(['7', '--wait-ms', 'abc']).error);
+  assert.ok(parseCliArgs(['7', '--unknown']).error);
+  assert.ok(parseCliArgs(['7', '8']).error);
 });
 
 test('平台問不到＝退 2，絕不是退 0', () => {

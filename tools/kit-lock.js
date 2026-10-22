@@ -21,15 +21,18 @@
 //   對不上、刪檔解包失敗、或換完寫清單失敗＝退 2 並印照貼就能跑的還原指令（路徑有空白、$、單引號也照字面）。
 //   --write：只用在第一次裝（工作樹上、或這棵樹的歷史裡出現過清單＝拒寫），工作樹要剛好等於套件那一版。
 //   --touch：列出給的路徑裡哪些落在共用路徑（大小寫不分、../ 與 ./ 先整理），命中退 1；只列，沒接進任何閘。
-//   --sync、--write 每次都印一行固定提醒：攔截器相關的 5 樣，動到任一樣合併後要換複本、重按信任。
-// 為什麼提醒是固定的一行、不判斷這次動到沒有（擁有者 2026-09-29 裁 a）：複審 r1〜r4 連四輪在「自動判斷動到沒有」這一族抓到問題
+//   --sync、--write 每次都印一行固定提醒：攔截器相關的 5 樣，動到任一樣合併後要換複本、重按信任；
+//   --sync 另在有命中時印三種非阻擋預檢提醒（只提醒不擋）：①同一倉庫其他工作樹有未提交改動或尚未併入目前 HEAD 的提交、
+//   ②套件這一版刪掉的共用檔仍被專案自己的追蹤檔引用、③套件這一版改動的範本在專案裡有對應抄出去的檔案（COPIED_TEMPLATES）。
+// 為什麼攔截器提醒是固定的一行、不判斷這次動到沒有（擁有者 2026-09-29 裁 a）：複審 r1〜r4 連四輪在「自動判斷動到沒有」這一族抓到問題
 //   （推算與直接量各有漏的情境）；原專案的釘指紋等式題在指紋變了卻沒重印那一行時本來就會紅。這次要不要換，由實作者看這支 PR 對主幹的差異告訴擁有者。
 // ⚠️ 擋不住的：同一支 PR 連清單、這支工具或考題一起改（絆線不是鎖；改動留在 diff 裡給複審者看）；
 //   --check 不驗清單裡的版本碼與 blob 真的出自套件（使用專案的雲端讀不到私有的套件；--sync、--write 那一刻有驗，之後手改清單就只剩複審）；
 //   不走 --sync、自己動手刪檔解包（有寫入權限就做得到，這不是作業系統的防寫）；--sync 檢查之後、換檔之前另一個行程改了共用路徑
-//   （檢查與換檔之間只隔套件的打包）；別的工作樹、別台電腦上還沒推的改動；套件那邊有沒有新的（要讀得到套件）；
+//   （檢查與換檔之間只隔套件的打包）；別台電腦上還沒推的改動（本機同一倉庫其他工作樹只印提醒不擋）；套件那邊有沒有新的（要讀得到套件）；
 //   套件主幹只認本機套件倉庫的 origin 遠端與那一版設定裡的主幹名（存心造一條假遠端分支擋不住）；
-//   --check 看不到被 .gitignore 忽略的檔、大小寫不同的同名路徑（--sync 看得到）；SHARED_PATHS 以外的檔（例如從範本抄出來的 .github/workflows）；
+//   --check 看不到被 .gitignore 忽略的檔、大小寫不同的同名路徑（--sync 看得到）；SHARED_PATHS 以外的檔（COPIED_TEMPLATES 以外或只印提醒未人工對照的）；
+//   退場共用檔若用動態拼接路徑引用則字面搜尋看不到；
 //   settings.json（專案自己的值，連同 forbidden 那一塊都不在清單）；--touch 只看給它的路徑，專案裡指進共用路徑的連結看不到；
 //   git 看不到的東西（空資料夾、FIFO）換檔時會一起刪；共用範圍縮小的那一版（舊清單有現在工具不認的路徑）要另寫遷移，現在會退 2；
 //   各機器換行轉換或 filter 設定不同時，blob 可能對不上（假紅；套件共用檔目前沒有 CR、也沒有 .gitattributes）；
@@ -498,6 +501,115 @@ function replace(root, target, archive, previous) {
   if (after.length) throw new LockError(`解開之後工作樹跟套件 ${target.sha.slice(0, 7)} 還有 ${after.length} 個對不上：${after.slice(0, 5).map((d) => `${d.path}：${d.kind}`).join('、')}。${restoreHint(root, previous)}`);
 }
 
+const COPIED_TEMPLATES = [
+  { template: 'templates/ci-github.yml', target: '.github/workflows/ci.yml' },
+  { template: 'templates/collab-fields-github.yml', target: '.github/workflows/collab-fields.yml' },
+  { template: 'templates/pr-body.md', target: '.github/pull_request_template.md' },
+  { template: 'templates/pre-push', target: '.githooks/pre-push' },
+];
+
+/** 同一倉庫其他工作樹衝突預檢（只提醒不擋）：列出有未提交改動或尚未併入目前 HEAD 的其他工作樹，防同步與其他 AI 工作線撞車。 */
+function worktreeWarnings(root) {
+  let rootReal;
+  try { rootReal = fs.realpathSync(root); } catch { rootReal = path.resolve(root); }
+  const blocks = git(root, ['worktree', 'list', '--porcelain', '-z']).split('\0\0').filter((b) => b.replace(/\0/gu, '').trim());
+  const items = [];
+  for (const block of blocks) {
+    const f = {};
+    for (const l of block.split('\0').filter(Boolean)) {
+      const i = l.indexOf(' ');
+      if (i < 0) f[l] = true;
+      else f[l.slice(0, i)] = l.slice(i + 1);
+    }
+    if (f.bare || typeof f.worktree !== 'string' || !f.worktree) continue;
+    let wtReal;
+    try { wtReal = fs.realpathSync(f.worktree); } catch { wtReal = path.resolve(f.worktree); }
+    if (wtReal === rootReal || !fs.existsSync(f.worktree)) continue;
+    const isUnborn = typeof f.HEAD === 'string' && /^0+$/u.test(f.HEAD);
+    const label = typeof f.branch === 'string' && f.branch
+      ? `分支 ${f.branch.replace(/^refs\/heads\//u, '')}${isUnborn ? '，尚無提交' : ''}`
+      : `分離 HEAD ${typeof f.HEAD === 'string' && !isUnborn ? f.HEAD.slice(0, 7) : '不明'}`;
+    const r = spawnSync('git', ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all'], { cwd: f.worktree, env: gitEnv(), encoding: 'utf8', maxBuffer: BIG });
+    if (r.error || r.status !== 0) {
+      items.push(`  ・工作樹 ${f.worktree}（${label}）：無法讀取狀態（git status 退 ${r.status ?? '錯誤'}）`);
+      continue;
+    }
+    const recs = r.stdout.split('\0');
+    const dirtyPaths = [];
+    for (let i = 0; i < recs.length; i += 1) {
+      const rec = recs[i];
+      if (!rec) continue;
+      const xy = rec.slice(0, 2);
+      const rel = rec.slice(3);
+      if (/[RC]/u.test(xy)) i += 1;
+      dirtyPaths.push(rel);
+    }
+    const sharedDirty = dirtyPaths.filter((p) => touchesShared(p) || p.toLowerCase() === LOCK_FILE);
+    const parts = [];
+    if (dirtyPaths.length) {
+      parts.push(`有 ${dirtyPaths.length} 處未提交改動${sharedDirty.length ? `（含共用路徑：${sharedDirty.slice(0, 5).join('、')}）` : ''}`);
+    }
+    if (!isUnborn && typeof f.HEAD === 'string' && HEX40.test(f.HEAD)) {
+      const mb = spawnSync('git', ['merge-base', '--is-ancestor', f.HEAD, 'HEAD'], { cwd: root, env: gitEnv(), encoding: 'utf8' });
+      if (mb.status === 1) parts.push('有尚未併入目前 HEAD 的提交');
+      else if (mb.error || mb.status !== 0) parts.push(`無法比對提交歷史（git merge-base 退 ${mb.status ?? '錯誤'}）`);
+    }
+    if (parts.length) items.push(`  ・工作樹 ${f.worktree}（${label}）：${parts.join('，且')}`);
+  }
+  return items.length ? ['提醒（其他工作樹）：查到同一倉庫的其他工作樹有未提交改動或未合併提交（小心與其他工作線衝突）：', ...items] : [];
+}
+
+/** 退場共用檔引用預檢（只提醒不擋）：套件這一版刪掉的共用檔，若專案自己的追蹤檔還有字面引用，列出檔名與行號。 */
+function retiredRefWarnings(root, targetList, prevEntries) {
+  const removed = compare(targetList, prevEntries).filter((d) => d.kind === '少掉').map((d) => d.path);
+  if (!removed.length) return [];
+  const ownFiles = git(root, ['ls-files', '-z']).split('\0').filter((p) => p && !underShared(p) && p !== LOCK_FILE).sort();
+  if (!ownFiles.length) return [];
+  const patterns = removed.map((delPath) => ({
+    delPath,
+    re: new RegExp(`(?<![A-Za-z0-9_-])${delPath.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}(?![A-Za-z0-9_.-])`, 'u'),
+  }));
+  const hits = [];
+  for (const ownPath of ownFiles) {
+    const full = path.join(root, ownPath);
+    let raw;
+    try {
+      const st = fs.lstatSync(full);
+      if (!st.isFile()) continue;
+      raw = fs.readFileSync(full, 'utf8');
+    } catch { continue; }
+    if (raw.includes('\u0000')) continue;
+    const lines = raw.replace(/\r\n?/gu, '\n').split('\n');
+    for (let i = 0; i < lines.length; i += 1) {
+      for (const { delPath, re } of patterns) {
+        if (re.test(lines[i])) hits.push(`  ・${ownPath}:${i + 1}（引用已刪共用檔 ${delPath}）`);
+      }
+    }
+  }
+  return hits.length ? ['提醒（退場共用檔引用）：套件這一版刪掉的共用檔仍被專案自己的檔案引用（同步後可能壞掉，請一併更新）：', ...hits] : [];
+}
+
+/** 範本對照提醒（只提醒不擋）：套件這一版改動了範本，且專案裡有對應抄出去的檔案（不在共用路徑）時列出對照。 */
+function copiedTemplateWarnings(root, targetList, prevEntries) {
+  const changes = compare(targetList, prevEntries);
+  const items = [];
+  for (const { template, target } of COPIED_TEMPLATES) {
+    const ch = changes.find((d) => d.path === template);
+    if (ch && fs.existsSync(path.join(root, target))) {
+      items.push(`  ・${template}（${WRITE_KIND[ch.kind]}）→ 請對照專案的 ${target}`);
+    }
+  }
+  return items.length ? ['提醒（範本對照）：套件這一版改動了範本，且專案裡有對應抄出去的檔案（不在共用路徑，請人工對照更新）：', ...items] : [];
+}
+
+function syncWarnings(root, previous, target) {
+  return [
+    ...worktreeWarnings(root),
+    ...retiredRefWarnings(root, target.list, previous.entries),
+    ...copiedTemplateWarnings(root, target.list, previous.entries),
+  ];
+}
+
 function changeLines(list, previous) {
   const changes = compare(list, previous.entries);
   return [`跟上一份清單（${previous.version.slice(0, 7)}，${previous.syncedAt}）比：套件這一版有 ${changes.length} 個共用檔不一樣`, ...changes.map((d) => `  ・${d.path}：${WRITE_KIND[d.kind]}`)];
@@ -530,7 +642,7 @@ function sync(root = ROOT, { kit, version, date, repo, apply = false } = {}) {
   const archive = apply ? kitArchive(kit, target) : null;
   const blockers = precheck(root, previous, prevSha, kit, target);
   if (blockers.length) return { ok: false, lines: [`同步前檢查：查到 ${blockers.length} 處不能直接換（清單記的是套件 ${previous.version.slice(0, 7)}）`, ...blockers.map((b) => `  ・${b}`), SYNC_STOP] };
-  const lines = ['同步前檢查：清單出自套件那一版，已提交、暫存區、工作樹都跟清單一樣，共用路徑底下沒有沒追蹤或被忽略的檔', ...changeLines(target.list, previous)];
+  const lines = ['同步前檢查：清單出自套件那一版，已提交、暫存區、工作樹都跟清單一樣，共用路徑底下沒有沒追蹤或被忽略的檔', ...changeLines(target.list, previous), ...syncWarnings(root, previous, target)];
   if (!apply) {
     lines.push(`預演：沒有動任何檔。確認後在同一行加 --apply 才換檔（換成套件 ${target.sha.slice(0, 7)}）`);
     return { ok: true, lines };
@@ -658,4 +770,4 @@ if (require.main === module) {
   process.exit(r.code);
 }
 
-module.exports = { LOCK_FILE, MACHINE, SHARED_PATHS, SELF_REL, underShared, underSharedFolded, touchesShared, normalizeTouch, touch, sharedPathsIn, FINGERPRINT_SHARED, CODEX_TEMPLATE, FIXED, LockError, entries, headEntries, uncommitted, parentHazards, caseTwins, hiddenFlags, kitEntries, kitVersion, readLock, validateLock, compare, check, precheck, restoreCommands, restoreLines, nestedGit, gitLikeName, sync, write, declaration, parseArgs, main };
+module.exports = { LOCK_FILE, MACHINE, SHARED_PATHS, SELF_REL, COPIED_TEMPLATES, underShared, underSharedFolded, touchesShared, normalizeTouch, touch, sharedPathsIn, FINGERPRINT_SHARED, CODEX_TEMPLATE, FIXED, LockError, entries, headEntries, uncommitted, parentHazards, caseTwins, hiddenFlags, kitEntries, kitVersion, readLock, validateLock, compare, check, precheck, worktreeWarnings, retiredRefWarnings, copiedTemplateWarnings, syncWarnings, restoreCommands, restoreLines, nestedGit, gitLikeName, sync, write, declaration, parseArgs, main };

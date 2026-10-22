@@ -43,7 +43,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { build, buildRaw, excerpt, ruleFooter, parseCli, read, validate, inline, literal, plain, countRules, MARK, dataFile, outFile, MIN_RULES } = require('../tools/build-rules.js');
+const { build, buildRaw, excerpt, ruleFooter, parseCli, read, validate, inline, literal, plain, countRules, countGlossary, MARK, dataFile, outFile, glossaryFile, MIN_RULES } = require('../tools/build-rules.js');
 const { runInCopy } = require('./helpers/kit-copy.js');
 
 const LIMIT = 7000;
@@ -277,4 +277,15 @@ test('按需印條文：指令列只認「不給參數」與「--rules <條號,�
   const write = run([], 'SENTINEL-WRITE\n');
   assert.equal(write.status, 0, write.stdout + write.stderr);
   assert.equal(write.after, build(read()), '不給參數＝重產本文，內容跟 rules.json 產生的一樣');
+  assert.doesNotMatch(write.stdout, /對照表/u, '複本未放 GLOSSARY.md 時不附對照表字數');
+  // 有放 GLOSSARY.md 時，並列印出對照表去空白字數（防規矩字數瘦身卻往對照表灌水）
+  assert.equal(glossaryFile, path.join(__dirname, '..', 'GLOSSARY.md'), 'glossaryFile 指向根目錄 GLOSSARY.md');
+  assert.equal(countGlossary('甲 乙\n丙\t丁'), 4, 'countGlossary 數去空白後的字元數');
+  const sampleGlossary = '# 用語\n\n- **甲**：乙丙\n';
+  const writeWithGlossary = runInCopy('tools/build-rules.js', [], {
+    files: ['rules.json'],
+    seed: { 'GLOSSARY.md': sampleGlossary },
+  });
+  assert.equal(writeWithGlossary.status, 0, writeWithGlossary.stdout + writeWithGlossary.stderr);
+  assert.match(writeWithGlossary.stdout, new RegExp(`（對照表 ${countGlossary(sampleGlossary)} 字）`, 'u'), '有 GLOSSARY.md 時並列印出對照表字數');
 });

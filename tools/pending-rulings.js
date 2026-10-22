@@ -14,7 +14,7 @@
 //   撤回＝第一行「## 🚫 撤回（YYYY-MM-DD）：〈標題〉」＋「撤回理由：〈三選一〉（依據）」＋「〈識別值〉 撤回、〈裁示者〉 未回；他隨時可以要我重問」
 //   驗收＝第一行「## ✅ 驗收（YYYY-MM-DD）：〈標題〉」＋跟裁示同一行形狀的原話行（H6；擁有者 2026-10-07 裁「要貼，寫進規矩 H6」）。
 //         它不是問也不是答：另列成「驗收留痕」，不進待裁、不配對；只看形狀，不看哪一支該貼卻沒貼。
-// 配對＝裁示或撤回的內文（引用區塊以外）出現原 ❓ 留言的編號（貼網址就自然含有），而且比 ❓ 晚。
+// 配對＝裁示或撤回的開頭有效段落引用原 ❓ 留言編號（若有帶錨點的網址只認第一個網址錨點，忽略後續網址或裸編號；純數字編號須經網址錨點引用），而且比 ❓ 晚。
 // 已裁與已撤回一定印出來、附配對，讓錯的配對看得見；長得像但形狀不合的另列成疑似。
 // 第一行＝原文第一個非空行；原話、撤回理由、自報句、配對只讀**開頭那一段**（讀到第一個引用、程式碼、表格分隔列、HTML、圖片、
 // 連結定義、縮排之類的特殊行為止；規則只有一份＝tools/markdown-effective.js）。所以這些要緊接在標題下寫。
@@ -22,8 +22,8 @@
 // 掃整個專案的留言（平台動作 allComments）：題目所屬的PR關了照樣列、裁示貼在別支照樣配（搬家驗屋 09-13 前只掃開著的PR）。
 // 誠實劃界：「已裁」是推導不是事實（引了編號不等於
 // 在回答它）；原話那一行只驗形狀，驗不出引號裡是不是他真的說的；分頁是那條登記指令的責任。
-// 退出碼：0＝算出來了（含「沒有還沒回的」）；2＝算不出來（設定沒填、平台問不到）。刻意沒有 1。
-// 指令列在輸出後面印 D1 與 I 節的原文（開工先看待裁、怎麼問、問了就等、怎麼留痕）。只多印，不改退出碼；
+// 退出碼：0＝算出來了（含「沒有還沒回的」）；2＝算不出來（設定沒填、平台問不到、標準輸出寫不完）。刻意沒有 1。
+// 指令列在輸出後面印 D1 與 I 節的原文（開工先看待裁、怎麼問、問了就等、怎麼留痕），設 process.exitCode 並等標準輸出自然排空後才結束（避免長輸出在管線超過 64 KiB 緩衝時被 process.exit 截短）。只多印，不改退出碼；
 // 模組用法（待裁閘、送審產生器、本週成果產生器引的 evaluate 等）不受影響。
 'use strict';
 const { ask, PlatformError } = require('./platform.js');
@@ -59,10 +59,20 @@ const clean = (body) => leadingText(body);
 const firstLine = (body) => String(body || '').replace(/\r\n?/g, '\n').split('\n').find((l) => l.trim()) || '';
 const readPart = clean;
 const TRACE_HEAD = /^## (?:❓|⚖|🚫|✅ 驗收)/mu;
-// 編號要整個對上：前後不可以再接字母或數字（c1 不可以命中 c12）；但連字號與底線算邊界——網址尾碼是「issuecomment-<編號>」。
-const cites = (body, id) => new RegExp(`(?<![0-9A-Za-z])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![0-9A-Za-z])`, 'u').test(readPart(body));
-
 const esc = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// 配對：開頭那一段若有帶錨點的網址（例如 https://…#issuecomment-<編號>、#comment-<編號>、#comment:<編號>、#comment.<編號>、#comment/<編號>、#note_<編號>、#c-<編號>，scheme 不分大小寫），只認第一個網址錨點並在該錨點內依完整字元邊界配對，忽略後續網址或裸編號（套件 #51、#121 r5〜r9 R10）；純數字留言編號一律須經網址錨點引用（不認裸數字編號）。
+function cites(body, id) {
+  const part = readPart(body);
+  const s = String(id);
+  const idBoundaryRe = new RegExp(`(?<![0-9A-Za-z])${esc(s)}(?![0-9A-Za-z])`, 'u');
+  const firstUrl = /https?:\/\/(?:(?!https?:\/\/)[^\s)>#，,、；;。｜|）\]`'"])+#((?:(?!https?:\/\/)[^\s)>#，,、；;。｜|）\]`'"])+)/iu.exec(part);
+  if (firstUrl) {
+    const frag = firstUrl[1].replace(/[:./]+$/u, '');
+    return idBoundaryRe.test(frag);
+  }
+  if (/^\d+$/u.test(s)) return false;
+  return idBoundaryRe.test(part);
+}
 
 /** 相容舊參與者角色；新指派依留言建立時間走共同路由。 */
 function deciderOf(settings) { return identitiesOf(settings); }
@@ -269,8 +279,9 @@ if (require.main === module) {
   let result;
   const argProblem = cliArgsProblem(process.argv.slice(2));
   try { result = argProblem ? { code: 2, lines: [argProblem] } : run(); } catch (e) { result = { code: 2, lines: [`待裁清單：沒預期到的錯誤（${(e && e.code) || (e && e.message) || '不明'}）——算不出來。`] }; }
+  process.exitCode = result.code;
+  process.stdout.on('error', () => { process.exitCode = 2; });
   process.stdout.write(`${[...result.lines, ...ruleFooter(RULES_SHOWN)].join('\n')}\n`);
-  process.exit(result.code);
 }
 
 module.exports = { rulingLink, run, evaluate, render, deciderOf, cites, realDate, readPart, cliArgsProblem, RULES_SHOWN };

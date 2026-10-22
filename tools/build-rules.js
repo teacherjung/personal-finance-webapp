@@ -46,6 +46,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const dataFile = path.join(root, 'rules.json');
 const outFile = path.join(root, 'RULES.md');
+const glossaryFile = path.join(root, 'GLOSSARY.md');
 
 // 會讓一個欄位跑出它該待的位置的字元：各種換行與分段。
 const LINE_BREAK = /[\n\r\u0085\u2028\u2029\v\f]/u;
@@ -448,6 +449,11 @@ function read() {
   return JSON.parse(fs.readFileSync(dataFile, 'utf8'));
 }
 
+/** 對照表（GLOSSARY.md）去空白字數：與規矩正文字數並列印出，防止規矩字數瘦身卻往對照表灌水。 */
+function countGlossary(text) {
+  return Array.from(String(text || '').replace(/\s+/gu, '')).length;
+}
+
 const USAGE = '用法：node tools/build-rules.js（重新產生 RULES.md）｜node tools/build-rules.js --rules <條號或節,…>（只印那幾條的原文、不寫檔；例如 --rules H1,H6 或 --rules I）';
 
 /**
@@ -485,8 +491,11 @@ if (require.main === module) {
   } else {
     fs.writeFileSync(outFile, build(data), 'utf8');
     const n = data.sections.reduce((s, x) => s + x.rules.length, 0);
-    process.stdout.write(`寫好 RULES.md：${data.sections.length} 節、${n} 條、規矩正文 ${countRules(data)} 字\n`);
+    const glossaryNote = fs.existsSync(glossaryFile)
+      ? `（對照表 ${countGlossary(fs.readFileSync(glossaryFile, 'utf8'))} 字）`
+      : '';
+    process.stdout.write(`寫好 RULES.md：${data.sections.length} 節、${n} 條、規矩正文 ${countRules(data)} 字${glossaryNote}\n`);
   }
 }
 
-module.exports = { build, buildRaw, excerpt, ruleFooter, reasonOf, parseCli, read, validate, tokenize, inline, literal, plain, countRules, MARK, dataFile, outFile, MIN_RULES };
+module.exports = { build, buildRaw, excerpt, ruleFooter, reasonOf, parseCli, read, validate, tokenize, inline, literal, plain, countRules, countGlossary, MARK, dataFile, outFile, glossaryFile, MIN_RULES };

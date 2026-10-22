@@ -1,21 +1,21 @@
 {
   "repo": "teacherjung/ai-collab-kit",
-  "version": "db48be894e7d3f9c9b1c6f607b7523d4a1741a98",
-  "syncedAt": "2026-10-19",
+  "version": "c7125618592b757e29c6b76160dd517665987edf",
+  "syncedAt": "2026-10-22",
   "entries": [
     {
       "mode": "100644",
-      "blob": "f556c2370c5327de3bdd681a32b7daa80bda5ea5",
+      "blob": "325601fb0a370bc5d0798e4d39868a9826edf727",
       "path": "GLOSSARY.md"
     },
     {
       "mode": "100644",
-      "blob": "b713612b8f57d71a02bb2ec3c277047d9c8517ee",
+      "blob": "9b6b898b1e4060e19400cd52d5bc6d4a282d57da",
       "path": "MACHINES.md"
     },
     {
       "mode": "100644",
-      "blob": "b259570d2dc62dfa089a7b95976a1ffe55f69b55",
+      "blob": "b5edb83baf89a09dcc73f5f933986d7d20b91ea7",
       "path": "RULES.md"
     },
     {
@@ -30,7 +30,7 @@
     },
     {
       "mode": "100644",
-      "blob": "536f22121c1d0e6144bc53e1b92e7b40d4b9fa01",
+      "blob": "822d431f5a314d64b6aaf946fd413b14c1086a6d",
       "path": "rules.json"
     },
     {
@@ -40,7 +40,7 @@
     },
     {
       "mode": "100644",
-      "blob": "2f722f7428286768dd39a42e2865c397bd80af56",
+      "blob": "8de6a071d854bc42560cf88275bb8201769caa0a",
       "path": "templates/ci-github.yml"
     },
     {
@@ -50,7 +50,7 @@
     },
     {
       "mode": "100644",
-      "blob": "0afc36db894bb9c629a4f9eb0716e63313050825",
+      "blob": "54269a1bfa929c79ddd501b8399825b0e8c84f2f",
       "path": "templates/collab-fields-github.yml"
     },
     {
@@ -85,7 +85,7 @@
     },
     {
       "mode": "100644",
-      "blob": "4f4ae79aeb632f1b3ea07d217417c46c88eb9f85",
+      "blob": "4894032944eea1a97fc753e19d5fcd7b4aa18f5a",
       "path": "templates/pr-body.md"
     },
     {
@@ -110,17 +110,17 @@
     },
     {
       "mode": "100644",
-      "blob": "854836faa9b25f5bced55f88398669fd40897310",
+      "blob": "395807202ac6a2e04650122ccc96ac9b616b1c27",
       "path": "templates/review-request.md"
     },
     {
       "mode": "100644",
-      "blob": "d4d43a8e0cdd64aacce0e4d3328b235624506c75",
+      "blob": "3258b2ed1cee55fd47b842457f389ebf5e6df9d6",
       "path": "templates/ruling-record.md"
     },
     {
       "mode": "100644",
-      "blob": "ddc4a914fff0bd9543bbb3278abf35da1f7461f8",
+      "blob": "832229474e61fcc6c868508df1bf3d5d983a29db",
       "path": "templates/scan-record.md"
     },
     {
@@ -165,7 +165,7 @@
     },
     {
       "mode": "100644",
-      "blob": "8ddc46014a3433991069e2eb183cb8678734aef5",
+      "blob": "9494123a6df23dce017f4c5d0701007db7c24434",
       "path": "tests/check-checks-really-ran.test.js"
     },
     {
@@ -175,7 +175,7 @@
     },
     {
       "mode": "100644",
-      "blob": "e7cdaaf82305fd242879f0df58792593a48dd21b",
+      "blob": "106cc9d5fa3ed16f72582022159d5078dec89ce9",
       "path": "tests/check-cross-merge.test.js"
     },
     {
@@ -205,7 +205,7 @@
     },
     {
       "mode": "100644",
-      "blob": "624fe7f7bc503e7ac321b94ae5effdbdc9f145ed",
+      "blob": "c1781ec903c43a64e211bfd0a4161c8a17740570",
       "path": "tests/data-contract.test.js"
     },
     {
@@ -215,12 +215,12 @@
     },
     {
       "mode": "100644",
-      "blob": "5f4a8e6ebff2ebd6702a6d4d67a1b3892f8cdd04",
+      "blob": "c9e56033294c347b3113f2cbd64cb3db077f2b54",
       "path": "tests/file-names.test.js"
     },
     {
       "mode": "100644",
-      "blob": "ab0a05c322f726d7030ac64ed8fcae003de7bfae",
+      "blob": "56692b0a607125423dd9a8ad1dce2f77879ed1fc",
       "path": "tests/filled-settings.test.js"
     },
     {
@@ -235,7 +235,7 @@
     },
     {
       "mode": "100644",
-      "blob": "b07b7882611dc234a89a88ccbeadfb3de9bc619b",
+      "blob": "acb4d6e6847e7b7b4aa48d0dfd711bb76b2985ec",
       "path": "tests/git-env.test.js"
     },
     {
@@ -247,11 +247,6 @@
       "mode": "100644",
       "blob": "ade9626bb0b6061c09c39ed5e35e8e88bd358939",
       "path": "tests/guard-copy.test.js"
-    },
-    {
-      "mode": "100644",
-      "blob": "96786b8a9f6d232a8d15f2529ea54b93f30c2d62",
-      "path": "tests/helpers/fake-isolation.js"
     },
     {
       "mode": "100644",
@@ -270,7 +265,7 @@
     },
     {
       "mode": "100644",
-      "blob": "7f7ccb2b32cc5925f704ef65329cc4949039f1d6",
+      "blob": "41e3ed5af82832f5d9298708c1731b5eccc95ea3",
       "path": "tests/helpers/unfilled-settings.json"
     },
     {
@@ -280,12 +275,12 @@
     },
     {
       "mode": "100644",
-      "blob": "8a66ee7ed12331f70c3444b4c361882d63a49df0",
+      "blob": "7d6537b1a0f09227debb6ba1a0288f30726e1599",
       "path": "tests/kit-lock.test.js"
     },
     {
       "mode": "100644",
-      "blob": "20a834706c0ed8a61646d3dfe9a64e5ebf172ca1",
+      "blob": "4b71de4e509058cb678aa9fabd3858587022418a",
       "path": "tests/manifest.json"
     },
     {
@@ -310,7 +305,7 @@
     },
     {
       "mode": "100644",
-      "blob": "fbbfd3bddde49b0d461424df961f9059572704b0",
+      "blob": "23900eb2a5b318dbf333c3b0250872357beb2d4d",
       "path": "tests/pending-rulings.test.js"
     },
     {
@@ -325,7 +320,12 @@
     },
     {
       "mode": "100644",
-      "blob": "0b5338bbd8229fd53c0f93a119afdd91f75f10c5",
+      "blob": "ea5551d21f56d053f322188d8df7d1c140e8b73f",
+      "path": "tests/preflight.test.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "cbf2ab16c89937dc667816d9c2bb56869a3ef46f",
       "path": "tests/review-launch.test.js"
     },
     {
@@ -335,7 +335,7 @@
     },
     {
       "mode": "100644",
-      "blob": "7d301d67877605b1f2cb941bcac522c0fd339475",
+      "blob": "757749e31e2eb72bb130b1c5b852cbba291d3f6a",
       "path": "tests/rules-length.test.js"
     },
     {
@@ -345,27 +345,17 @@
     },
     {
       "mode": "100644",
-      "blob": "3f03c8be2cc0172a0f6a5560b52d0664e0894959",
+      "blob": "55b8895ff7587ce3347dd5e4a308cb55454960a4",
       "path": "tests/run-checks.test.js"
     },
     {
       "mode": "100644",
-      "blob": "099e96f9910fe71fc27cedb3fa8fdddc4d86a155",
-      "path": "tests/scan-postmortem.test.js"
-    },
-    {
-      "mode": "100644",
-      "blob": "c0b07d035984a2bbd9ea7710ca5d31d25ab98d80",
-      "path": "tests/scan-probe.test.js"
-    },
-    {
-      "mode": "100644",
-      "blob": "0c9f6995fc258b30bb896e35b379384967a783ea",
+      "blob": "15df4fd2288b379a275d7e1d17a0f8134813dec5",
       "path": "tests/settings.test.js"
     },
     {
       "mode": "100644",
-      "blob": "a04243a6896e1d446e1d3a998fc2766f7615debb",
+      "blob": "39206f1a4137a90e1829add4ba846bf160413d17",
       "path": "tests/signposts.test.js"
     },
     {
@@ -375,7 +365,7 @@
     },
     {
       "mode": "100644",
-      "blob": "e0283c29646a7468e8f9610445c96133b9f6799c",
+      "blob": "6d49274157f66a9a89cdf1d559764240958a31dd",
       "path": "tests/tidy-list.test.js"
     },
     {
@@ -405,12 +395,12 @@
     },
     {
       "mode": "100644",
-      "blob": "efdb36404717ec2c0c08ed0d263e186fbd7b26bf",
+      "blob": "2bbbddb576b1f6e588c9a6fb4704b48ace0c0fb8",
       "path": "tools/build-rules.js"
     },
     {
       "mode": "100644",
-      "blob": "164b9d3c08117e877c72947e8a285f5ae0d23783",
+      "blob": "0616a2cd3ba488bda5f3ebf6bb3f21b21c3e1d3d",
       "path": "tools/build-settings.js"
     },
     {
@@ -440,7 +430,7 @@
     },
     {
       "mode": "100644",
-      "blob": "2cb6e5269a2f06a13e8303d5f147fb3afb916ab3",
+      "blob": "112b8a90639c0a226cffce1d14ae23d93a062d31",
       "path": "tools/gates/check-checks-really-ran.js"
     },
     {
@@ -450,7 +440,7 @@
     },
     {
       "mode": "100644",
-      "blob": "bec6b8b791388187028dd1dfc7a94762e8703829",
+      "blob": "7f8b0a644ba18b6694e50e39ea75f93823f03426",
       "path": "tools/gates/check-cross-merge.js"
     },
     {
@@ -480,7 +470,7 @@
     },
     {
       "mode": "100644",
-      "blob": "9ae508e7ad93f26c992ab5249c0f8e5dbcdd2fb0",
+      "blob": "30f42c09dc0e5f19a9c21877b5c6dd2f51e69705",
       "path": "tools/kit-lock.js"
     },
     {
@@ -500,7 +490,7 @@
     },
     {
       "mode": "100644",
-      "blob": "11a07e11bfaa57376297266f5ffe5375fdf532b0",
+      "blob": "ffc248cce2dc5e145be56486dd146ed48c5206a1",
       "path": "tools/pending-rulings.js"
     },
     {
@@ -510,7 +500,12 @@
     },
     {
       "mode": "100644",
-      "blob": "4862284d91da9b2e2f0af329ccf2c721399cddb4",
+      "blob": "ccc54a3791f981f1c6025d8efeece1ae92b91158",
+      "path": "tools/preflight.js"
+    },
+    {
+      "mode": "100644",
+      "blob": "8f049e3a0d18794500366bdf5c8649bc33140ba5",
       "path": "tools/review-launch.js"
     },
     {
@@ -530,16 +525,6 @@
     },
     {
       "mode": "100644",
-      "blob": "1db2cb050b4dc3b90ae80e0949394b76492933af",
-      "path": "tools/scan-postmortem.js"
-    },
-    {
-      "mode": "100644",
-      "blob": "76a2c21803001f282c6bf6ea7528cefd35dd57c1",
-      "path": "tools/scan-probe.js"
-    },
-    {
-      "mode": "100644",
       "blob": "5b37fb779ee0e7472fe34ae924987e8aaf7594b7",
       "path": "tools/settings-data.js"
     },
@@ -550,7 +535,7 @@
     },
     {
       "mode": "100644",
-      "blob": "c22f6fc3cfa27fb61be68d300ce675612dd98bf3",
+      "blob": "6010e5e7858422ca763921d1041a81d93609d0ed",
       "path": "tools/tidy-list.js"
     },
     {

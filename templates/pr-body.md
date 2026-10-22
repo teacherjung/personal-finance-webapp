@@ -16,4 +16,4 @@
 
 ### 複審後掃
 
-_待補——照 templates/scan-record.md 填；這行還在＝還沒填。_
+<有掃時以 `--scan-post` 代貼的 `🔍` 掃描留言為準（不必回頭改這一段）；不掃或沒掃成時寫 `未執行：<原因>`（見 templates/scan-record.md）>

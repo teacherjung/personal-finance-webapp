@@ -19,6 +19,38 @@ const { read: readSettings } = require('../settings-data.js');
 const { parseInstant } = require('../time-point.js');
 
 const UNSET = '未設定';
+const DEFAULT_WAIT_MS = 300000;
+const DEFAULT_POLL_MS = 5000;
+const USAGE = '用法：node tools/gates/check-checks-really-ran.js <變更編號> [--wait-ms <毫秒> | --no-wait]';
+
+function defaultSleep(ms) {
+  const dur = Math.max(0, Math.floor(Number(ms) || 0));
+  if (dur > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, dur);
+}
+
+function parseCliArgs(argv = []) {
+  let changeId;
+  let waitMs = DEFAULT_WAIT_MS;
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--no-wait') {
+      waitMs = 0;
+    } else if (a === '--wait-ms') {
+      const v = argv[i + 1];
+      if (v === undefined || !/^\d+$/u.test(v)) return { error: `${USAGE}（--wait-ms 要接非負整數毫秒）` };
+      waitMs = Number(v);
+      i += 1;
+    } else if (a.startsWith('-')) {
+      return { error: `${USAGE}（不認得的參數：${a}）` };
+    } else if (changeId === undefined) {
+      changeId = a;
+    } else {
+      return { error: `${USAGE}（多給了參數：${a}）` };
+    }
+  }
+  if (!changeId) return { error: USAGE };
+  return { changeId, waitMs };
+}
 
 /**
  * 純判斷層。
@@ -60,10 +92,10 @@ function evaluate(runs, autoMergeOn, required) {
   return { code: 0, reason: `必過檢查（${required.map((r) => r.name).join('、')}）在那顆版本上都真的跑過且成功，自動合併也關著` };
 }
 
-/** 跑這道閘。平台查不到、設定沒填，一律退 2。 */
-function gateRun(changeId, { settings = readSettings(), platform = { ask } } = {}) {
+/** 跑這道閘。平台查不到、設定沒填，一律退 2；waitMs > 0 時遇「還有場次在跑」會自動輪詢等待。 */
+function gateRun(changeId, { settings = readSettings(), platform = { ask }, waitMs = 0, pollMs = DEFAULT_POLL_MS, now = Date.now, sleep = defaultSleep } = {}) {
   const lines = [];
-  if (!changeId) return { code: 2, lines: ['用法：node tools/gates/check-checks-really-ran.js <變更編號>'] };
+  if (!changeId) return { code: 2, lines: [USAGE] };
   const mainBranch = settings.mainBranch;
   if (!mainBranch || mainBranch === UNSET) {
     return { code: 2, lines: [`專案設定裡的主幹分支名還是「${UNSET}」：不知道去哪裡讀必過檢查名單，不放行。`] };
@@ -82,17 +114,50 @@ function gateRun(changeId, { settings = readSettings(), platform = { ask } } = {
     }
     throw e;
   }
-  const r = evaluate(runs, change.autoMergeOn, required);
-  lines.push(`真考卷閘｜變更 ${changeId}（版本 ${change.headSha}）：${r.reason}`);
+  const initialSha = change.headSha;
+  let r = evaluate(runs, change.autoMergeOn, required);
+  let waitedPolls = 0;
+  if (waitMs > 0 && r.code === 1 && /還有場次在跑/u.test(r.reason)) {
+    const deadline = now() + waitMs;
+    const stepMs = Math.max(1, Number(pollMs) || DEFAULT_POLL_MS);
+    while (r.code === 1 && /還有場次在跑/u.test(r.reason)) {
+      const remaining = deadline - now();
+      if (remaining <= 0) break;
+      sleep(Math.min(stepMs, remaining));
+      waitedPolls += 1;
+      try {
+        change = platform.ask('change', { change: String(changeId) }, { settings });
+        if (!change || change.headSha !== initialSha) {
+          lines.push(`真考卷閘｜變更 ${changeId}：等待必過檢查完成期間版本變了（開始時 ${initialSha}、現在 ${(change && change.headSha) || '不明'}）——不放行。`);
+          return { code: 2, lines };
+        }
+        runs = platform.ask('checks', { sha: initialSha }, { settings });
+      } catch (e) {
+        if (e instanceof PlatformError || (e && e.name === 'PlatformError')) {
+          lines.push(`真考卷閘：問不到平台（${e.message}）——查不到就不是安全，不放行。`);
+          return { code: 2, lines };
+        }
+        throw e;
+      }
+      r = evaluate(runs, change.autoMergeOn, required);
+    }
+  }
+  const waitNote = waitedPolls > 0 ? `（輪詢等待 ${waitedPolls} 次）` : '';
+  lines.push(`真考卷閘｜變更 ${changeId}（版本 ${change.headSha}）：${r.reason}${waitNote}`);
   return { code: r.code, lines };
 }
 
 if (require.main === module) {
   let result;
-  try { result = gateRun(process.argv[2]); }
-  catch (e) { result = { code: 2, lines: [`真考卷閘：沒預期到的錯誤（${(e && e.code) || (e && e.message) || '不明'}）——不放行。`] }; }
+  const parsed = parseCliArgs(process.argv.slice(2));
+  if (parsed.error) {
+    result = { code: 2, lines: [parsed.error] };
+  } else {
+    try { result = gateRun(parsed.changeId, { waitMs: parsed.waitMs }); }
+    catch (e) { result = { code: 2, lines: [`真考卷閘：沒預期到的錯誤（${(e && e.code) || (e && e.message) || '不明'}）——不放行。`] }; }
+  }
   process.stdout.write(`${result.lines.join('\n')}\n`);
   process.exit(result.code);
 }
 
-module.exports = { gateRun, evaluate };
+module.exports = { gateRun, evaluate, parseCliArgs, DEFAULT_WAIT_MS, DEFAULT_POLL_MS };
