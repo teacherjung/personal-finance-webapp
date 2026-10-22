@@ -23,7 +23,7 @@
 //   ⑫複審後掃生命週期（G1、G2；--scan、--scanner、--scan-post、--scan-close）：templates/scan-record.md 提示範本與 SCAN_FILL 一一對上且不含 🤖；
 //     快速通道、表定不掃、未設定掃描者、指定複審者未對當版貼通過皆印原因或未執行收口句並退 2；支援 --scanner <識別值> 切換為 reviewers 裡其他第三位 AI（自動從複審指令轉換唯讀掃描指令）；通過後開唯讀掃描樹、印啟動指令與紀錄骨架（前版已收樹的舊 scan 資料夾在新提交重掃時自動替換）；
 //     --scan-post 核掃描樹乾淨與 HEAD 未變（不符退 1），擋含 🤖 的掃描留言、核 🔍 標頭、剝除文末未貼、自動補「> 掃描時序：…」並代貼（與 check-review-verdicts.js 相容）；--scan-close 驗乾淨後收樹（支援 --purge 一併清除掃描容器資料夾）；
-//   ⑬--grok-exec 隔離與受控認證轉送（Grok 複審／掃描啟動器）：參數解析與未知旗標拒收、Seatbelt 靜態檢查與預檢失敗拒啟、OIDC 自動續期與連結檔拒收、轉送器規則核對、review 模式（含突變副本）端到端執行、DLP 與原始輸出完整保留（含前言之範例輸出由 --post／--scan-post 拒貼）；
+//   ⑬--grok-exec 隔離與受控認證轉送（Grok 複審／掃描啟動器）：參數解析與未知旗標拒收、Seatbelt 靜態檢查與預檢失敗／無結果拒啟（正式啟動端不啟動模型且不寫結果）、OIDC 自動續期與連結檔拒收、轉送器規則核對與攔截未授權請求後拒寫結果、review 模式（含突變副本）端到端執行、DLP 與原始輸出完整保留（含前言之範例輸出由 --post／--scan-post 拒貼）；
 //   ⑭一鍵執行（--run 與 --run --purge）：複審與掃描一鍵串聯開樹→執行啟動指令→外殼驗樹代貼→收樹（含 --purge），任一步失敗即停並保留現場供查。
 // ⚠️ 守不到的：印出來之後有沒有照用、複審者實際用的模型與推理；樣板本身寫得對不對（只驗記號）；平台給的事實是不是真的；
 //    假平台的基底分支名只有一個：工具若把那個名字寫死、不讀平台回的基底欄位，分不出來（#101 掃描 1-2）。
@@ -1688,7 +1688,7 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
     assert.ok(parseGrokExecArgs(bad).error, `應拒收壞參數：${bad.join(' ')}`);
   }
 
-  // (b) Seatbelt 規則靜態檢查與預檢失敗拒啟
+  // (b) Seatbelt 規則靜態檢查與預檢函式單測（正式啟動端 runGrokExec 預檢失敗／無結果拒啟見下方反例）
   assert.equal(verifyGrokSeatbeltProfile(GROK_SEATBELT_PROFILE).ok, true);
   assert.equal(runGrokSeatbeltProbe({ boxDir: '/tmp', relayPort: 54321, spawnSyncImpl: () => ({ status: 71, stdout: '', stderr: 'Operation not permitted' }) }).ok, false);
 
@@ -1996,6 +1996,61 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
       }
       assert.equal(main(['--scan-close', '7', '--dir', scanCaseDir], { settings: sScanCase }).code, 0, `${scanLabel} --scan-close`);
     }
+
+    // 預檢失敗或無結果時，正式啟動端（runGrokExec）必須退 2、不啟動模型且不寫出結果
+    for (const [probeLabel, probeRet] of [
+      ['預檢失敗（ok: false）', { ok: false, reason: '合成預檢失敗' }],
+      ['預檢無結果（null）', null],
+    ]) {
+      const probeFailOut = path.join(tmp, `probe-fail-${probeRet ? 'false' : 'null'}.md`);
+      let probeCalls = 0;
+      let modelCalls = 0;
+      const probeFailRun = await runGrokExec([
+        '--mode', 'scan',
+        '--cwd', r.dir,
+        '--model', 'grok-4.7',
+        '--reasoning-effort', 'xhigh',
+        '--prompt-file', promptFile,
+        '--out', probeFailOut,
+      ], {
+        authFile,
+        authOpts: { now: () => Date.parse('2026-10-19T00:05:00.000Z') },
+        probeFn: () => { probeCalls += 1; return probeRet; },
+        spawnGrok: async () => { modelCalls += 1; return { status: 0, stdout: '🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n', stderr: '' }; },
+      });
+      assert.equal(probeCalls, 1, `${probeLabel} 應實際執行預檢一次`);
+      assert.equal(modelCalls, 0, `${probeLabel} 預檢未通過時絕不可啟動模型程序`);
+      assert.equal(probeFailRun.code, 2, `${probeLabel} 應退 2`);
+      assert.match(probeFailRun.lines.join('\n'), /拒絕啟動/u, `${probeLabel} 應印拒絕啟動原因`);
+      assert.equal(fs.existsSync(probeFailOut), false, `${probeLabel} 不可寫出結果檔`);
+    }
+
+    // 受控認證通道攔截到未授權請求（blockingRefusals > 0）時，正式啟動端必須退 2 且拒絕寫出結果
+    const relayRefusalOut = path.join(tmp, 'relay-refusal-out.md');
+    const relayRefusalRun = await runGrokExec([
+      '--mode', 'scan',
+      '--cwd', r.dir,
+      '--model', 'grok-4.7',
+      '--reasoning-effort', 'xhigh',
+      '--prompt-file', promptFile,
+      '--out', relayRefusalOut,
+    ], {
+      authFile,
+      authOpts: { now: () => Date.parse('2026-10-19T00:05:00.000Z') },
+      probeFn: () => ({ ok: true }),
+      spawnGrok: async ({ relayPort }) => {
+        const res = await fetch(`http://127.0.0.1:${relayPort}/v1/forbidden-endpoint`);
+        assert.equal(res.status, 403, '受控轉送器對未授權路徑應回 403');
+        return {
+          status: 0,
+          stdout: '🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n',
+          stderr: '',
+        };
+      },
+    });
+    assert.equal(relayRefusalRun.code, 2, '轉送器攔截未授權請求後必須退 2');
+    assert.match(relayRefusalRun.lines.join('\n'), /受控認證通道攔截到 1 筆未授權請求——已拒絕寫出結果/u);
+    assert.equal(fs.existsSync(relayRefusalOut), false, '轉送器攔截未授權請求後不可寫出結果檔');
 
     // 前言若含真實憑證針（NEW-KEY-SECRET-3333），DLP 直接攔截並退 2
     const dlpOut = path.join(tmp, 'dlp-out.md');

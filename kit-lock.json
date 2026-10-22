@@ -1,6 +1,6 @@
 {
   "repo": "teacherjung/ai-collab-kit",
-  "version": "1a38efec7ae6180b34658ad3f9e4ba6a5db45132",
+  "version": "c7125618592b757e29c6b76160dd517665987edf",
   "syncedAt": "2026-10-22",
   "entries": [
     {
@@ -10,7 +10,7 @@
     },
     {
       "mode": "100644",
-      "blob": "2249c4c176c7d7dca54012ddf0b2c039e7cba9f9",
+      "blob": "9b6b898b1e4060e19400cd52d5bc6d4a282d57da",
       "path": "MACHINES.md"
     },
     {
@@ -325,7 +325,7 @@
     },
     {
       "mode": "100644",
-      "blob": "5b0f40919242f349b14233c33ca481fdb85eb948",
+      "blob": "cbf2ab16c89937dc667816d9c2bb56869a3ef46f",
       "path": "tests/review-launch.test.js"
     },
     {
@@ -365,7 +365,7 @@
     },
     {
       "mode": "100644",
-      "blob": "eac7d76aaf7771ec3a2495be096bcb39dc04c75d",
+      "blob": "6d49274157f66a9a89cdf1d559764240958a31dd",
       "path": "tests/tidy-list.test.js"
     },
     {
@@ -535,7 +535,7 @@
     },
     {
       "mode": "100644",
-      "blob": "5a833c6d8f2dc128ff806ee423332b6b27ec260e",
+      "blob": "6010e5e7858422ca763921d1041a81d93609d0ed",
       "path": "tools/tidy-list.js"
     },
     {
