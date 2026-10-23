@@ -143,6 +143,13 @@
 
 - （Codex 平台直接量測，2026-10-14 工具登記續項）平台命令 shell、HOME／PATH、shell 選項、匯入函式、預載環境鍵、啟動哨兵及 runtime build 尚無直接收據；依 [GPT‑6.1 Sol 平台量測 A 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/689#issuecomment-6171974004)，本次不新增旁觀 hook 或診斷 wrapper，未量狀態保留／`docs/money-guard-operations.md` 的平台量測界線、實際客戶端與全域接線環境／平台版本或啟動方式變動、出現相反證據，或另行準備出具體隔離量測方案時續作；信任、指紋、canary 與考題 shell 不代替直接量測，前案第③項不標完成 — **未完成，另排**
 
+### 文件整理收件（2026-10-23）
+
+來源：[文件收件 #729](https://github.com/teacherjung/personal-finance-webapp/issues/729)。本節只歸位候選與核對待辦，不啟動兩項實作；優先序與前端、手機、HOSTED 等前提依本檔當版指示保留。
+
+- **匯入服務拆分候選**（#729）：重新評估銀行與信用卡匯入服務的循環依賴及職責拆分／位置：`lib/services/bank-import.js`、`lib/services/statement-import.js`／觸發：有具體維護需求、且現行必要後台修正完成後，再核當版契約與架構裁示決定是否承接；不直接照舊規格的「今天開工」執行。來源：倉庫外 `Archive/finance-documents-20261021/bank-statement-import-split-spec.md`；收件時觀察到互相 import 及規格新模組未存在，屬歷史觀察，實作前須重核 — **候選，未啟動實作**。
+- **AI 解析文案審改狀態核對**（#729）：核對舊審稿仍需本人審改的句子是否已由後續回饋結清／位置：`public/modules/ai-consent.js`、`public/modules/ai-key-settings.js`、`docs/parser-generalization-plan.md` 及相關考題／觸發：下次調整 AI 同意告知、設定說明或本人提出文案意見時，先比對 #449、#450、#474 與本人留痕，只承接仍未結的句子，不把舊稿整份套回畫面。來源：倉庫外 `Archive/finance-documents-20261021/ai-copy-review.md`；功能及部分文案已有後續合併，全部本人審改是否完成仍待核對 — **核對待辦，未確認結清**。
+
 ### 交接工程待辦（文件精簡續作時歸位）
 
 來源：2026-10-08 與 10-10 的倉庫外交接清單；本輪只歸位，未重新重現各項缺陷、未批准擴大施工。各條保留原號、值得做的時機、位置、代價與來源記號，開工前再查當時主幹；手機與雲端項目仍依 AGENTS.md 常設指示暫停。原第 20 項的檢查名稱已於本輪唯讀核對後補正；原第 21 項的決定已歸入下節。
