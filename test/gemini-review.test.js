@@ -319,3 +319,179 @@ test('缺失或矛盾旁錄使完整入口拒收，原生回覆仍保留', async
     assert.ok(JSON.parse(readFileSync(f.args.outFile + '.receipt.json')).failure, retry);
   }
 });
+
+test('733 隱私拒收仍對帳已驗真的原生證據，保留全部原始輸出', async t => {
+  const f = fixture(t);
+  const r = result(response + '本機位置 /Users/private-case/example\n');
+  await assert.rejects(runReview(f.args, {git:f.git, cli:process.execPath, preflight:fakePreflight(f), invoke:()=>r}));
+  assert.equal(readFileSync(f.args.outFile+'.stdout.json','utf8'),r.stdout,retry);
+  assert.equal(existsSync(f.args.outFile),false,retry);
+  assert.equal(existsSync(f.args.outFile+'.evidence.json'),true,'隱私拒收不應跳過可獨立完成的原生證據對帳；'+retry);
+  const receipt = JSON.parse(readFileSync(f.args.outFile + '.receipt.json'));
+  assert.equal(receipt.observationStatus, 'verified', retry);
+  assert.equal(receipt.mainModel, MODEL, retry);
+  assert.deepEqual(receipt.observedModels, [MODEL], retry);
+  assert.equal(receipt.checks.reply.status, 'failed', retry);
+  assert.equal(receipt.contentAcceptance, 'pending-human-acceptance', retry);
+  assert.equal(JSON.parse(readFileSync(f.args.outFile + '.evidence.json')).status, 'pending-human-acceptance', retry);
+});
+
+test('733 回覆拒收與未知產物同時發生，收據保留兩項錯誤', async t => {
+  const f=fixture(t); let invoked=false;
+  const git=(cwd,args)=>args[0]==='status' && invoked ? '?? unexpected.md' : f.git(cwd,args);
+  const r=result(response+'本機位置 /Users/private-case/example\n');
+  await assert.rejects(runReview(f.args,{git,cli:process.execPath,preflight:fakePreflight(f),invoke:()=>{invoked=true;writeFileSync(join(f.tree,'unexpected.md'),'synthetic');return r;}}));
+  const receipt=JSON.parse(readFileSync(f.args.outFile+'.receipt.json'));
+  assert.ok(Array.isArray(receipt.failures),'收據缺多項失敗紀錄；'+retry);
+  assert.ok(receipt.failures.some(item=>/本機|絕對路徑/u.test(item.message)),retry);
+  assert.ok(receipt.failures.some(item=>/未知產物/u.test(item.message)),retry);
+  assert.equal(readFileSync(join(f.tree,'unexpected.md'),'utf8'),'synthetic',retry);
+  assert.equal(existsSync(f.args.outFile),false,retry);
+});
+
+
+test('正文拒收與來源變動分別留痕，來源未核不保存已核證據', async t => {
+  const f = fixture(t);
+  const r = result(response + '本機位置 /Users/private-case/example\n');
+  await assert.rejects(runReview(f.args, { git: f.git, cli: process.execPath, preflight: fakePreflight(f), invoke: () => {
+    writeFileSync(join(f.tree, 'source.js'), 'changed source\n');
+    return r;
+  } }), /本機|絕對路徑/u, retry);
+  const receipt = JSON.parse(readFileSync(f.args.outFile + '.receipt.json'));
+  assert.deepEqual(receipt.failures.map(item => item.stage), ['reply', 'source-final', 'observer-sources-final'], retry);
+  assert.equal(receipt.checks['evidence-reconcile'].status, 'passed', retry);
+  assert.equal(receipt.checks['evidence-save'].status, 'skipped', retry);
+  assert.ok(receipt.checks['evidence-save'].reason, retry);
+  assert.equal(receipt.observationStatus, 'not-verified', retry);
+  assert.equal(receipt.mainModel, null, retry);
+  assert.equal(receipt.evidenceSha256, null, retry);
+  assert.equal(existsSync(f.args.outFile + '.evidence.json'), false, retry);
+  assert.equal(existsSync(f.args.outFile), false, retry);
+  assert.equal(readFileSync(f.args.outFile + '.stdout.json', 'utf8'), r.stdout, retry);
+});
+
+test('正文拒收、缺事件與髒樹並存，收尾檢查仍各自完成', async t => {
+  const f = fixture(t); let invoked = false;
+  const git = (cwd, args) => args[0] === 'status' && invoked ? '?? unknown.md' : f.git(cwd, args);
+  const r = result(response + '本機位置 /Users/private-case/example\n');
+  await assert.rejects(runReview(f.args, { git, cli: process.execPath, preflight: fakePreflight(f), invoke: () => {
+    invoked = true;
+    rmSync(join(f.dir, 'native-events.jsonl'));
+    writeFileSync(join(f.tree, 'unknown.md'), 'unknown');
+    return r;
+  } }), /本機|絕對路徑/u, retry);
+  const receipt = JSON.parse(readFileSync(f.args.outFile + '.receipt.json'));
+  assert.deepEqual(receipt.failures.map(item => item.stage), ['reply', 'evidence-reconcile', 'tree-clean'], retry);
+  for (const stage of ['source-final', 'settings-final', 'policy-final', 'runtime-cleanup', 'observer-sources-final']) assert.equal(receipt.checks[stage].status, 'passed', retry);
+  assert.equal(readFileSync(join(f.tree, 'unknown.md'), 'utf8'), 'unknown', retry);
+  assert.equal(existsSync(f.args.outFile + '.evidence.json'), false, retry);
+  assert.equal(existsSync(f.args.outFile), false, retry);
+});
+
+test('前置拒收不啟 CLI，不假稱取得原生資料且清理本輪設定', async t => {
+  const f = fixture(t); let calls = 0;
+  await assert.rejects(runReview(f.args, { git: f.git, cli: process.execPath, preflight: () => { throw new Error('synthetic preflight rejection'); }, invoke: () => { calls++; return result(response); } }), /synthetic preflight rejection/u, retry);
+  const receipt = JSON.parse(readFileSync(f.args.outFile + '.receipt.json'));
+  assert.equal(calls, 0, retry);
+  assert.deepEqual(receipt.failures.map(item => item.stage), ['observer-prepare'], retry);
+  assert.equal(receipt.failure, receipt.failures[0].message, retry);
+  for (const stage of ['invoke', 'native-json', 'reply', 'evidence-reconcile', 'observer-sources-final', 'evidence-save']) {
+    assert.equal(receipt.checks[stage].status, 'skipped', retry);
+    assert.ok(receipt.checks[stage].reason, retry);
+  }
+  assert.equal(receipt.checks['runtime-cleanup'].status, 'passed', retry);
+  assert.equal(receipt.mainModel, null, retry);
+  assert.deepEqual(receipt.observedModels, [], retry);
+  assert.equal(existsSync(join(f.tree, '.gemini')), false, retry);
+  assert.equal(existsSync(f.args.outFile + '.stdout.json'), false, retry);
+});
+
+test('來源、設定、policy 與髒樹分別核對，不刪變動設定', async t => {
+  const f = fixture(t); let invoked = false;
+  const git = (cwd, args) => args[0] === 'status' && invoked ? '?? .gemini/settings.json' : f.git(cwd, args);
+  await assert.rejects(runReview(f.args, { git, cli: process.execPath, preflight: fakePreflight(f), invoke: () => {
+    invoked = true;
+    writeFileSync(join(f.tree, 'source.js'), 'changed source');
+    writeFileSync(join(f.tree, '.gemini/settings.json'), '{}');
+    writeFileSync(join(f.dir, 'gemini-policy.toml'), 'changed policy');
+    return result(response);
+  } }), /未授權變動/u, retry);
+  const receipt = JSON.parse(readFileSync(f.args.outFile + '.receipt.json'));
+  assert.deepEqual(receipt.failures.map(item => item.stage), ['source-final', 'settings-final', 'policy-final', 'tree-clean', 'observer-sources-final'], retry);
+  assert.equal(receipt.checks['runtime-cleanup'].status, 'skipped', retry);
+  assert.ok(receipt.checks['runtime-cleanup'].reason, retry);
+  assert.equal(readFileSync(join(f.tree, '.gemini/settings.json'), 'utf8'), '{}', retry);
+  assert.equal(existsSync(f.args.outFile + '.evidence.json'), false, retry);
+  assert.equal(existsSync(f.args.outFile), false, retry);
+});
+
+test('清理遇到未知 runtime 產物仍核髒樹與 observer，不刪未知檔', async t => {
+  const f = fixture(t); let invoked = false;
+  const git = (cwd, args) => args[0] === 'status' && invoked ? '?? .gemini/unknown' : f.git(cwd, args);
+  await assert.rejects(runReview(f.args, { git, cli: process.execPath, preflight: fakePreflight(f), invoke: () => {
+    invoked = true;
+    writeFileSync(join(f.tree, '.gemini/unknown'), 'keep unknown');
+    return result(response);
+  } }), /ENOTEMPTY/u, retry);
+  const receipt = JSON.parse(readFileSync(f.args.outFile + '.receipt.json'));
+  assert.deepEqual(receipt.failures.map(item => item.stage), ['runtime-cleanup', 'tree-clean'], retry);
+  assert.equal(receipt.checks['observer-sources-final'].status, 'passed', retry);
+  assert.equal(readFileSync(join(f.tree, '.gemini/unknown'), 'utf8'), 'keep unknown', retry);
+  assert.equal(existsSync(f.args.outFile), false, retry);
+});
+
+test('壞 JSON 仍保留原始輸出並核髒樹，依賴階段明列未執行原因', async t => {
+  const f = fixture(t); let invoked = false;
+  const git = (cwd, args) => args[0] === 'status' && invoked ? '?? unknown' : f.git(cwd, args);
+  const raw = '{invalid synthetic JSON\n';
+  await assert.rejects(runReview(f.args, { git, cli: process.execPath, preflight: fakePreflight(f), invoke: () => {
+    invoked = true;
+    return { ...result(response), stdout: raw };
+  } }), /JSON|property/u, retry);
+  const receipt = JSON.parse(readFileSync(f.args.outFile + '.receipt.json'));
+  assert.deepEqual(receipt.failures.map(item => item.stage), ['native-json', 'tree-clean'], retry);
+  for (const stage of ['model-roles', 'reply', 'evidence-reconcile', 'evidence-save']) {
+    assert.equal(receipt.checks[stage].status, 'skipped', retry);
+    assert.ok(receipt.checks[stage].reason, retry);
+  }
+  assert.equal(readFileSync(f.args.outFile + '.stdout.json', 'utf8'), raw, retry);
+  assert.equal(readFileSync(f.args.outFile + '.stderr', 'utf8'), 'synthetic diagnostic\n', retry);
+  assert.equal(existsSync(f.args.outFile), false, retry);
+});
+
+test('收據保存失敗直接拒收，不發布待貼全文或覆蓋既有檔', async t => {
+  const f = fixture(t);
+  await assert.rejects(runReview(f.args, { git: f.git, cli: process.execPath, preflight: fakePreflight(f), invoke: () => {
+    writeFileSync(f.args.outFile + '.receipt.json', 'keep existing');
+    return result(response);
+  } }), /收據保存失敗/u, retry);
+  assert.equal(readFileSync(f.args.outFile + '.receipt.json', 'utf8'), 'keep existing', retry);
+  assert.equal(existsSync(f.args.outFile), false, retry);
+});
+
+
+test('來源、runtime、policy 與 observer 個別失敗，各自撤回證據資格', async t => {
+  for (const [mode, stage] of [['source', 'source-final'], ['runtime', 'settings-final'], ['policy', 'policy-final'], ['observer', 'observer-sources-final']]) {
+    const f = fixture(t);
+    const observer = join(f.dir, 'independent-observer.js');
+    const preflight = async () => {
+      const native = await fakePreflight(f)();
+      const bytes = readFileSync(native.observer);
+      writeFileSync(observer, bytes);
+      const sha = createHash('sha256').update(bytes).digest('hex');
+      return { ...native, bootstrap: observer, observer, bootstrapSha256: sha, observerSha256: sha };
+    };
+    await assert.rejects(runReview(f.args, { git: f.git, cli: process.execPath, preflight, invoke: () => {
+      const file = { source: join(f.tree, 'source.js'), runtime: join(f.tree, '.gemini/settings.json'), policy: join(f.dir, 'gemini-policy.toml'), observer }[mode];
+      writeFileSync(file, 'changed synthetic source');
+      return result(response);
+    } }), undefined, mode + '；' + retry);
+    const receipt = JSON.parse(readFileSync(f.args.outFile + '.receipt.json'));
+    assert.equal(receipt.checks[stage].status, 'failed', mode + '；' + retry);
+    assert.equal(receipt.checks['evidence-reconcile'].status, 'passed', mode + '；' + retry);
+    assert.equal(receipt.observationStatus, 'not-verified', mode + '；' + retry);
+    assert.equal(receipt.evidenceSha256, null, mode + '；' + retry);
+    assert.equal(existsSync(f.args.outFile + '.evidence.json'), false, mode + '；' + retry);
+    assert.equal(existsSync(f.args.outFile), false, mode + '；' + retry);
+  }
+});
