@@ -54,6 +54,7 @@
 
 - **GS-D01｜前端排序鍵防禦候選**（原報告 3）：`public/modules/tx-sort.js` 的 SORTERS 查表會讀原型，但呼叫頁面的排序鍵由固定表頭提供。落點：該模組、`public/modules/transactions.js`、`public/modules/cashflow.js`。觸發：取得正常操作可達的反例，或下次修改共用排序時再評估；不列成已證使用者可觸發的急件。
 - **Gemini 角色與計數直接回歸補證**：[#735](https://github.com/teacherjung/personal-finance-webapp/pull/735) 將既有 `parseReply` 的模型角色與計數核對列為直接單元題，合法輸出與反例均不經完整入口的後段證據對帳；單一守衛突變、正式複審與交付以該支收據為準。#730 樹外自核與 #734 證據核收修復的歷史界線保留，不擴張模型資格或本人單次例外。
+- **Gemini 條件式原生掃描接線**：依已裁 [施工計畫](docs/gemini-native-scan-plan.md)承接官方掃描生命週期、四種讀檔搜尋工具與具名用途證據。Codex 實作、Grok 正式複審；Gemini 只任第三方掃描者。正式核收、真掃描與交付看承接 PR 當版紀錄，沒有完成接線不宣稱已啟用。
 
 - **GS-D02｜後端保費週期標籤防禦候選**（原報告 3 延伸）：**正式 LOCAL HTTP 邊界核對完成，防禦候選未觸發**。在主幹 `38c268cf8ff4c94e3c3d8f49292b25886ff0861a` 以合成資料走正式新增／修改／匯入與 summary，45 個結果場、130 次請求；合法與缺省週期標籤符合預期，所列非法值回 400，拒收前後資料投影相同。[完整有限核對](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6298865670)；沒有修改 cycleLabel／schema，也未讀真資料或證明所有歷史輸入安全。落點：`lib/derive.js` 的 cycleLabel、`lib/schema.js` 與提醒考題。觸發：取得正常操作可達或可信舊資料的反例時再裁最小修補；不為候選清零新增純重構。
 - **GS-D03｜開發環境維護／整理**（原報告附帶清單）：分支、工作樹、暫存與 stash 的舊數量不是產品錯誤，也不能直接作刪除依據。落點：本機環境，盤點入口 `tools/tidy-list.js`（套件檔只使用、不改）。觸發：有整理需求時重新唯讀盤點、核對持有人／未提交成果／證據保留及現有整理工作線，再依既有授權辦理；本次不刪除，不把舊數量寫成現況。
