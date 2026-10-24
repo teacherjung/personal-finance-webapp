@@ -30,6 +30,65 @@ test('完整原生 response 與尾端換行原樣保留', () => {
   assert.equal(parseReply(r.stdout, r, { head: HEAD, round: 1 }, MODEL).response, response, retry);
 });
 
+// 直接驗收件結果，避免完整入口的後段證據對帳遮住前段模型守衛失效。
+test('parseReply 直接接受成功主審及合格循環偵測，保留完整本文與分工', () => {
+  for (const models of [
+    { [MODEL]: metrics({ main: role(2, 1) }) },
+    { [MODEL]: metrics({ main: role(3, 1), utility_loop_detector: role(2, 1) }), [LOOP_MODEL]: metrics({ utility_loop_detector: role(4, 1) }) },
+  ]) {
+    const r = result(response, models);
+    const parsed = parseReply(r.stdout, r, { head: HEAD, round: 1 }, MODEL);
+    assert.equal(parsed.response, response, retry);
+    assert.equal(parsed.mainModel, MODEL, retry);
+    assert.deepEqual(parsed.models, Object.keys(models), retry);
+    assert.deepEqual(parsed.auxiliaryRoles, Object.entries(models).flatMap(([model, row]) =>
+      Object.entries(row.roles).filter(([name]) => name === 'utility_loop_detector')
+        .map(([name, count]) => ({ model, role: name, ...count }))), retry);
+  }
+});
+
+test('parseReply 直接拒收錯主審、缺成功主審及未核角色', async t => {
+  const validMain = () => ({ [MODEL]: metrics({ main: role(2, 0) }) });
+  const cases = [
+    ['輔助模型不能兼任主審', () => ({ ...validMain(), [LOOP_MODEL]: metrics({ main: role() }) }), /原生主審模型不符/u],
+    ['只有循環偵測不算主審', () => ({ [MODEL]: metrics({ utility_loop_detector: role() }) }), /沒有成功 main/u],
+    ['主審請求全失敗', () => ({ [MODEL]: metrics({ main: role(2, 2) }) }), /沒有成功 main/u],
+    ['主審零請求', () => ({ [MODEL]: metrics({ main: role(0, 0) }) }), /沒有成功 main/u],
+    ['未知角色不能算輔助', () => ({ [MODEL]: metrics({ main: role(), unknown: role() }) }), /角色未核實/u],
+    ['未登記模型不能作循環偵測', () => ({ ...validMain(), 'unregistered-model': metrics({ utility_loop_detector: role() }) }), /原生回報模型不符/u],
+    ['模型缺角色', () => ({ [MODEL]: { api: role() } }), /缺可用角色/u],
+    ['角色不能是陣列', () => ({ [MODEL]: { api: role(), roles: [] } }), /缺可用角色/u],
+  ];
+  for (const [name, models, error] of cases) await t.test(name, () => {
+    const r = result(response, models());
+    assert.throws(() => parseReply(r.stdout, r, { head: HEAD, round: 1 }, MODEL), error, retry);
+  });
+});
+
+test('parseReply 直接拒收不合法及未歸屬的角色計數', async t => {
+  const base = () => ({ [MODEL]: metrics({ main: role(3, 1) }), [LOOP_MODEL]: metrics({ utility_loop_detector: role(2, 0) }) });
+  const cases = [
+    ['請求總數未歸屬', models => { models[MODEL].api.totalRequests++; }, /未完整歸屬角色/u],
+    ['錯誤總數未歸屬', models => { models[MODEL].api.totalErrors++; }, /未完整歸屬角色/u],
+    ['角色缺請求數', models => { delete models[MODEL].roles.main.totalRequests; }, /模型計數不符/u],
+    ['角色缺錯誤數', models => { delete models[MODEL].roles.main.totalErrors; }, /模型計數不符/u],
+    ['角色數不能是字串', models => { models[MODEL].roles.main.totalRequests = '3'; }, /模型計數不符/u],
+    ['角色數不能是小數', models => { models[MODEL].roles.main.totalRequests = 3.5; }, /模型計數不符/u],
+    ['角色數不可超出安全整數', models => { models[MODEL].roles.main.totalRequests = Number.MAX_SAFE_INTEGER + 1; }, /模型計數不符/u],
+    ['負角色計數即使總數相合也拒收', models => { models[MODEL] = metrics({ main: role(3, 1), utility_loop_detector: role(-1, -1) }); }, /模型計數不符/u],
+    ['角色錯誤多於請求即使總數合法也拒收', models => { models[MODEL] = metrics({ main: role(3, 0), utility_loop_detector: role(1, 2) }); }, /錯誤計數超過請求/u],
+    ['API 計數不能是字串', models => { models[MODEL].api.totalRequests = '3'; }, /模型計數不符/u],
+    ['API 錯誤不能多於請求', models => { models[MODEL].api.totalErrors = 4; }, /錯誤計數超過請求/u],
+    ['計數不能是空值', models => { models[MODEL].roles.main = null; }, /模型計數形狀不符/u],
+  ];
+  for (const [name, mutate, error] of cases) await t.test(name, () => {
+    const models = base();
+    mutate(models);
+    const r = result(response, models);
+    assert.throws(() => parseReply(r.stdout, r, { head: HEAD, round: 1 }, MODEL), error, retry);
+  });
+});
+
 test('未完成或真發現在前、合規範例在後不能轉成正式通過', () => {
   for (const prefix of ['尚未完成測試。\n', 'High：會丟失原錯誤。範例：\n```text\n', '\n']) {
     const r = result(prefix + response);
