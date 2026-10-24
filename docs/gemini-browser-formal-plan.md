@@ -1,6 +1,6 @@
 # Gemini 網頁正式掃描接線計畫（歷史計畫；已停止）
 
-> **2026-10-18 本人已取消 Gemini 工作線。** 現行為 Codex 實作、Grok 複審，掃描跳過；[本人更新](https://github.com/teacherjung/personal-finance-webapp/pull/707#issuecomment-6249555794)與[共同規則](project-collaboration.md#本次分工更新)為準。下文保留當時方案及證據，不授權施工、資格重試、CLI／網頁啟動或等待條件滿足後續跑。舊固定提供者、部署與收據亦不得作為恢復依據；須本人另行明確指示。此為授權撤銷，不宣稱新設定能關閉任意舊副本。
+> **2026-10-18 本人已取消 Gemini 工作線。** 當時為 Codex 實作、Grok 複審，掃描跳過；[本人更新](https://github.com/teacherjung/personal-finance-webapp/pull/707#issuecomment-6249555794)與[共同規則](project-collaboration.md#本次分工更新)為準。下文保留當時方案及證據，不授權施工、資格重試、CLI／網頁啟動或等待條件滿足後續跑。舊固定提供者、部署與收據亦不得作為恢復依據；須本人另行明確指示。此為授權撤銷，不宣稱新設定能關閉任意舊副本。 後續條件式原生掃描依[共同現行接法](project-collaboration.md#gemini-條件式原生掃描)，不恢復下文歷史方案。
 
 ## 目的與已核前提
 

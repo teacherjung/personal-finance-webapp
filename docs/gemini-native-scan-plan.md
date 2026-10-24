@@ -17,7 +17,7 @@
 - settings.json、PROJECT-SETTINGS.md、test/project-collaboration-settings.test.js、test/acceptance-table.test.js：明確scanner命令、模型／HIGH與精確驗收檔名登記，生成表由正式工具產生。
 - docs/gemini-native-scan-plan.md、docs/project-collaboration.md、PROJECT.md：本計畫、操作邊界與上游完成狀態。AGENTS.md只在必要本人新指示落點需要時另核範圍，先不加入預約。
 
-15個預計路徑已核D5，0個共用檔；完整路徑搜尋領域路由表未命中額外領域，共用底層仍依入口一律適用。正式預約前重核當版；共享tools／templates／RULES不在施工範圍。
+本計畫初始預計路徑已核D5，0個共用檔；完整路徑搜尋領域路由表未命中額外領域，共用底層仍依入口一律適用。正式預約前重核當版；共享tools／templates／RULES不在施工範圍。
 
 ## 設計邊界
 
@@ -54,4 +54,8 @@
 
 ### 掃描登記連動的回歸預約
 
-另預約 test/grok-scan-flow-review.test.js（D5 零命中，領域路由無額外命中），總計十六路徑。原題依賴專案設定未登記掃描者；改用本題新建的停用設定副本，仍實跑 Grok 正式複審及原有材料、隔離與清理斷言，避免用正式設定的時態代替受測情境。
+另預約 test/grok-scan-flow-review.test.js（D5 零命中，領域路由無額外命中）。原題依賴專案設定未登記掃描者；改用本題新建的停用設定副本，仍實跑 Grok 正式複審及原有材料、隔離與清理斷言，避免用正式設定的時態代替受測情境。
+
+### 歷史停止指路的補正
+
+依[Sol 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/736#issuecomment-6382287862)，另預約 docs/gemini-native-formal-plan.md、docs/gemini-browser-formal-plan.md，D5 零命中、領域路由無額外命中。只將開頭停止時的分工改標「當時」，連回共同現行接法；協作附則的通用後掃紀錄依本場實際狀態填寫。舊 GN／網頁方案、原來源與停止界線保留。原 K5 結果保留，補正後按新 HEAD 重核；原程式突變證據維持其來源版本，不改稱新版本重跑。
