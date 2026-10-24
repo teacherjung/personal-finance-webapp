@@ -70,7 +70,8 @@ export async function renderTransactions(canCommit = () => true) {
     }
     return;
   }
-  if (!canCommit() || seq !== currentRouteSeq() || generation !== renderGeneration) return;   // 期間切走了頁就別覆蓋新頁面（Codex r10#6）
+  if (!canCommit()) return;
+  if (seq !== currentRouteSeq() || generation !== renderGeneration) return;   // 期間切走了頁就別覆蓋新頁面（Codex r10#6）
   const [allRaw, accounts, cards, tree, refundData] = responses;
   expTree = tree && typeof tree === 'object' ? tree : {};
   // 只吃信用卡帳本（三層重構）：下游月加總、店家檔案、byCat 全部因此天然只算卡消費、不會混入現金流。
