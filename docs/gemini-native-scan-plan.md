@@ -43,3 +43,15 @@
 ## 回復與限制
 
 若要回復，回復本支提交並將scanner恢復未設定；不變動帳號、憑證、guard安裝或全域信任。舊#730／#734紀錄保留，不能因新用途已核而追認舊輪或結清原客戶端安裝、平台直接量測、任意私人上下文與完整執行映像證明。
+
+
+## 共用收件與材料的實作接縫
+
+依[Sol 小抽取裁示](https://github.com/teacherjung/personal-finance-webapp/pull/736#issuecomment-6382044657)，在 gemini-review.js 抽具名 runNative；兩個固定入口各自準備正式紀錄與解析完整回覆，再以封閉用途交同一執行／保存／清理流程。scan 不帶 mutation include-directory，也不接受任意工具表或公開 parser 參數。準備結果及解析結果同時帶用途，交叉使用拒收。
+
+差異材料以固定 merge-base 至 head 的原始 blob 完整前後文 JSON 表示，列檔名、物件碼、模式及非文字未掃範圍。官方提示、JSON 材料及組合輸入各自保存與雜湊；組合輸入走 stdin，4 MiB 上限低於已釘 CLI 的 8 MiB stdin 上限，超限拒收而不裁短。測試只用合成臨時 Git 倉庫及可直接觀察的假 Git 環境。
+
+
+### 掃描登記連動的回歸預約
+
+另預約 test/grok-scan-flow-review.test.js（D5 零命中，領域路由無額外命中），總計十六路徑。原題依賴專案設定未登記掃描者；改用本題新建的停用設定副本，仍實跑 Grok 正式複審及原有材料、隔離與清理斷言，避免用正式設定的時態代替受測情境。

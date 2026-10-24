@@ -20,8 +20,9 @@ test('靜態來源核查綁真入口、設定與預載器，漂移不放行且�
     return { file, sha256: createHash('sha256').update(data).digest('hex') };
   });
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@google/gemini-cli', version: '0.64.0' }));
-  writeFileSync(join(dir, 'launch.json'), JSON.stringify({ head: 'a'.repeat(40) }));
+  writeFileSync(join(dir, 'launch.json'), JSON.stringify({ reviewer: 'Gemini', head: 'a'.repeat(40), base: 'b'.repeat(40) }));
   writeFileSync(join(tree, 'settings.json'), JSON.stringify({ reviewers: [{ participant: 'Gemini', nativeSources: pins }] }));
+  writeFileSync(join(dir, 'prompt.md'), 'synthetic prompt');
   writeFileSync(join(tree, '.gemini/settings.json'), '{}');
   writeFileSync(join(tree, 'scripts/gemini-runtime-observer.js'), 'export const synthetic = true;\n');
   const cli = join(bundle, 'gemini.js');
@@ -48,7 +49,7 @@ function fixture() {
   for (let i = 0; i < 6; i++) events.push({ type: 'tool', id: `denied-${i}`, name: 'run_shell_command', status: 'error', result: { text: 'Tool execution denied by policy.' } });
   events.push({ type: 'tool', id: 'restore', name: 'replace', status: 'success' });
   const stats = { models: { [model]: { roles: { main: { totalRequests: 1, totalErrors: 0 } } } }, tools: { totalCalls: 8, totalSuccess: 2, totalFail: 6, byName: { run_shell_command: { count: 7, success: 1, fail: 6 }, replace: { count: 1, success: 1, fail: 0 } } } };
-  const text = () => events.map((event, i) => JSON.stringify({ sequence: i + 1, binding: 'round', pid: 123, ...event })).join('\n') + '\n';
+  const text = () => events.map((event, i) => JSON.stringify({ sequence: i + 1, binding: 'round', purpose: 'review', pid: 123, ...event })).join('\n') + '\n';
   return { events, stats, text };
 }
 
@@ -102,5 +103,41 @@ test('Shell 紅、signal、abort 與未知退出不被工具 success 洗成綠',
     const evidence = reconcileEvidence(f.text(), f.stats, 'round');
     for (const [key, value] of Object.entries(fields)) assert.deepEqual(evidence.shell[0].end[key], value, retry);
     assert.equal(evidence.status, 'pending-human-acceptance', retry);
+  }
+});
+
+
+function scanFixture() {
+  const f = fixture();
+  f.events.splice(5);
+  f.events[4].tools = ['glob', 'grep_search', 'list_directory', 'read_file'];
+  f.events.push({ type: 'tool', id: 'read-only', name: 'read_file', status: 'error', result: { text: 'synthetic missing source' } });
+  f.stats.tools = { totalCalls: 1, totalSuccess: 0, totalFail: 1, byName: { read_file: { count: 1, success: 0, fail: 1 } } };
+  f.text = () => f.events.map((event, i) => JSON.stringify({ sequence: i + 1, binding: 'round', purpose: 'scan', pid: 123, ...event })).join('\n') + '\n';
+  return f;
+}
+
+test('scan 證據有獨立人工核對項，工具錯誤保留而非正式放行', () => {
+  const f = scanFixture(), e = reconcileEvidence(f.text(), f.stats, 'round', 'scan');
+  assert.equal(e.purpose, 'scan'); assert.equal(e.status, 'pending-human-acceptance');
+  assert.equal(e.toolErrors[0].result.text, 'synthetic missing source');
+  assert.deepEqual(e.shell, []);
+  assert.ok(e.requiredHumanChecks.some(x => x.includes('發現逐項核實')), retry);
+  assert.ok(!e.requiredHumanChecks.some(x => /十九|還原/u.test(x)), retry);
+  assert.throws(() => reconcileEvidence(f.text(), f.stats, 'round'), /用途/u, retry);
+  const review = fixture();
+  assert.throws(() => reconcileEvidence(review.text(), review.stats, 'round', 'scan'), /用途/u, retry);
+  for (const purpose of [null, '', 'toString']) assert.throws(() => reconcileEvidence(f.text(), f.stats, 'round', purpose), /用途/u, retry);
+});
+
+test('scan 錯用途、額外工具與 Shell 事件不產生核收證據', () => {
+  for (const mode of ['purpose', 'missing-purpose', 'registry', 'tool', 'shell']) {
+    const f = scanFixture();
+    if (mode === 'purpose') f.events[0].purpose = 'review';
+    if (mode === 'missing-purpose') f.events[0].purpose = undefined;
+    if (mode === 'registry') f.events[4].tools.push('write_file');
+    if (mode === 'tool') { f.events[5].name = 'write_file'; f.stats.tools.byName = { write_file: { count: 1, success: 0, fail: 1 } }; }
+    if (mode === 'shell') f.events.push({ type: 'shell_start', shellId: 1 }, { type: 'shell_result', shellId: 1, exitCode: 0 });
+    assert.throws(() => reconcileEvidence(f.text(), f.stats, 'round', 'scan'), undefined, mode + '；' + retry);
   }
 });

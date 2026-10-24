@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { installObserver, configObservation, REVIEW_TOOLS, boundedText, eventWriter } from '../scripts/gemini-runtime-observer.js';
+import { installObserver, configObservation, REVIEW_TOOLS, SCAN_TOOLS, nativePurpose, toolsForPurpose, boundedText, eventWriter } from '../scripts/gemini-runtime-observer.js';
 
 const model = 'gemini-3.1-pro-preview', expected = { model, sentinel: 'synthetic-none' };
 const retry = '核 scripts/gemini-runtime-observer.js 後跑 node --test test/gemini-runtime-observer.test.js';
-function setup(t) {
+function setup(t, purpose = undefined) {
   const calls = [], events = [];
   class Config {
     refreshAuth(...args) { calls.push({ method: 'auth', self: this, args }); return this; }
@@ -15,7 +15,7 @@ function setup(t) {
     getModel() { return model; }
     getModelConfigService() { return { getResolvedConfig: () => ({ generateContentConfig: { thinkingConfig: { thinkingLevel: 'HIGH' } } }) }; }
     isTrustedFolder() { return true; }
-    getCoreTools() { return [...REVIEW_TOOLS]; }
+    getCoreTools() { return [...toolsForPurpose(purpose)]; }
     getAllowedMcpServers() { return [expected.sentinel]; }
     getMcpServers() { return {}; }
     getToolDiscoveryCommand() { return ''; }
@@ -32,7 +32,7 @@ function setup(t) {
     shouldLoadMemoryFromIncludeDirectories() { return false; }
     getOutputFormat() { return 'json'; }
     getTruncateToolOutputThreshold() { return 12000; }
-    getToolRegistry() { return { getAllToolNames: () => [...REVIEW_TOOLS] }; }
+    getToolRegistry() { return { getAllToolNames: () => [...toolsForPurpose(purpose)] }; }
   }
   class LoggingContentGenerator {
     constructor(config) { this.config = config; }
@@ -46,7 +46,7 @@ function setup(t) {
     static async execute(...args) { calls.push({ method: 'shell', self: this, args }); return this.started; }
   }
   const api = { Config, LoggingContentGenerator, ChatRecordingService, ShellExecutionService };
-  t.after(installObserver(api, expected, (type, fields) => events.push({ type, ...fields })));
+  t.after(installObserver(api, { ...expected, purpose }, (type, fields) => events.push({ type, ...fields })));
   return { ...api, calls, events, config: new Config() };
 }
 const request = () => ({ model, config: { thinkingConfig: { thinkingLevel: 'HIGH' } } });
@@ -141,4 +141,77 @@ test('有界普通檔保留順序與綁定，寫入失敗不默默放過', t => 
   const bounded = boundedText(value, 60);
   assert.equal(bounded.truncated, true); assert.match(bounded.text, /尾摘要$/u);
   assert.equal(bounded.bytes, Buffer.byteLength(value));
+});
+
+
+test('scan 四工具可原樣委派，旁錄每筆明記用途，缺省 review 保留原工具', t => {
+  assert.equal(nativePurpose(), 'review');
+  assert.deepEqual(toolsForPurpose(), REVIEW_TOOLS);
+  for (const bad of [null, '', 'SCAN', 'toString', '__proto__']) {
+    assert.throws(() => nativePurpose(bad), /用途/u, retry);
+    assert.throws(() => installObserver({}, { ...expected, purpose: bad }, () => {}), /用途/u, retry);
+    assert.throws(() => toolsForPurpose(bad), /用途/u, retry);
+  }
+  const f = setup(t, 'scan'), c = f.config;
+  c.refreshAuth(); c.initialize(); const req = request();
+  assert.equal(new f.LoggingContentGenerator(c).generateContent(req, 'p', 'main'), req);
+  new f.ChatRecordingService().recordToolCalls(model, [{ id: 'read', name: 'read_file', status: 'success', args: {}, result: 'synthetic' }]);
+  assert.deepEqual(f.events.find(e => e.type === 'request').tools, SCAN_TOOLS);
+  assert.ok(f.events.every(e => e.purpose === 'scan'), retry);
+  assert.equal(f.calls.filter(c => c.method === 'request').length, 1);
+});
+
+test('用途各自精確核 Config 與 registry，scan 額外工具在主請求前拒絕且 fatal 不復活', t => {
+  for (const purpose of ['review', 'scan']) {
+    const expectedSet = [...toolsForPurpose(purpose)];
+    const sets = purpose === 'scan' ? ['run_shell_command', 'replace', 'write_file', 'mcp_unknown'].map(name => [...expectedSet, name]) : expectedSet.map(name => expectedSet.filter(x => x !== name));
+    sets.push(purpose === 'scan' ? [...REVIEW_TOOLS] : [...SCAN_TOOLS]);
+    for (const tools of sets) for (const stage of ['core', 'registry']) {
+      const f = setup(t, purpose), c = f.config;
+      if (stage === 'core') {
+        c.getCoreTools = () => tools;
+        assert.throws(() => c.refreshAuth(), /工具不符/u, retry);
+        c.getCoreTools = () => expectedSet;
+        assert.throws(() => c.initialize(), /工具不符/u, retry);
+      } else {
+        c.refreshAuth(); c.initialize(); f.calls.length = 0;
+        c.getToolRegistry = () => ({ getAllToolNames: () => tools });
+        assert.throws(() => new f.LoggingContentGenerator(c).generateContent(request(), 'p', 'main'), /registry/u, retry);
+        c.getToolRegistry = () => ({ getAllToolNames: () => expectedSet });
+      }
+      assert.throws(() => new f.LoggingContentGenerator(c).generateContent(request(), 'retry', 'main'), undefined, retry);
+      assert.equal(f.calls.length, 0, retry);
+    }
+  }
+});
+
+test('scan 非工具設定與真 HIGH／模型／同 Config 綁定不得藉用途繞過', t => {
+  for (const [method, value] of [['getAllowedMcpServers', ['other']], ['getExtensions', [{ isActive: true }]], ['getEnableHooks', true], ['isAgentsEnabled', true], ['isSkillsSupportEnabled', true], ['isAutoMemoryEnabled', true], ['getModel', 'other']]) {
+    const f = setup(t, 'scan'); f.config[method] = () => value;
+    assert.throws(() => f.config.refreshAuth(), undefined, retry); assert.equal(f.calls.length, 0);
+  }
+  for (const mode of ['config-low', 'request-low', 'model', 'other-config']) {
+    const f = setup(t, 'scan'), c = f.config;
+    if (mode === 'config-low') {
+      c.getModelConfigService = () => ({ getResolvedConfig: () => ({ generateContentConfig: { thinkingConfig: { thinkingLevel: 'LOW' } } }) });
+      assert.throws(() => c.refreshAuth(), /推理/u); assert.equal(f.calls.length, 0); continue;
+    }
+    c.refreshAuth(); c.initialize(); f.calls.length = 0; const req = request();
+    if (mode === 'request-low') req.config.thinkingConfig.thinkingLevel = 'LOW';
+    if (mode === 'model') req.model = 'other';
+    assert.throws(() => new f.LoggingContentGenerator(mode === 'other-config' ? new f.Config() : c).generateContent(req, 'p', 'main'), undefined, retry);
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test('scan Shell 入口在執行前拒絕；未知工具紀錄保留拒絕並鎖住後續請求', async t => {
+  for (const mode of ['shell', 'record']) {
+    const f = setup(t, 'scan'), c = f.config; c.refreshAuth(); c.initialize(); f.calls.length = 0;
+    f.ShellExecutionService.started = { result: Promise.resolve({ exitCode: 0, output: 'unexpected synthetic shell' }) };
+    if (mode === 'shell') await assert.rejects(f.ShellExecutionService.execute('arbitrary', '/synthetic'), /不得執行 Shell/u, retry);
+    else assert.throws(() => new f.ChatRecordingService().recordToolCalls(model, [{ id: 'write', name: 'write_file', status: 'success' }]), /未核工具/u, retry);
+    assert.throws(() => new f.LoggingContentGenerator(c).generateContent(request(), 'retry', 'main'), undefined, retry);
+    assert.equal(f.calls.length, 0, retry);
+    assert.equal(f.events.at(-1).type, 'guard_failure');
+  }
 });

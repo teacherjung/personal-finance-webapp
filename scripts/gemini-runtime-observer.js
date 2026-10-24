@@ -5,14 +5,23 @@ import { appendFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { isMainModule } from '../lib/is-main.js';
 
-export const REVIEW_TOOLS = ['glob', 'grep_search', 'list_directory', 'read_file', 'replace', 'run_shell_command', 'write_file'];
+export const REVIEW_TOOLS = Object.freeze(['glob', 'grep_search', 'list_directory', 'read_file', 'replace', 'run_shell_command', 'write_file']);
+export const SCAN_TOOLS = Object.freeze(['glob', 'grep_search', 'list_directory', 'read_file']);
+export function nativePurpose(purpose = 'review') {
+  assert.ok(purpose === 'review' || purpose === 'scan', '原生用途未核實');
+  return purpose;
+}
+export function toolsForPurpose(purpose = 'review') {
+  return nativePurpose(purpose) === 'scan' ? SCAN_TOOLS : REVIEW_TOOLS;
+}
 export const TOOL_OUTPUT_CHARS = 12000;
 const digest = value => createHash('sha256').update(value).digest('hex');
 
 export function configObservation(config, expected) {
+  const purpose = nativePurpose(expected.purpose);
   const level = config.getModelConfigService().getResolvedConfig({ model: expected.model }).generateContentConfig.thinkingConfig?.thinkingLevel;
   const fields = {
-    model: config.getModel(), thinkingLevel: level, trusted: config.isTrustedFolder(),
+    purpose, model: config.getModel(), thinkingLevel: level, trusted: config.isTrustedFolder(),
     coreTools: [...config.getCoreTools()].sort(), allowedMcp: config.getAllowedMcpServers(),
     mcpNoConfiguredMatch: !Object.hasOwn(config.getMcpServers() ?? {}, expected.sentinel),
     discoveryDisabled: !config.getToolDiscoveryCommand(), callDisabled: !config.getToolCallCommand(),
@@ -26,7 +35,7 @@ export function configObservation(config, expected) {
   assert.equal(fields.model, expected.model, '實際 Config 模型不符');
   assert.equal(fields.thinkingLevel, 'HIGH', '實際 Config 推理不符');
   assert.equal(fields.trusted, true, '實際 Config 未信任');
-  assert.deepEqual(fields.coreTools, REVIEW_TOOLS, '實際 Config 工具不符');
+  assert.deepEqual(fields.coreTools, toolsForPurpose(purpose), '實際 Config 工具不符');
   assert.ok(Array.isArray(fields.allowedMcp) && fields.allowedMcp.length === 1 && fields.allowedMcp[0] === expected.sentinel, '實際 MCP 排他名單不符');
   for (const key of ['mcpNoConfiguredMatch', 'discoveryDisabled', 'callDisabled', 'mcpCommandDisabled']) assert.equal(fields[key], true, `實際 Config ${key} 不符`);
   for (const key of ['hooks', 'agents', 'skills', 'autoMemory', 'includeDirectoryTree', 'loadIncludedMemory', 'extensionReloading']) assert.equal(fields[key], false, `實際 Config ${key} 不符`);
@@ -55,12 +64,14 @@ export function eventWriter(file, binding, maxBytes = 32 * 1024 * 1024) {
 }
 
 export function installObserver(api, expected, writeEvent) {
+  const purpose = nativePurpose(expected.purpose), expectedTools = toolsForPurpose(purpose);
+  expected = { ...expected, purpose };
   const undo = [];
   const configs = new WeakMap();
   let configSequence = 0, shellSequence = 0, fatal;
   const emit = (type, fields = {}) => {
     if (fatal) throw fatal;
-    try { writeEvent(type, fields); }
+    try { writeEvent(type, { ...fields, purpose }); }
     catch (error) { fatal = error; throw error; }
   };
   const wrap = (object, key, decorate) => {
@@ -90,7 +101,7 @@ export function installObserver(api, expected, writeEvent) {
       assert.ok(observed?.stages.has('refreshAuth') && observed.stages.has('initialize'), '主請求沒有同一正式 Config 的階段觀測');
       check(this.config, 'request');
       const tools = [...this.config.getToolRegistry().getAllToolNames()].sort();
-      assert.deepEqual(tools, REVIEW_TOOLS, '正式工具 registry 不符');
+      assert.deepEqual(tools, expectedTools, '正式工具 registry 不符');
       assert.ok(role === 'main' || role === 'utility_loop_detector', '請求角色未核實');
       if (role === 'main') {
         assert.equal(request.model, expected.model, '主審請求模型不符');
@@ -101,6 +112,10 @@ export function installObserver(api, expected, writeEvent) {
     return original.call(this, request, promptId, role);
   });
   wrap(api.ChatRecordingService.prototype, 'recordToolCalls', original => function (model, calls) {
+    if (purpose === 'scan' && calls.some(call => !expectedTools.includes(call.name))) {
+      const error = new Error('掃描旁錄出現未核工具');
+      emit('guard_failure', { stage: 'tool', message: error.message }); fatal = error; throw error;
+    }
     for (const call of calls) emit('tool', {
       id: call.id, name: call.name, status: call.status,
       args: boundedText(JSON.stringify(call.args)), result: boundedText(JSON.stringify(call.result)),
@@ -108,6 +123,10 @@ export function installObserver(api, expected, writeEvent) {
     return original.call(this, model, calls);
   });
   wrap(api.ShellExecutionService, 'execute', original => async function (...args) {
+    if (purpose === 'scan') {
+      const error = new Error('掃描不得執行 Shell');
+      emit('guard_failure', { stage: 'shell', message: error.message }); fatal = error; throw error;
+    }
     const shellId = ++shellSequence;
     emit('shell_start', { shellId, command: boundedText(args[0]), cwd: args[1] });
     let started;

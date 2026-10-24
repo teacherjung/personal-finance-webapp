@@ -140,6 +140,14 @@
 - **C42｜2026-10-03 UTC 更新**：「掃描啟用」。〔本次操作化〕啟用掃描前試探、掃描後比對；裁示留痕：https://github.com/teacherjung/personal-finance-webapp/pull/659#issuecomment-5971978555 。取代 2026-10-03 UTC 的原話「等等，我反悔了，先不啟用」。
 - **本次分工與隔離｜2026-10-15 UTC**：「本人在旁支已決定：Codex 繼續實作，正式複審暫用 Grok，掃描者改用 Gemini。保留現有沙盒的隔離保護，補上 Gemini 所需接線，驗證成功後再啟用；不取消沙盒、不放寬真實資料與憑證的界線。請依此留痕並安排施工，留意既有分工衝突。」[本人留痕](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6188273106)。
 
+### Gemini 條件式原生掃描
+
+- **條件式授權（2026-10-20 UTC）**：本人「Grok掃描用量快用完了，用完之後請嘗試用Gemini掃描。」「請用最簡單的方式啟動CLI掃描，就像啟用Claude一樣，不要用太嚴格的限制導致沒有辦法掃描。」[總目標原話](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6297608626)、[CLI 補充](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6297698527)。本條依新授權更新前述停止安排中的掃描部分；Codex 實作、Grok 正式複審仍維持，Gemini 正式複審只限本人另行指定的 PR。是否已達額度條件由發射者依實際紀錄核對，登記本身不證明已掃。
+- 原生入口與驗證邊界見[施工計畫](gemini-native-scan-plan.md)。只依官方 `tools/review-launch.js --scan` 產生的本輪指令起 `scripts/gemini-scan-native.js`，並由 `--scan-post`、`--scan-close` 代貼與收樹；須先有當版第一次有效複審通過，掃描者與實作者、複審者分離。上游前言修復 [套件 #121](https://github.com/teacherjung/ai-collab-kit/pull/121) 與[理財同步 #731](https://github.com/teacherjung/personal-finance-webapp/pull/731)已合併，不表示後續每場掃描已完成。
+- scan 固定四個讀檔搜尋工具；不載 Shell、replace 或 write_file，真 Config 與請求 registry 按用途核對。外層從固定提交的原始 blob 提供變更檔案完整前後文，文字不經 attributes／textconv／外部 diff；非文字檔另列未掃，材料超限拒絕。官方提示保留，資料附後並經 stdin 輸入；模型沒有跑 git 或考題。讀檔搜尋不是檔案系統沙箱，仍靠角色提示及有限完整性核對守範圍。
+- review 與 scan 共用分階段執行、原件保存與清理，官方紀錄、完整回覆解析及人工核收分開。目的、紀錄、設定、提示、材料及旁錄綁定；五份 CLI 來源釘值只取 reviewers 的 Gemini 登記，不複製另一份。完整原生 response 必須從本輪掃描標頭起首且可公開，否則保留原件並拒絕代貼；不刪前言或挑後面的範例標頭。
+- 成功收件只代表結構對帳，發現須逐項核實並依 G1 對帳；不要求掃描代跑十九項正式複審。CLI、格式、來源或清理失敗保留真終態與獨立查核，不盲重送；普通未執行依 G3 記錄，疑似破口依 G2。舊 GN 事件協議、私人上下文與完整執行映像的未驗界線不因本入口而結清。
+
 ### Gemini 原生單輪複審
 
 - **本人單輪授權（2026-10-21 UTC）**：「本輪正式複審改用 Gemini（建議）」（[原話](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6308077455)）；限 #730，預設分工仍為 Codex／Grok。依 [Sol 技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6308173885)，本輪例外更新下方舊停止文字，不復活 GN 事件協議，也不把靜態掃描當正式複審或後掃。
@@ -150,10 +158,10 @@
 - 公開平台材料由 reviewer 的唯讀查詢取得。若貼文工具未放行，依固定範本把完整結論留在最後回覆並寫未貼，由 Codex 逐字代貼。公開結論用 repo 相對路徑，不包含本機路徑、憑證或 session 包裝；完整 response 若不宜公開就保留拒收，不改正文。
 - 原生 stdout／stderr 與退出碼保留私有，完整 JSON.response 不裁前言、不挑範例標頭；格式／角色／版本與模型皆核對後才輸出待貼全文。原生程序零不等於通過，仍須當版 F7、F6 對帳、後掃紀錄、合併與驗收。審完按官方程序收樹。
 
-### Gemini 接線沿革（舊工作線已停止；單輪例外見上）
+### Gemini 接線沿革（停止史；新條件式掃描與單輪例外見上）
 
-- 原生與網頁方案均停止；[原生準備計畫](gemini-native-formal-plan.md)與[網頁接線計畫](gemini-browser-formal-plan.md)只供追溯，不是施工、資格試跑或啟用授權。#702 已關閉未合併，不移植或追認其未合併成果。
-- 舊固定 provider、launcher、CUA loader、部署與資格／隔離收據均不能作為繼續執行依據。不得換舊工作樹、資格用途、原生 CLI 或等待容量解決後自動續跑；恢復須有本人新的明確指示。
+- 2026-10-18 停止原生與網頁舊方案；[原生準備計畫](gemini-native-formal-plan.md)與[網頁接線計畫](gemini-browser-formal-plan.md)只供追溯，不是施工、資格試跑或啟用授權。#702 已關閉未合併，不移植或追認其未合併成果。
+- 舊固定 provider、launcher、CUA loader、部署與資格／隔離收據均不能作為繼續執行依據。不得換舊工作樹、資格用途、原生 CLI 或等待容量解決後自動續跑；恢復須有本人新的明確指示；原生掃描的新授權與限定接法依上節，舊網頁與 GN 方案不據此恢復。
 - 現行來源的正式網頁 scan 入口會核 scanner 登記，原生正式入口仍拒絕啟動；這不是全域關閉開關。舊固定副本讀取其自身設定，資格模式亦不由這項登記拒絕，因此協作者必須遵守上述授權撤銷，不能把歷史通過當成現行許可。
 - 保留來源、舊失敗與合成證據供稽核；不刪帳號、登入或憑證，不改全域權限。套件借用線亦不得依本專案舊 Gemini 入口續跑；需要變更其專案自有設定時由該線處理，沒有掃描者依 G3 記未執行。
 

@@ -74,12 +74,12 @@ default 是全專案預設路由；其餘識別值只供明列範圍。依裁示
 
 ## 四、掃描發射者（規矩 A1、G1、G4）
 
-- 掃描者識別值：無；怎麼起：無（沒有掃描者＝照風險級別要掃的那幾支，掃描紀錄寫「未執行：本專案無掃描者」，由下面指定的那一方記錄並轉正式；表定不掃的照規矩 G1）
-- 誰指派、登記在哪：無掃描發射者：William 2026\-10\-18 結束 Gemini 工作線，指定 Codex 實作、Grok 複審；本人原話與停止範圍見 docs\/project\-collaboration\.md「本次分工更新」。
-- 兩方都起得了時：未登記掃描者，不適用發射者選擇；不得依舊設定、部署或資格收據自行恢復。
-- 沒有合格者時，誰記錄未執行、誰轉正式：實作者（RULES G3、G4）：第一次有效正式通過後，記「未執行：本人已取消 Gemini 工作線，目前未登記掃描者」，核當版通過後轉正式。不以 Grok 複審充當掃描，不另開替代掃描。
-- 掃描用的最強模型（規矩 G1；換新模型只改這裡）：未設定；最高推理：未設定
-- 掃描留言標頭的來源字串：未設定；啟動指令樣板（tools/review-launch.js --scan 替換記號後印出）：未設定
+- 掃描者識別值：Gemini；怎麼起：Gemini 原生 CLI 唯讀掃描（沒有掃描者＝照風險級別要掃的那幾支，掃描紀錄寫「未執行：本專案無掃描者」，由下面指定的那一方記錄並轉正式；表定不掃的照規矩 G1）
+- 誰指派、登記在哪：Codex（實作者，能起 CLI）：依 William 2026\-10\-20 條件式授權，在 Grok 掃描額度用完後使用；來源與實際執行情況見 docs\/project\-collaboration\.md「Gemini 條件式原生掃描」。
+- 兩方都起得了時：兩方都起得了時由實作者發射；Gemini 不得同時是該支實作者或複審者。
+- 沒有合格者時，誰記錄未執行、誰轉正式：實作者依 RULES G3、G4 留真實未執行原因；普通 CLI 失敗不盲重送、不自行換正式複審者，疑似破口依 G2。
+- 掃描用的最強模型（規矩 G1；換新模型只改這裡）：gemini\-3\.1\-pro\-preview；最高推理：HIGH
+- 掃描留言標頭的來源字串：Gemini CLI；啟動指令樣板（tools/review-launch.js --scan 替換記號後印出）：node \{scanTree\}\/scripts\/gemini\-scan\-native\.js \-\-model \{model\} \-\-effort \{effort\} \-\-scan\-tree \{scanTree\} \-\-prompt\-file \{promptFile\} \-\-out\-file \{outFile\} \-\-change \{change\} \-\-project \{project\}
 
 ## 五、平台介面（規矩 E5、H1；閘要問平台的每一件事都走這裡）
 
@@ -166,7 +166,7 @@ default 是全專案預設路由；其餘識別值只供明列範圍。依裁示
 | \^\[\^\/\]\+\\\.md\$ | E（不需驗收） |
 | \^\\\.github\/ | E（不需驗收） |
 | \^data\/seed\\\.json\$ | E（不需驗收） |
-| \^scripts\/\(audit\-grok\-scan\|grok\-scan\|grok\-review\|grok\-final\-reply\|grok\-disk\-snapshots\|grok\-bump\|grok\-relay\|grok\-auth\-refresh\|grok\-sandbox\-canary\|gemini\-auth\|gemini\-client\|gemini\-relay\|gemini\-scan\|gemini\-review\|gemini\-runtime\-observer\|gemini\-review\-evidence\|c6\-adversarial\)\\\.js\$ | E（不需驗收） |
+| \^scripts\/\(audit\-grok\-scan\|grok\-scan\|grok\-review\|grok\-final\-reply\|grok\-disk\-snapshots\|grok\-bump\|grok\-relay\|grok\-auth\-refresh\|grok\-sandbox\-canary\|gemini\-auth\|gemini\-client\|gemini\-relay\|gemini\-scan\|gemini\-review\|gemini\-runtime\-observer\|gemini\-review\-evidence\|gemini\-scan\-native\|c6\-adversarial\)\\\.js\$ | E（不需驗收） |
 | \^scripts\/grok\-sandbox\\\.sb\$ | E（不需驗收） |
 | \^scripts\/git\-hooks\/ | E（不需驗收） |
 | \^\(eslint\\\.config\\\.js\|jsconfig\\\.json\|mutate\\\.sh\|\\\.gitignore\)\$ | E（不需驗收） |

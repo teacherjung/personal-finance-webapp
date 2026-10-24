@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { isMainModule } from '../lib/is-main.js';
+import { nativePurpose, SCAN_TOOLS } from './gemini-runtime-observer.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const bytes = file => {
@@ -14,7 +15,8 @@ const bytes = file => {
   return readFileSync(file);
 };
 
-export function prepareNativeObserver(cli, tree, settings, model, sentinel) {
+export function prepareNativeObserver(cli, tree, settings, model, sentinel, purpose = 'review') {
+  nativePurpose(purpose);
   const executable = realpathSync(cli), folder = dirname(tree), bundle = dirname(executable);
   const registration = JSON.parse(bytes(join(tree, 'settings.json')).toString()).reviewers.find(item => item.participant === 'Gemini');
   const pins = registration?.nativeSources;
@@ -34,30 +36,40 @@ export function prepareNativeObserver(cli, tree, settings, model, sentinel) {
     if (dir === dirname(dir)) break;
   }
   assert.equal(existsSync(join(process.env.GEMINI_CLI_HOME || join(homedir(), '.gemini'), 'GEMINI.md')), false, '已有全域上下文檔；停止且不讀內容');
-  const launchBytes = bytes(join(folder, 'launch.json'));
+  const recordFile = join(folder, purpose === 'scan' ? 'scan.json' : 'launch.json');
+  assert.equal(existsSync(join(folder, purpose === 'scan' ? 'launch.json' : 'scan.json')), false, '正式紀錄用途混用');
+  const recordBytes = bytes(recordFile), record = JSON.parse(recordBytes.toString());
+  assert.equal(purpose === 'scan' ? record.scanner : record.reviewer, 'Gemini', '正式紀錄角色不符用途');
+  for (const key of ['head', 'base']) assert.match(record[key], /^[a-f0-9]{40}$/u, '正式紀錄版本缺失');
+  const materials = [recordFile, join(folder, 'prompt.md'), ...(purpose === 'scan' ? [join(folder, 'scan-diff.json'), join(folder, 'scan-input.txt')] : [])]
+    .map(file => ({ file, sha256: hash(bytes(file)) }));
   const configBytes = bytes(join(tree, '.gemini/settings.json'));
   assert.deepEqual(JSON.parse(configBytes.toString()), settings);
   const observer = join(tree, 'scripts/gemini-runtime-observer.js'), observerSha256 = hash(bytes(observer));
-  const binding = hash(JSON.stringify({ head: JSON.parse(launchBytes.toString()).head, launch: hash(launchBytes), settings: hash(configBytes), model, sentinel, sources, observerSha256 }));
+  const binding = hash(JSON.stringify({ purpose, head: record.head, base: record.base, record: hash(recordBytes), materials, settings: hash(configBytes), model, sentinel, sources, observerSha256 }));
   const eventsFile = join(folder, 'native-events.jsonl'), bootstrap = join(folder, 'native-observer.mjs');
   assert.equal(existsSync(eventsFile), false, '旁錄已存在');
-  const text = `import { Config, LoggingContentGenerator, ChatRecordingService, ShellExecutionService } from ${JSON.stringify(pathToFileURL(join(bundle, names[3])).href)};\nimport { installObserver, eventWriter } from ${JSON.stringify(pathToFileURL(observer).href)};\nif (process.env.GEMINI_CLI_NO_RELAUNCH || process.env.SANDBOX) installObserver({ Config, LoggingContentGenerator, ChatRecordingService, ShellExecutionService }, ${JSON.stringify({ model, sentinel })}, eventWriter(${JSON.stringify(eventsFile)}, ${JSON.stringify(binding)}));\n`;
+  const text = `import { Config, LoggingContentGenerator, ChatRecordingService, ShellExecutionService } from ${JSON.stringify(pathToFileURL(join(bundle, names[3])).href)};\nimport { installObserver, eventWriter } from ${JSON.stringify(pathToFileURL(observer).href)};\nif (process.env.GEMINI_CLI_NO_RELAUNCH || process.env.SANDBOX) installObserver({ Config, LoggingContentGenerator, ChatRecordingService, ShellExecutionService }, ${JSON.stringify({ model, sentinel, purpose })}, eventWriter(${JSON.stringify(eventsFile)}, ${JSON.stringify(binding)}));\n`;
   writeFileSync(bootstrap, text, { flag: 'wx', mode: 0o600 });
-  return { version: pkg.version, executable, bootstrap, bootstrapSha256: hash(text), observer, observerSha256, eventsFile, binding, sources };
+  return { purpose, recordSha256: hash(recordBytes), materials, version: pkg.version, executable, bootstrap, bootstrapSha256: hash(text), observer, observerSha256, eventsFile, binding, sources };
 }
 
 export function verifyObserverSources(native) {
+  for (const material of native.materials ?? []) assert.equal(hash(bytes(material.file)), material.sha256, '本輪正式紀錄或提示材料在執行中變動');
   for (const source of native.sources) assert.equal(hash(bytes(join(dirname(native.executable), source.file))), source.sha256, '原生來源在執行中變動');
   assert.equal(hash(bytes(native.bootstrap)), native.bootstrapSha256, '預載器在執行中變動');
   assert.equal(hash(bytes(native.observer)), native.observerSha256, '觀察器在執行中變動');
 }
 
-export function reconcileEvidence(text, stats, binding) {
+export function reconcileEvidence(text, stats, binding, purpose = 'review') {
+  nativePurpose(purpose);
   assert.ok(text.endsWith('\n'), '旁錄尾端不完整');
   const events = text.trimEnd().split('\n').map(line => JSON.parse(line));
   for (const [index, event] of events.entries()) {
     assert.equal(event.sequence, index + 1, '旁錄序列有缺口');
     assert.equal(event.binding, binding, '旁錄不屬本輪');
+    assert.equal(event.purpose, purpose, '旁錄用途不符');
+    if (purpose === 'scan') assert.ok(!event.type.startsWith('shell_'), '掃描旁錄出現 Shell');
     assert.ok(['installed', 'config', 'request', 'tool', 'shell_start', 'shell_result', 'shell_error'].includes(event.type), '旁錄有拒收或未知事件');
   }
   assert.equal(events[0]?.type, 'installed', '旁錄沒有安裝收據');
@@ -66,6 +78,7 @@ export function reconcileEvidence(text, stats, binding) {
   const counts = new Map();
   for (const event of requests) {
     for (const stage of ['refreshAuth', 'initialize']) assert.ok(events.some(config => config.type === 'config' && config.stage === stage && config.configId === event.configId && config.pid === event.pid && config.sequence < event.sequence), '請求未綁同程序同一正式 Config');
+    if (purpose === 'scan') assert.deepEqual(event.tools, SCAN_TOOLS, '掃描請求工具不符');
     const key = `${event.model}/${event.role}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
@@ -77,6 +90,7 @@ export function reconcileEvidence(text, stats, binding) {
   assert.equal(counts.size, 0, '有未歸屬的旁錄請求');
   const latest = new Map();
   for (const call of events.filter(event => event.type === 'tool')) {
+    if (purpose === 'scan') assert.ok(SCAN_TOOLS.includes(call.name), '掃描工具旁錄不符');
     assert.ok(typeof call.id === 'string' && call.id && typeof call.name === 'string', '工具識別缺失');
     if (latest.has(call.id)) assert.equal(latest.get(call.id).name, call.name, '工具更新改名');
     latest.set(call.id, call);
@@ -99,11 +113,11 @@ export function reconcileEvidence(text, stats, binding) {
   assert.equal(new Set(starts.map(start => start.shellId)).size, starts.length, 'Shell 識別重複');
   for (const start of starts) assert.equal(ends.filter(end => end.shellId === start.shellId && end.sequence > start.sequence).length, 1, 'Shell 旁錄無法配對');
   return {
-    status: 'pending-human-acceptance', eventsSha256: hash(text), requests: requests.length,
-    requiredHumanChecks: ['拒絕揭露與回覆一致', '本機與雲端分別核對', '保護移除及指定斷言紅', '同情境還原後實跑綠', '必要邊界與十九項逐項核收'],
+    purpose, status: 'pending-human-acceptance', eventsSha256: hash(text), requests: requests.length,
+    requiredHumanChecks: purpose === 'scan' ? ['完整掃描回覆與來源及版本一致', '發現逐項核實並依 G1 對帳', '工具拒絕與未掃範圍如實揭露'] : ['拒絕揭露與回覆一致', '本機與雲端分別核對', '保護移除及指定斷言紅', '同情境還原後實跑綠', '必要邊界與十九項逐項核收'],
     tools: calls.length, toolErrors: calls.filter(call => call.status === 'error').map(call => ({ id: call.id, name: call.name, result: call.result })),
     shell: starts.map(start => ({ ...start, end: ends.find(end => end.shellId === start.shellId) })),
-    limitations: '工具 success 不表示 Shell 退出零；Shell 與工具依命令、目錄及時序人工對照。還原、還原後重跑、CI、十九項及結論一致性由發審者核收，未核不能合併。',
+    limitations: purpose === 'scan' ? '差異由外層固定 blob 提供，模型未跑 git 或考題；讀檔工具不是檔案系統沙箱。發現與未掃範圍須人工核對，掃描不作正式放行。' : '工具 success 不表示 Shell 退出零；Shell 與工具依命令、目錄及時序人工對照。還原、還原後重跑、CI、十九項及結論一致性由發審者核收，未核不能合併。',
   };
 }
 

@@ -25,7 +25,7 @@
 ## 待辦（依優先序；已完結主線的結案紀錄在[完工紀錄](docs/archive/project-completion-log.md)）
 
 - **本輪範圍（2026-10-20 更新）**：本人要求完成所有後端待辦；[總目標原話](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6297608626)與[簡單 CLI 補充](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6297698527)逐字正本在 AGENTS.md。依[實際 Sol 範圍裁示](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6297844896)，市場階段交付後先修 GS-D04，再有限核對 GS-D02；既有有限保存交付不重開，未驗的外部寫入／完整並行不冒稱全部安全。前端隨使用需求處理，手機與 HOSTED 保持停止；缺來源、本人判斷或其他擁有線的項目保留前提，不為清單歸零捏造修法。
-  - **掃描承接**：本人新的條件式 CLI 切換授權及原話保留。依[簡化裁示](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6297846120)與[上游承接補正](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6298038910)，採最小必要入口；具體上游前言受理缺陷已觸發[同步前停止條件](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6298590535)，尚未整批同步或啟用。持有人、恢復條件與理財後續責任集中在下方「原生掃描必要同步」條；正式 Grok 複審不計作掃描。
+  - **掃描承接**：本人新的條件式 CLI 切換授權及原話保留。依[簡化裁示](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6297846120)與[上游承接補正](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6298038910)，採最小必要入口；具體上游前言受理缺陷已觸發[同步前停止條件](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6298590535)，上游修復與理財同步已由套件 #121、理財 #731 完成，原生專案入口由 #736 承接。後續責任集中在下方「原生掃描接線」條；正式 Grok 複審不計作掃描。
   - **後端前提清單**：銀行真實版型／帳戶身分、逐月逐檔股息與期末部位等缺來源項等待可靠輸入；靜態加密／異地保存屬未定架構，不自動新增服務；套件共用 D1 長輸出缺口由套件擁有線處理，理財以檔案輸出保存完整結果。舊 archive／attributes 與 GIT 環境缺口須在重用相關舊路徑前修，新的入口依實際材料接法核對；完整執行身分、平台量測及原生安裝未驗項保留，不能由磁碟帳或考題代替。各項作用路徑、觸發與明示停止的 LOCAL PDF 等界線見上列完整裁示，完成條件是逐項有處置或具體前提，不宣稱技術債歸零。
   - **較早後台優先指示（原話保留，範圍由新目標更新）**：本人：「我想問一下待辦清單裏面的東西，能不能之後我邊使用理財網頁、邊提出修改的時候，再慢慢邊完成？只有後台的修正先完成就好。」[原話](https://github.com/teacherjung/personal-finance-webapp/pull/725#issuecomment-6285303047)。較早 10/18 的分工原話及來源完整保留於[協作附則](docs/project-collaboration.md#本次分工更新)，不改寫其當時效力；[入口三行整理裁示](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6298037415)。
   - 入口背景移錄（舊紀錄，非本輪重測）：⚠️ **實測代價**：#417 的 r7–r13 七輪退回全屬這一族；事後窮舉稽核 311 句現況斷言、**58 句站不住**（19%）。；沙盒落點沿革：舊的第二個落點 `test/cross-pr-merge.test.js` 2026-09-18 第 7 步隨舊閘退役。
@@ -54,7 +54,7 @@
 
 - **GS-D01｜前端排序鍵防禦候選**（原報告 3）：`public/modules/tx-sort.js` 的 SORTERS 查表會讀原型，但呼叫頁面的排序鍵由固定表頭提供。落點：該模組、`public/modules/transactions.js`、`public/modules/cashflow.js`。觸發：取得正常操作可達的反例，或下次修改共用排序時再評估；不列成已證使用者可觸發的急件。
 - **Gemini 角色與計數直接回歸補證**：[#735](https://github.com/teacherjung/personal-finance-webapp/pull/735) 將既有 `parseReply` 的模型角色與計數核對列為直接單元題，合法輸出與反例均不經完整入口的後段證據對帳；單一守衛突變、正式複審與交付以該支收據為準。#730 樹外自核與 #734 證據核收修復的歷史界線保留，不擴張模型資格或本人單次例外。
-- **Gemini 條件式原生掃描接線**：依已裁 [施工計畫](docs/gemini-native-scan-plan.md)承接官方掃描生命週期、四種讀檔搜尋工具與具名用途證據。Codex 實作、Grok 正式複審；Gemini 只任第三方掃描者。正式核收、真掃描與交付看承接 PR 當版紀錄，沒有完成接線不宣稱已啟用。
+- **Gemini 條件式原生掃描接線**：由 [#736](https://github.com/teacherjung/personal-finance-webapp/pull/736)依已裁 [施工計畫](docs/gemini-native-scan-plan.md)承接官方掃描生命週期、四種讀檔搜尋工具與具名用途證據。Codex 實作、Grok 正式複審；Gemini 只任第三方掃描者。正式核收、真掃描與交付看承接 PR 當版紀錄，沒有完成接線不宣稱已啟用。
 
 - **GS-D02｜後端保費週期標籤防禦候選**（原報告 3 延伸）：**正式 LOCAL HTTP 邊界核對完成，防禦候選未觸發**。在主幹 `38c268cf8ff4c94e3c3d8f49292b25886ff0861a` 以合成資料走正式新增／修改／匯入與 summary，45 個結果場、130 次請求；合法與缺省週期標籤符合預期，所列非法值回 400，拒收前後資料投影相同。[完整有限核對](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6298865670)；沒有修改 cycleLabel／schema，也未讀真資料或證明所有歷史輸入安全。落點：`lib/derive.js` 的 cycleLabel、`lib/schema.js` 與提醒考題。觸發：取得正常操作可達或可信舊資料的反例時再裁最小修補；不為候選清零新增純重構。
 - **GS-D03｜開發環境維護／整理**（原報告附帶清單）：分支、工作樹、暫存與 stash 的舊數量不是產品錯誤，也不能直接作刪除依據。落點：本機環境，盤點入口 `tools/tidy-list.js`（套件檔只使用、不改）。觸發：有整理需求時重新唯讀盤點、核對持有人／未提交成果／證據保留及現有整理工作線，再依既有授權辦理；本次不刪除，不把舊數量寫成現況。
@@ -96,7 +96,7 @@
 
 工具與流程的待辦（不排優先序；開工印待辦 `tools/backlog-touch.js` 只讀 `- ` 開頭的條目；每條＝一句話／放在哪裡／什麼情況下值得做）：
 
-- （原生掃描必要同步）上游前言切除可錯誤採計範例或遺失發現，須先正式修復再同步；使用者已交套件 Gemini 線承接，修復 PR／已合併版本與反例核對待外部回據／套件 `tools/review-launch.js`，理財 `settings.json`、`PROJECT-SETTINGS.md`、`docs/project-collaboration.md`、`AGENTS.md`、`PROJECT.md` 與 `test/project-collaboration-settings.test.js` 的後續同步預約／具體修復正式合併後，理財核固定版本、持有人衝突、D5 整批預演與專案相容，再核原生入口及本人條件式掃描；不把單純 #118 合併、預檢可用或既有正式複審當作缺陷已修或掃描完成。[停止與恢復條件](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6298590535)、[總目標未完成界線](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6298848157)。
+- （原生掃描接線）上游前言受理修復 [套件 #121](https://github.com/teacherjung/ai-collab-kit/pull/121)與[理財 #731](https://github.com/teacherjung/personal-finance-webapp/pull/731)已合併；專案入口、用途證據及驗證由 [#736](https://github.com/teacherjung/personal-finance-webapp/pull/736)承接，完成與否依當版正式複審、真掃描及交付紀錄。舊停止與恢復條件、原件和有限核對保留；不把上游同步、預檢或正式複審當作已完成掃描。
 
 **#692 合併界線**：下列標記隨 #692 合併的文字與限定修法，依[本人單次免再複審指示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6210098773)合併；最終版本未取得有效 Grok 通過。較早 [Grok r1](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6209127404)的需修改結論、原完整檢查失敗、未證根因與未結量測依原紀錄保留，不能據此推成以後免審。
 
