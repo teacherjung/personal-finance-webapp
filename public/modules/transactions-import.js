@@ -267,10 +267,9 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
       picked.forEach(t => { const m = (t.date || '').slice(0, 7); if (m) mc[m] = (mc[m] || 0) + 1; });
       const topMonth = Object.entries(mc).sort((a, b) => b[1] - a[1])[0];
       if (topMonth) setMonthFilter(topMonth[0]);
-      if (out.imported > 0) openImportDone(out);
-      else { close(); toast(`沒有新增任何項目${out.skipped ? `（略過 ${out.skipped} 筆重複或不可匯入）` : ''}`); }
-      // 完成窗是本次同步交棒；從交棒後觀察，才能區分正常接棒與後來的新窗。
-      const modalOk = watchModalRoot();
+      let modalOk;
+      if (out.imported > 0) modalOk = openImportDone(out);
+      else { close(); toast(`沒有新增任何項目${out.skipped ? `（略過 ${out.skipped} 筆重複或不可匯入）` : ''}`); modalOk = watchModalRoot(); }
       canCommit = () => samePage() && modalOk();
       await renderTransactions(canCommit);
     } catch (e) { if (canCommit()) toast('畫面更新失敗：' + e.message, true); }
@@ -382,9 +381,19 @@ function openImportDone(out) {
         <button type="button" class="btn" data-done>完成</button>
       </div>`,
   });
-  root.querySelector('[data-done]').onclick = close;
+  const dialog = root.querySelector('.modal');
+  let modalOk = watchModalRoot();
+  const dismiss = () => {
+    const mayContinue = modalOk() && root.querySelector('.modal') === dialog;
+    close();
+    // 完成窗的正常關閉不撤回列表刷新；失效戳不能藉舊關閉事件復活。
+    if (mayContinue && !root.firstElementChild) modalOk = watchModalRoot();
+  };
+  root.querySelector('[data-done]').onclick = dismiss;
+  root.querySelector('.x-close').onclick = dismiss;
   root.querySelector('[data-reassign]').onclick = () =>
     openReassignPicker({ batchId: out.batchId, fromCardId: out.cardId, cardName: out.cardName }, () => { close(); renderTransactions(); });
+  return () => modalOk();
 }
 
 // 帳單批次管理：列出每次匯入（卡片／日期範圍／筆數／金額），可整批改卡片。

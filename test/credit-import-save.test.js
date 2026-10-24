@@ -21,6 +21,9 @@ const cases = [
   ...['import', 'reparse'].flatMap(operation => ['success', 'failure'].flatMap(outcome =>
     ['cancel', 'x', 'escape', 'other', 'opened-closed', 'navigate', 'return', 'hash-now'].map(action => ({ name: `${operation}/${outcome}/${action}`, mode: 'stale', operation, outcome, action })))),
   { name: '刷新失敗不說匯入失敗也不重新匯入', mode: 'read-error' },
+  ...['keep', 'done', 'x', 'escape'].flatMap(action => [false, true].map(refreshError => ({ name: `完成窗刷新/${action}/${refreshError}`, mode: 'done-read', action, refreshError }))),
+  ...['other', 'opened-closed', 'navigate', 'return', 'hash-now'].map(afterClose => ({ name: `完成後過期刷新/${afterClose}`, mode: 'done-read', action: 'done', afterClose })),
+  ...['navigate', 'return', 'hash-now'].map(beforeClose => ({ name: `換頁後仍能關完成窗/${beforeClose}`, mode: 'done-read', action: 'done', beforeClose })),
   ...['other', 'opened-closed', 'navigate', 'return', 'background', 'hash-now'].flatMap(action => [false, true].map(refreshError => ({ name: `刷新晚回/${action}/${refreshError}`, mode: 'stale-read', action, refreshError }))),
   { name: '過期刷新入口不發 GET 或撤銷有效重畫', mode: 'render-entry' },
 ];

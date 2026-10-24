@@ -62,7 +62,7 @@ async function runCase() {
         if (isImport) call.response = await response.clone().json();
         if (isImport || isReparse) {
           postSeen = true; await postBarrier;
-          if (isImport && ['read-error', 'stale-read'].includes(spec.mode)) holdRead = true;
+          if (isImport && ['read-error', 'stale-read', 'done-read'].includes(spec.mode)) holdRead = true;
         }
         if (path === '/api/transactions' && method === 'GET' && holdRead) {
           holdRead = false; getSeen = true; await getBarrier;
@@ -174,14 +174,32 @@ async function runCase() {
       if (spec.action === 'other') assert.equal(query('#f_marker').value, '本題未存輸入');
     } else {
       releasePost();
-      if (['read-error', 'stale-read'].includes(spec.mode)) {
+      if (['read-error', 'stale-read', 'done-read'].includes(spec.mode)) {
         await waitFor(() => getSeen);
+        if (spec.mode === 'done-read') {
+          assert.equal(query('#modal-root h2').textContent, '匯入完成');
+          const staleDismiss = query('#modal-root [data-done]').onclick;
+          if (spec.beforeClose) await alterContext(spec.beforeClose);
+          if (spec.action === 'done') query('#modal-root [data-done]').click();
+          else if (spec.action !== 'keep') await alterContext(spec.action);
+          if (spec.action !== 'keep') assert.equal(el('#modal-root .modal'), null);
+          if (spec.afterClose) {
+            await alterContext(spec.afterClose);
+            const current = el('#modal-root .modal'); staleDismiss();
+            assert.equal(el('#modal-root .modal'), current, '舊完成事件不能清新窗或復活刷新');
+          }
+        }
         if (spec.mode === 'stale-read') await alterContext(spec.action);
         const page = query('#view').firstElementChild;
         const toast = query('#toast-root').textContent, modal = el('#modal-root .modal');
         releaseGet(); await work; await waitFor(() => pending.size === 0); await settle();
-        if (spec.mode === 'stale-read') { assert.equal(query('#view').firstElementChild, page); assert.equal(query('#toast-root').textContent, toast); assert.equal(el('#modal-root .modal'), modal); }
-        else { assert.match(query('#toast-root').textContent, /載入失敗|畫面更新失敗/); assert.doesNotMatch(query('#toast-root').textContent, /匯入失敗/); }
+        if (spec.mode === 'stale-read' || spec.afterClose || spec.beforeClose) { assert.equal(query('#view').firstElementChild, page); assert.equal(query('#toast-root').textContent, toast); assert.equal(el('#modal-root .modal'), modal); }
+        else if (spec.mode === 'done-read' && !spec.refreshError) {
+          assert.notEqual(query('#view').firstElementChild, page, '關掉本次完成窗仍須呈現已匯入的列表');
+          assert.match(query('#view').textContent, /星巴克/); assert.match(query('#view').textContent, /全聯/);
+          assert.equal(query('#monthSel').value, '2026-01'); assert.equal(query('#creditYearSel').value, '2026'); assert.equal(query('#creditMonthSel').value, '01');
+          assert.equal(el('#modal-root .modal'), modal);
+        } else { assert.match(query('#toast-root').textContent, /載入失敗|畫面更新失敗/); assert.doesNotMatch(query('#toast-root').textContent, /匯入失敗/); }
       } else { await work; await waitFor(() => pending.size === 0); await settle(); }
       if (spec.mode === 'retry') {
         assert.equal(save.disabled, false); assert.equal(query('input[data-row="1"]').checked, false);
