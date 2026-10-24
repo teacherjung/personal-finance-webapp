@@ -57,7 +57,7 @@ function stripComments(src) {
 
 function assertAssetsStructure(rawSource) {
   const source = stripComments(rawSource);
-  const renderStart = source.indexOf('export async function renderAssets()');
+  const renderStart = source.indexOf('export async function renderAssets(');
   const renderEnd = source.indexOf('\nfunction accRow(', renderStart);
   assert.ok(renderStart >= 0 && renderEnd > renderStart, '找不到 renderAssets 正式函式範圍');
   const renderBlock = source.slice(renderStart, renderEnd);
@@ -88,7 +88,7 @@ function assertAssetsStructure(rawSource) {
 function allocationClassOrder(rawSource, rows) {
   const source = stripComments(rawSource);
   const start = source.indexOf('const ASSET_CLASS_DISPLAY_ORDER');
-  const end = source.indexOf('export async function renderAssets()', start);
+  const end = source.indexOf('export async function renderAssets(', start);
   assert.ok(start >= 0 && end > start, '找不到資產類別展示排序函式');
   const helperBlock = source.slice(start, end);
   const orderRows = Function(`${helperBlock}; return orderAllocationRows;`)();

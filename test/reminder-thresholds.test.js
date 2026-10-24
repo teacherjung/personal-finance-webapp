@@ -837,6 +837,7 @@ async function renderAssetsHtml(db) {
   const globalStubs = {
     Chart: class { destroy() { } },
     document: doc,
+    location: win.location,
     window: win, self: win, top: win, parent: win, frames: win,
   };
   // 計時器這幾個名字 node 真的有，所以 moduleAsScript 不會列進 needs——本題**刻意換成自己的**：

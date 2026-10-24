@@ -1,5 +1,5 @@
 // @ts-check
-import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, openInfo, confirmDelete, toast, modalSizeClass, bindBackdropClose, bindModalAccessibility, currentRouteSeq, claimModalRoot } from '../app.js';
+import { api, view, byId, wan, money, moneyCur, pct, esc, openForm, openInfo, confirmDelete, toast, modalSizeClass, bindBackdropClose, bindModalAccessibility, currentRouteSeq, claimModalRoot, watchModalRoot } from '../app.js';
 import { PALETTE, AXIS } from './theme.js';
 import { icon } from './icons.js';
 import { rebalancePlan } from './rebalance.js';
@@ -23,10 +23,12 @@ function orderAllocationRows(rows) {
     .map(({ row }) => row);
 }
 
-export async function renderAssets() {
+/** @param {() => boolean} [canCommit] 儲存接續另須核對彈窗生命週期；一般路由只用重繪世代。 */
+export async function renderAssets(canCommit = () => true) {
   const seq = currentRouteSeq();
   const [db, alloc] = await Promise.all([api('/db'), api('/summary')]);
   if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別動 DOM/圖表（Codex r10#6）
+  if (!canCommit()) return;
   const accounts = db.accounts || [];
   const nonCash = accounts.filter(x => (x.type || 'cash') !== 'cash');   // 銀行/現金帳戶獨立到「銀行帳戶」頁（使用者定 2026-07-21）
   const a = alloc.allocation;
@@ -357,6 +359,7 @@ function openRebalance(allocRows) {
 
 function openTargets(targets) {
   const root = byId('modal-root');
+  const originalHash = location.hash;
   const returnFocusTo = document.activeElement;
   const owns = claimModalRoot();   // r7：同 openRebalance，接管 modal-root＝作廢在途的 openForm(async)
   const rows = () => targets.map((t, i) => `<div class="form-grid" style="margin-bottom:8px" data-i="${i}">
@@ -370,7 +373,13 @@ function openTargets(targets) {
       <button type="button" class="btn-ghost btn-sm" id="addRow">${icon('plus', 15)}新增類別</button>
       <div class="form-actions"><button class="btn-ghost" data-cancel>取消</button><button class="btn" id="saveT">儲存</button></div>
     </div></div></div>`;
-  const close = () => { root.innerHTML = ''; owns.release(); };   // r9：關窗即撤銷擁有權（有主才撤）
+  const dialog = root.querySelector('.modal');
+  const isCurrent = () => owns() && root.querySelector('.modal') === dialog && location.hash === originalHash;
+  const close = () => {
+    // 手動關窗不以換頁作廢；但舊回呼不能清掉接管 root 的新窗。
+    if (root.querySelector('.modal') !== dialog) return;
+    root.innerHTML = ''; owns.release();
+  };
   const collect = () => [...root.querySelectorAll('#tRows [data-i]')].map(r => ({
     class: r.querySelector('[data-k="class"]').value,
     targetPct: Number(r.querySelector('[data-k="targetPct"]').value || 0)
@@ -381,20 +390,37 @@ function openTargets(targets) {
   root.querySelector('#addRow').onclick = () => { targets = collect(); targets.push({ class: '', targetPct: 0 }); root.querySelector('#tRows').innerHTML = rows(); bind(); };
   function bind() { root.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { targets = collect(); targets.splice(Number(b.dataset.rm), 1); root.querySelector('#tRows').innerHTML = rows(); bind(); }); }
   bind();
+  let saveSeq = 0;
+  /** @param {() => boolean} canCommit */
+  const refresh = async canCommit => {
+    const seq = currentRouteSeq();
+    try { await renderAssets(canCommit); }
+    catch (err) {
+      // 重讀錯誤不能冒充保存失敗，也不能在換頁或新操作之後冒出提示。
+      if (seq === currentRouteSeq() && canCommit()) toast('畫面更新失敗：' + (/** @type {any} */ (err).message || ''), true);
+    }
+  };
   const saveBtn = /** @type {HTMLButtonElement} */ (root.querySelector('#saveT'));
   saveBtn.onclick = async () => {
-    if (saveBtn.disabled) return;                          // 防連點（自主體檢：連點＝重複 POST 讓目標翻倍）
+    if (saveBtn.disabled || !isCurrent()) return;
     saveBtn.disabled = true;
+    const seq = ++saveSeq;
+    const stillCurrent = () => seq === saveSeq && isCurrent();
     const next = collect();
     try {
       // 原子整批取代（護欄 G1）：一次呼叫、後端單次寫檔——不再 GET→逐筆 DELETE→逐筆 POST（中途失敗會半刪半建救不回）
       await api('/assetTargets/replace', { method: 'POST', body: { targets: next } });
-      toast('目標配置已更新'); close(); renderAssets();
     } catch (err) {
-      // 整批原子：失敗＝什麼都沒動，維持原狀即可（不再是「半完成需重新確認」）
+      if (!stillCurrent()) return;
       saveBtn.disabled = false;
       toast('儲存目標配置時發生錯誤：' + (/** @type {any} */ (err).message || ''), true);
-      renderAssets();
+      await refresh(stillCurrent);
+      return;
     }
+    if (!stillCurrent()) return;
+    toast('目標配置已更新'); close();
+    // 成功關窗後以觀察戳接棒；即使新窗已開過又關掉，也不能讓舊重讀接管。
+    const unchanged = watchModalRoot();
+    await refresh(() => seq === saveSeq && unchanged() && location.hash === originalHash);
   };
 }
