@@ -134,15 +134,15 @@
  },
  "mainBranch": "main",
  "scanner": {
-  "participant": "無",
-  "tool": "無",
-  "assignedBy": "無掃描發射者：William 2026-10-18 結束 Gemini 工作線，指定 Codex 實作、Grok 複審；本人原話與停止範圍見 docs/project-collaboration.md「本次分工更新」。",
-  "tieBreak": "未登記掃描者，不適用發射者選擇；不得依舊設定、部署或資格收據自行恢復。",
-  "fallback": "實作者（RULES G3、G4）：第一次有效正式通過後，記「未執行：本人已取消 Gemini 工作線，目前未登記掃描者」，核當版通過後轉正式。不以 Grok 複審充當掃描，不另開替代掃描。",
-  "strongest": "未設定",
-  "maxEffort": "未設定",
-  "source": "未設定",
-  "command": "未設定"
+  "participant": "Gemini",
+  "tool": "Gemini 原生 CLI 唯讀掃描",
+  "assignedBy": "Codex（實作者，能起 CLI）：依 William 2026-10-20 條件式授權，在 Grok 掃描額度用完後使用；來源與實際執行情況見 docs/project-collaboration.md「Gemini 條件式原生掃描」。",
+  "tieBreak": "兩方都起得了時由實作者發射；Gemini 不得同時是該支實作者或複審者。",
+  "fallback": "實作者依 RULES G3、G4 留真實未執行原因；普通 CLI 失敗不盲重送、不自行換正式複審者，疑似破口依 G2。",
+  "strongest": "gemini-3.1-pro-preview",
+  "maxEffort": "HIGH",
+  "source": "Gemini CLI",
+  "command": "node {scanTree}/scripts/gemini-scan-native.js --model {model} --effort {effort} --scan-tree {scanTree} --prompt-file {promptFile} --out-file {outFile} --change {change} --project {project}"
  },
  "platform": {
   "name": "GitHub",
@@ -911,7 +911,7 @@
     "tier": "E（不需驗收）"
    },
    {
-    "pattern": "^scripts/(audit-grok-scan|grok-scan|grok-review|grok-final-reply|grok-disk-snapshots|grok-bump|grok-relay|grok-auth-refresh|grok-sandbox-canary|gemini-auth|gemini-client|gemini-relay|gemini-scan|gemini-review|gemini-runtime-observer|gemini-review-evidence|c6-adversarial)\\.js$",
+    "pattern": "^scripts/(audit-grok-scan|grok-scan|grok-review|grok-final-reply|grok-disk-snapshots|grok-bump|grok-relay|grok-auth-refresh|grok-sandbox-canary|gemini-auth|gemini-client|gemini-relay|gemini-scan|gemini-review|gemini-runtime-observer|gemini-review-evidence|gemini-scan-native|c6-adversarial)\\.js$",
     "tier": "E（不需驗收）"
    },
    {

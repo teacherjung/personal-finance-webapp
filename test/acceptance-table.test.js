@@ -86,8 +86,8 @@ test('⭐ 每一條家族的級別逐條釘住：多一條、少一條、或把�
 });
 
 test('Gemini 正式入口精確登記 E，近名維持未知 C', () => {
-  for (const path of ['scripts/gemini-review.js', 'scripts/gemini-runtime-observer.js', 'scripts/gemini-review-evidence.js']) assert.deepEqual(tierOf(path), { path, tier: tierId('E'), known: true }, '核 settings.json 後重產 PROJECT-SETTINGS.md，跑 node --test test/acceptance-table.test.js');
-  for (const path of ['scripts/gemini-review-future.js', 'scripts/gemini-review.mjs', 'scripts/gemini-review.js.bak', 'other/scripts/gemini-review.js']) {
+  for (const path of ['scripts/gemini-review.js', 'scripts/gemini-runtime-observer.js', 'scripts/gemini-review-evidence.js', 'scripts/gemini-scan-native.js']) assert.deepEqual(tierOf(path), { path, tier: tierId('E'), known: true }, '核 settings.json 後重產 PROJECT-SETTINGS.md，跑 node --test test/acceptance-table.test.js');
+  for (const path of ['scripts/gemini-review-future.js', 'scripts/gemini-review.mjs', 'scripts/gemini-review.js.bak', 'other/scripts/gemini-review.js', 'scripts/gemini-scan-native-future.js', 'scripts/gemini-scan-native.mjs', 'scripts/gemini-scan-native.js.bak', 'other/scripts/gemini-scan-native.js']) {
     assert.deepEqual(tierOf(path), { path, tier: tierId('C'), known: false });
   }
 });

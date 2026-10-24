@@ -69,15 +69,17 @@ async function reviewRun(options = {}) {
 }
 
 test('專案未登記掃描者時，正式複審仍使用 reviewers 與隔離流程', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
-  const settingsFile = new URL('../settings.json', import.meta.url);
-  const settings = JSON.parse(readFileSync(settingsFile, 'utf8'));
+  const settings = JSON.parse(readFileSync(new URL('../settings.json', import.meta.url), 'utf8'));
+  settings.scanner = { ...settings.scanner, participant: '無', tool: '無' };
+  const settingsFile = join(keep(mkdtempSync(join(tmpdir(), 'review-without-scanner-'))), 'settings.json');
+  writeFileSync(settingsFile, JSON.stringify(settings));
   assert.equal(settings.scanner.tool, '無');
   const reviewer = settings.reviewers.find((row) => row.participant === settings.defaultDivision.reviewer);
   assert.ok(reviewer);
   let probes = 0;
   const { result, observed, repo, box } = await reviewRun({
     args: { model: reviewer.strongest, effort: reviewer.maxEffort },
-    deps: { settingsFile: settingsFile.pathname, runCanary: async () => { probes++; return { code: 0, lines: ['synthetic review canary'] }; } },
+    deps: { settingsFile, runCanary: async () => { probes++; return { code: 0, lines: ['synthetic review canary'] }; } },
   });
   assert.equal(probes, 1, '複審仍須走掃前檢查；此替身不證明真隔離有效');
   assert.equal(result.code, 0, result.summary.join('\n'));

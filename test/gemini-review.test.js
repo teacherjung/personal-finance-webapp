@@ -152,7 +152,7 @@ function fakePreflight(f, models = { [MODEL]: metrics({ main: role() }) }) {
     for (const [model, row] of Object.entries(models)) for (const [role, count] of Object.entries(row.roles)) {
       for (let i = 0; i < count.totalRequests; i++) events.push({ type: 'request', model, role, configId: 1 });
     }
-    writeFileSync(eventsFile, events.map((event, index) => JSON.stringify({ sequence: index + 1, pid: 123, binding: 'synthetic', ...event })).join('\n') + '\n');
+    writeFileSync(eventsFile, events.map((event, index) => JSON.stringify({ sequence: index + 1, pid: 123, binding: 'synthetic', purpose: 'review', ...event })).join('\n') + '\n');
     return { executable: process.execPath, bootstrap, bootstrapSha256: sha, observer: bootstrap, observerSha256: sha, eventsFile, binding: 'synthetic', sources: [] };
   };
 }
