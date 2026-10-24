@@ -1,6 +1,6 @@
 # Gemini 正式複審接線與核收修復
 
-本計畫適用 #730 的原生 Gemini 單輪例外。依[本人續辦指示](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6312741329)及 [Sol 完整裁示](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6313026036)，先修工程問題、維持草稿，確認新版本後重新全審；有效通過才繼續合併。前端延後。舊回覆及診斷保留，不能以新收據追認舊輪。
+原接線計畫適用 #730 的原生 Gemini 單輪例外；#733 的收件修復範圍另見本文末節。依[本人續辦指示](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6312741329)及 [Sol 完整裁示](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6313026036)，先修工程問題、維持草稿，確認新版本後重新全審；有效通過才繼續合併。前端延後。舊回覆及診斷保留，不能以新收據追認舊輪。
 
 ## 責任與生效邊界
 
@@ -25,3 +25,18 @@
 - 於樹外副本移除實質守衛或破壞保存機制，須取得指定斷言紅及還原後綠；語法錯、缺模組或工具拒絕不算。完成自審、正常完整推送及最新 CI 後，才重備新 HEAD 的 Gemini 正式全審。
 
 發審者須逐項核對拒絕揭露、本機與雲端區分、有效突變紅、同情境還原後實跑綠、必要邊界及十九項清單的落點。機器不靠正規表示式宣稱判懂內容；缺證或回覆矛盾保持不採計，不能補做後冒稱 Gemini 已做。新輪同類問題再發時帶具體證據交 Sol 裁處，不重送同提示碰運氣。有效通過後依 F7、F6、後掃紀錄、官方合併與適用驗收續行。
+
+
+## #733 收件控制流與診斷保存
+
+依[本次窄修裁示](https://github.com/teacherjung/personal-finance-webapp/pull/734#issuecomment-6370073034)，本段只修 `scripts/gemini-review.js` 收件流程及其考題；模型／角色資格、原生 observer、權限、F3、policy 與隱私判準不變。#732 維持草稿，不合併、不第三次重送；不以本修復追認其舊輸出。回復方式為回復本修復提交，保留原生私有證據；回復不是啟用舊輪的許可。
+
+- 正文受理與原生證據對帳分開；收據的 `checks` 按階段列 `passed`、`failed`、`skipped`，未執行附原因。前置拒收未啟動 CLI 時，不填原生退出或觀測已核。
+- `failures` 保留各失敗階段，舊 `failure` 相容欄只放首錯。每階段的錯誤只捕捉一次；來源、設定、policy、runtime 清理、Git 乾淨及 observer 來源各自核對，不因正文或另一項收尾失敗而省略。
+- 來源／設定／policy／observer 來源、模型角色資格與事件對帳都成立，才保存私有 evidence；收尾推翻這些完整性檢查時，僅留原始旁錄與失敗診斷，不保存已核 evidence。這裡的已核僅指列明的機械檢查，evidence 及 `contentAcceptance` 仍為 `pending-human-acceptance`。
+- 正文隱私失敗後仍可保存符合上列檢查的 evidence 與限定模型／角色／工具觀測；evidence 不含被拒正文。收據的 `observationStatus` 區分 `verified` 與 `not-verified`，後者不填合格主模型、模型清單或工具統計。完整 stdout／stderr 另存私有，不裁切、不以回覆自述替換原生觀測；新欄位不擴大公開資料範圍。
+- 只清理本輪成功建立、且仍核對相同的 runtime 設定；未知檔不刪。收尾、證據保存或收據保存任何一步失敗都不產生待貼全文；收據本身寫不成就直接報錯，不能宣稱完整診斷已保存。待貼全文存在亦只表示格式收件，仍非內容放行。
+
+人工核收需把原生模型／角色／HIGH 與回覆自述、拒絕終態與回覆揭露逐項對照，並檢視來源、事件、正文隱私及所有未執行原因；缺證或矛盾即不採計。原有本機／雲端、有效突變紅、同情境還原綠及十九項逐項核收仍適用。不能用語意正規表示式、退出零、固定格式或 evidence 存在代替內容判斷。
+
+機制驗證涵蓋：正文拒收仍對帳、正文／來源或事件缺漏／髒樹並存、來源未核不保存 evidence、前置失敗不啟動 CLI、收尾各項失敗仍查其他項、未知產物保留、原始輸出保存與正常有效路徑；以有效突變及還原重跑證明各改動點。正常推送三關及同版 CI 後，仍須獨立合格複審，才可稱修復正式完成。獨立公開合成資格樣本可驗真 CLI／observer／收件機制，但不能代替本修復當版正式複審，也不得拿 #732 當樣本。

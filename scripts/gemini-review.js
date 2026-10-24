@@ -164,31 +164,78 @@ export async function runReview(args, { git = reviewGit, invoke = nativeCommand,
   const policyText = nativePolicy();
   const sentinel = 'finance-no-server-' + randomUUID();
   const startedAt = new Date().toISOString();
-  let result, received, native, evidence, failure;
-  const commandArgs = ['--skip-trust', '--approval-mode', 'default', '--model', model, '-e', 'none', '--allowed-mcp-server-names', sentinel, '--include-directories', mutationCopy, '--policy', policyFile, '--output-format', 'json', '-p', p.prompt];
-  try {
-    save(configFile, settingsText); save(policyFile, policyText);
-    native = await preflight(executable, reviewTree, p.settings, model, sentinel);
-    result = invoke(process.execPath, ['--import', native.bootstrap, native.executable, ...commandArgs], reviewTree, true);
-    save(outFile + '.stdout.json', result.stdout ?? ''); save(outFile + '.stderr', result.stderr ?? '');
-    requireUnchanged(before, sourceSnapshot(reviewTree, git));
-    requireUnchanged(settingsText, read(configFile)); requireUnchanged(policyText, read(policyFile));
-    received = parseReply(result.stdout, result, p.record, model);
-    verifyObserverSources(native);
-    evidence = reconcileEvidence(read(native.eventsFile), JSON.parse(result.stdout).stats, native.binding);
-    save(outFile + '.evidence.json', JSON.stringify(evidence, null, 2) + '\n');
-  } catch (error) { failure = error; }
-  finally {
-    // 只收掉本輪建立且仍相同的普通檔；未知產物交回操作者，不遞迴刪目錄。
+  let result, received, native, candidateEvidence, evidence, json, observation;
+  /** @type {{ firstError?: Error }} */
+  const failureState = {};
+  const failures = [], checks = {};
+  const passed = stage => checks[stage]?.status === 'passed';
+  const skipped = (stage, reason) => { checks[stage] = { status: 'skipped', reason }; };
+  const check = async (stage, action) => {
     try {
-      requireUnchanged(before, sourceSnapshot(reviewTree, git));
-      requireUnchanged(settingsText, read(configFile));
-      unlinkSync(configFile); rmdirSync(runtime);
-      requireThat(git(reviewTree, ['status', '--porcelain', '--untracked-files=all']) === '', '審查樹有未知產物');
-    } catch (error) { failure ??= error; }
-    save(outFile + '.receipt.json', JSON.stringify({ startedAt, finishedAt: new Date().toISOString(), record: p.record, contentAcceptance: 'pending-human-acceptance', evidenceSha256: evidence ? hash(JSON.stringify(evidence, null, 2) + '\n') : null, cli: executable, args: commandArgs, native, status: result?.status ?? null, signal: result?.signal ?? null, error: result?.error?.message ?? null, failure: failure?.message ?? null, sourceBefore: before, preparedRuntime: [{ path: configFile, sha256: hash(settingsText) }], policySha256: hash(policyText), promptSha256: hash(p.prompt), responseSha256: received ? hash(received.response) : null, observedModels: received?.models ?? [], mainModel: received?.mainModel ?? null, auxiliaryRoles: received?.auxiliaryRoles ?? [], toolStats: received?.tools ?? null, promptOnly: '審查樹唯讀與突變目的地靠提示及前後核對；不是 OS 隔離，也不能證明中途未改回。' }, null, 2) + '\n');
+      const value = await action();
+      checks[stage] = { status: 'passed' };
+      return value;
+    } catch (error) {
+      const issue = error instanceof Error ? error : new Error(String(error));
+      failureState.firstError ??= issue;
+      const message = issue.message;
+      failures.push({ stage, message });
+      checks[stage] = { status: 'failed', message };
+      return undefined;
+    }
+  };
+  const commandArgs = ['--skip-trust', '--approval-mode', 'default', '--model', model, '-e', 'none', '--allowed-mcp-server-names', sentinel, '--include-directories', mutationCopy, '--policy', policyFile, '--output-format', 'json', '-p', p.prompt];
+  await check('settings-create', () => save(configFile, settingsText));
+  await check('policy-create', () => save(policyFile, policyText));
+  if (passed('settings-create') && passed('policy-create')) {
+    native = await check('observer-prepare', () => preflight(executable, reviewTree, p.settings, model, sentinel));
+  } else skipped('observer-prepare', '本輪設定或 policy 未建立');
+  if (passed('observer-prepare')) {
+    result = await check('invoke', () => invoke(process.execPath, ['--import', native.bootstrap, native.executable, ...commandArgs], reviewTree, true));
+  } else skipped('invoke', 'observer 前置未完成，未啟動 CLI');
+  if (passed('invoke')) {
+    await check('stdout-save', () => save(outFile + '.stdout.json', result?.stdout ?? ''));
+    await check('stderr-save', () => save(outFile + '.stderr', result?.stderr ?? ''));
+    await check('native-exit', () => requireThat(result && !result.error && result.status === 0 && !result.signal, '原生 Gemini 未正常完成'));
+    json = await check('native-json', () => JSON.parse(result?.stdout));
+  } else {
+    for (const stage of ['stdout-save', 'stderr-save', 'native-exit', 'native-json']) skipped(stage, '未取得 CLI 返回資料');
   }
-  if (failure) throw failure;
+  if (passed('native-json')) {
+    observation = await check('model-roles', () => modelObservation(json.stats?.models, model));
+  } else skipped('model-roles', '缺可解析的原生 JSON');
+  if (passed('native-exit') && passed('model-roles')) {
+    received = await check('reply', () => parseReply(result.stdout, result, p.record, model));
+  } else skipped('reply', '原生退出或模型資格未通過');
+  if (native && passed('model-roles')) {
+    candidateEvidence = await check('evidence-reconcile', () => reconcileEvidence(read(native.eventsFile), json.stats, native.binding));
+  } else skipped('evidence-reconcile', '缺本輪 observer 或合格角色統計');
+
+  // 正文不合格仍需收齊可獨立的查核；清理失敗也不能省掉來源與髒樹診斷。
+  await check('source-final', () => requireUnchanged(before, sourceSnapshot(reviewTree, git)));
+  if (passed('settings-create')) {
+    await check('settings-final', () => requireUnchanged(settingsText, read(configFile)));
+  } else skipped('settings-final', '本輪沒有成功建立設定，不宣稱擁有該檔');
+  if (passed('policy-create')) {
+    await check('policy-final', () => requireUnchanged(policyText, read(policyFile)));
+  } else skipped('policy-final', '本輪沒有成功建立 policy');
+  if (passed('settings-final')) {
+    await check('runtime-cleanup', () => { unlinkSync(configFile); rmdirSync(runtime); });
+  } else skipped('runtime-cleanup', '未確認設定歸屬及內容，不刪除');
+  await check('tree-clean', () => requireThat(git(reviewTree, ['status', '--porcelain', '--untracked-files=all']) === '', '審查樹有未知產物'));
+  if (native) await check('observer-sources-final', () => verifyObserverSources(native));
+  else skipped('observer-sources-final', 'observer 前置未完成');
+
+  const verified = ['source-final', 'settings-final', 'policy-final', 'observer-sources-final', 'model-roles', 'evidence-reconcile'].every(passed);
+  if (verified) {
+    await check('evidence-save', () => save(outFile + '.evidence.json', JSON.stringify(candidateEvidence, null, 2) + '\n'));
+    if (passed('evidence-save')) evidence = candidateEvidence;
+  } else skipped('evidence-save', '來源、設定、角色或事件未核實，不能保存已核證據');
+  const verifiedObservation = evidence ? observation : undefined;
+  try {
+    save(outFile + '.receipt.json', JSON.stringify({ startedAt, finishedAt: new Date().toISOString(), record: p.record, contentAcceptance: 'pending-human-acceptance', checks, failures, evidenceSha256: evidence ? hash(JSON.stringify(evidence, null, 2) + '\n') : null, cli: executable, args: commandArgs, native, status: result?.status ?? null, signal: result?.signal ?? null, error: result?.error?.message ?? null, failure: failureState.firstError?.message ?? null, sourceBefore: before, preparedRuntime: [{ path: configFile, sha256: hash(settingsText) }], policySha256: hash(policyText), promptSha256: hash(p.prompt), responseSha256: received ? hash(received.response) : null, observationStatus: verifiedObservation ? 'verified' : 'not-verified', observedModels: verifiedObservation ? Object.keys(json.stats.models) : [], mainModel: verifiedObservation?.mainModel ?? null, auxiliaryRoles: verifiedObservation?.auxiliaryRoles ?? [], toolStats: verifiedObservation ? json.stats.tools : null, promptOnly: '審查樹唯讀與突變目的地靠提示及前後核對；不是 OS 隔離，也不能證明中途未改回。' }, null, 2) + '\n');
+  } catch (error) { throw new Error('核收收據保存失敗，未產生正式 output；' + HELP, { cause: error }); }
+  if (failureState.firstError) throw failureState.firstError;
   if (!received) throw new Error(`未收到完整正式回覆；${HELP}`);
   save(outFile, received.response);
   return { output: outFile, receipt: outFile + '.receipt.json', contentAcceptance: 'pending-human-acceptance' };
