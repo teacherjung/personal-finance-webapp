@@ -199,8 +199,10 @@ function openCardChoice(r, b64, cards, typedPw = '', onPage = () => true) {
 function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () => true) {
   const root = byId('modal-root');
   let curCard = cardId, curR = r, previewSort = 'none';   // 'none'（原始順序）｜'asc'｜'desc'（依店名）
+  let busy = false, finished = false;
+  const hash = window.location.hash, nav = currentNavSeq();
+  const samePage = () => onPage() && currentNavSeq() === nav && window.location.hash === hash;
   const detected = `${curR.bank ? curR.bank : (curR.aiIssuer ? `AI 讀到「${curR.aiIssuer}」` : '未知')}${curR.lastFour ? ` · 末四碼 ${curR.lastFour}` : ''}`;   // 原文即可——標題由外殼負責 esc（防雙重跳脫）
-  const close = () => { root.innerHTML = ''; };
   // 重繪前把目前的勾選與分類選擇存回資料，排序後不遺失
   const syncEdits = () => curR.transactions.forEach((t, i) => {
     const cb = root.querySelector(`input[data-row="${i}"]`);
@@ -225,7 +227,8 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
   // 卡側末四碼過安全網（Codex #541 r4：cards＝/api/cards 原始資料，裸 String() 對炸彈值丟 TypeError）
   const cardOpts = () => cards.map(c => `<option value="${esc(c.id)}" ${c.id === curCard ? 'selected' : ''}>${esc(c.name)}${cardLastFourSuffix(c.lastFour, esc)}</option>`).join('');
 
-  const doImport = async () => {
+  const doImport = async (valid, close, setBusy) => {
+    if (busy || finished || !valid()) return;
     const picked = [];
     root.querySelectorAll('input[data-row]:checked').forEach(cb => {
       const i = cb.dataset.row;
@@ -237,10 +240,21 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
       picked.push({ ...t, category, subcategory });
     });
     if (!picked.length) return toast('沒有勾選任何項目', true);
+    setBusy(true);
+    let out;
     try {
       // 帳單期別由後端從帳單表頭讀出（curR.statementMonth），跟著匯入一起存進每一筆（使用者定 2026-07-19）
       // 批四：票一併送——AI 讀的＝匯入後學規則卡（下期免費）；規則卡讀的＝畢業計數。沒有票＝照舊。
-      const out = await api(`/cards/${curCard}/statement/import`, { method: 'POST', body: { transactions: picked, statementMonth: curR.statementMonth || '', statementDue: curR.statementDue ?? null, ...(typeof curR.aiTicket === 'string' ? { aiTicket: curR.aiTicket } : {}) } });
+      out = await api(`/cards/${curCard}/statement/import`, { method: 'POST', body: { transactions: picked, statementMonth: curR.statementMonth || '', statementDue: curR.statementDue ?? null, ...(typeof curR.aiTicket === 'string' ? { aiTicket: curR.aiTicket } : {}) } });
+    } catch (e) {
+      if (valid()) { setBusy(false); toast('匯入失敗：' + e.message, true); }
+      return;
+    }
+    // 後端成功便終止這份預覽的保存入口；列表更新失敗不能讓同一份請求重送。
+    finished = true;
+    if (!valid()) return;
+    let canCommit = valid;
+    try {
       if (!onPage()) return;   // r5#1：匯入（含寫入）完成後切頁＝不動月份、不開完成窗、不重繪舊頁（資料已存）
       // 批四 r6#4→r7#2：出生結果不可靜默、且不可過度承諾——規則卡只保證「下期先免費試讀」，
       // 對不上/驗算紅照樣退 AI；失敗要講卡在哪一關（白話字典＝recipe-birth-text 同一份）。
@@ -255,8 +269,11 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
       if (topMonth) setMonthFilter(topMonth[0]);
       if (out.imported > 0) openImportDone(out);
       else { close(); toast(`沒有新增任何項目${out.skipped ? `（略過 ${out.skipped} 筆重複或不可匯入）` : ''}`); }
-      renderTransactions();
-    } catch (e) { if (onPage()) toast('匯入失敗：' + e.message, true); }   // r5#2：切頁後不報過期錯誤
+      // 完成窗是本次同步交棒；從交棒後觀察，才能區分正常接棒與後來的新窗。
+      const modalOk = watchModalRoot();
+      canCommit = () => samePage() && modalOk();
+      await renderTransactions(canCommit);
+    } catch (e) { if (canCommit()) toast('畫面更新失敗：' + e.message, true); }
   };
 
   const draw = () => {
@@ -283,7 +300,7 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
     }).join('');
     // 外殼歸戶（U3 擴大②）：backdrop:false＝保留原「無背景點擊關閉」語意——這窗滿是勾選與
     // 分類編輯，背景誤點不可毀掉編輯（同 openRulePreview 級的保護，原程式本來就沒掛）
-    openModalShell({
+    const { close } = openModalShell({
       title: `帳單預覽（${detected}）`, size: 'xl', backdrop: false,
       bodyHtml: `
         <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
@@ -301,22 +318,34 @@ function openStatementPreview(cardId, r, b64, cards, typedPw = '', onPage = () =
         <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button>
           <button type="button" class="btn" id="doImport">匯入勾選項目</button></div>`,
     });
+    const dialog = root.querySelector('.modal'), modalOk = watchModalRoot();
+    const valid = () => samePage() && modalOk() && root.querySelector('.modal') === dialog;
+    const saveBtn = root.querySelector('#doImport'), cardSelect = root.querySelector('#previewCard');
+    const setBusy = (value) => { busy = value; saveBtn.disabled = value; cardSelect.disabled = value; };
     root.querySelector('[data-cancel]').onclick = close;
-    root.querySelector('#doImport').onclick = doImport;
+    saveBtn.onclick = () => doImport(valid, close, setBusy);
     root.querySelector('#pvSortNote').onclick = () => {   // 說明欄排序：原始 → 店名 A→Z → Z→A → 原始
+      if (busy || finished || !valid()) return;
       syncEdits();
       previewSort = previewSort === 'asc' ? 'desc' : previewSort === 'desc' ? 'none' : 'asc';
       applyPreviewSort();
       draw();
     };
-    root.querySelector('#previewCard').onchange = async (e) => {
+    cardSelect.onchange = async (e) => {
+      if (busy || finished || !valid()) return;
       const newId = e.target.value;
+      setBusy(true);
       try {
         // 沿用使用者輸入的密碼（r1#3）：改卡重解析時 typedPw 排在池最前，沒勾記住也開得了
         const pr = await api(`/cards/${newId}/statement/preview`, { method: 'POST', body: { data: b64, password: typedPw, ...(curR.aiTicket ? { aiTicket: curR.aiTicket } : {}) } });
         if (!onPage()) return;   // r4：改卡重解析 await 期間切頁＝不重建舊預覽窗
+        if (!valid()) return;
+        busy = false;
         curCard = newId; curR = pr; previewSort = 'none'; draw();   // 換卡＝重算重複標記、排序回原始
-      } catch (err) { if (!onPage()) return; toast('改卡片重新解析失敗：' + err.message, true); e.target.value = curCard; }   // r5#2：切頁後不報過期錯誤、不動舊 select
+      } catch (err) {
+        if (!valid()) return;
+        setBusy(false); toast('改卡片重新解析失敗：' + err.message, true); cardSelect.value = curCard;
+      }
     };
   };
 

@@ -41,7 +41,9 @@ export function setMonthFilter(m) { monthFilter = m; }
 // 排序（使用者定 2026-07-21：所有欄位皆可點表頭排序）——共用 tx-sort.js（絕對值排序 r9#2＋日期次鍵 r8#2 封在那）。
 const listSort = { key: 'date', dir: 'desc' };
 
-export async function renderTransactions() {
+/** @param {() => boolean} [canCommit] 本次呼叫額外的呈現資格；一般列表操作不受彈窗影響。 */
+export async function renderTransactions(canCommit = () => true) {
+  if (!canCommit()) return;
   const seq = currentRouteSeq();
   const generation = ++renderGeneration;
   // 退款配對表（唯讀）：分類統計與「本月消費」改用**消費歸屬**口徑（使用者定 2026-07-27，與月度回顧一致）。
@@ -53,7 +55,7 @@ export async function renderTransactions() {
       api('/refund-pairs').then(r => (r && Array.isArray(r.pairs)) ? r : null).catch(() => null),
     ]);
   } catch (e) {
-    if (seq === currentRouteSeq() && generation === renderGeneration) {
+    if (canCommit() && seq === currentRouteSeq() && generation === renderGeneration) {
       const message = e instanceof Error ? e.message : String(e);
       if (view().querySelector('.credit-workspace') && renderedMonth) {
         monthFilter = renderedMonth;
@@ -68,7 +70,7 @@ export async function renderTransactions() {
     }
     return;
   }
-  if (seq !== currentRouteSeq() || generation !== renderGeneration) return;   // 期間切走了頁就別覆蓋新頁面（Codex r10#6）
+  if (!canCommit() || seq !== currentRouteSeq() || generation !== renderGeneration) return;   // 期間切走了頁就別覆蓋新頁面（Codex r10#6）
   const [allRaw, accounts, cards, tree, refundData] = responses;
   expTree = tree && typeof tree === 'object' ? tree : {};
   // 只吃信用卡帳本（三層重構）：下游月加總、店家檔案、byCat 全部因此天然只算卡消費、不會混入現金流。
