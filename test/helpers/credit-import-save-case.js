@@ -15,9 +15,16 @@ async function runCase() {
   assert.equal(process.env.NOTEASY_HOSTED, ''); assert.equal(reportPath, join(root, 'report.json')); assert.equal(fs.existsSync(reportPath), false);
   const http = globalThis.fetch, originalTimer = globalThis.setTimeout, timers = new Set();
   let server, win, postSeen = false, getSeen = false, holdRead = false, failedOnce = false;
-  let releasePost, releaseGet;
+  let releasePost, releaseGet, releaseNewGet, newReadSeen = false, armNewRead = false;
   const postBarrier = new Promise(r => { releasePost = r; }), getBarrier = new Promise(r => { releaseGet = r; });
+  const newGetBarrier = new Promise(r => { releaseNewGet = r; });
+  let holdCards = false, cardsSeen = false, releaseCards;
+  const cardsBarrier = new Promise(r => { releaseCards = r; });
+  let reassignSeen = false, releaseReassign;
+  const reassignBarrier = new Promise(r => { releaseReassign = r; });
   const calls = [], pending = new Set(), errors = [], events = [];
+  const heldRequests = new Set();
+  const hold = async promise => { const token = {}; heldRequests.add(token); try { await promise; } finally { heldRequests.delete(token); } };
   const json = (data, status = 200) => new Response(JSON.stringify(data), { status });
   globalThis.fetch = async () => { throw new Error('本題禁止外部來源'); };
   const repo = await import(pathToFileURL(source + '/lib/repo.js').href);
@@ -53,19 +60,28 @@ async function runCase() {
         const call = { path, method, body: init.body ? JSON.parse(init.body) : null }; calls.push(call);
         const isImport = method === 'POST' && /\/cards\/[^/]+\/statement\/import$/.test(path);
         const isReparse = method === 'POST' && /\/cards\/[^/]+\/statement\/preview$/.test(path);
-        assert(method === 'GET' || isImport || isReparse || path === '/api/statement/preview', '拒絕非本題寫入');
-        const failing = (isImport || isReparse) && (spec.outcome === 'failure' || !failedOnce && ['retry', 'retry-reparse'].includes(spec.mode));
+        const isReassign = method === 'POST' && path === '/api/statement/reassign';
+        assert(method === 'GET' || isImport || isReparse || isReassign || path === '/api/statement/preview', '拒絕非本題寫入');
+        const failing = isReassign && spec.reassignFailure || (isImport || isReparse) && (spec.outcome === 'failure' || !failedOnce && ['retry', 'retry-reparse'].includes(spec.mode));
         if (failing) failedOnce = true;
         const response = failing
           ? json({ error: '本題合成請求失敗' }, 503) : await http(base + path, init);
         call.status = response.status;
+        if (isReassign && spec.postAction) { reassignSeen = true; await hold(reassignBarrier); }
+        if (path === '/api/cards' && holdCards && !cardsSeen) {
+          cardsSeen = true; await hold(cardsBarrier);
+          if (spec.loadFailure) return json({ error: '本題合成載卡失敗' }, 503);
+        }
         if (isImport) call.response = await response.clone().json();
         if (isImport || isReparse) {
-          postSeen = true; await postBarrier;
+          postSeen = true; await hold(postBarrier);
           if (isImport && ['read-error', 'stale-read', 'done-read'].includes(spec.mode)) holdRead = true;
         }
-        if (path === '/api/transactions' && method === 'GET' && holdRead) {
-          holdRead = false; getSeen = true; await getBarrier;
+        if (path === '/api/transactions' && method === 'GET' && armNewRead && !newReadSeen) {
+          newReadSeen = true; await hold(newGetBarrier);
+          if (spec.cancelRefreshError) return json({ error: '本題合成取消後重讀失敗' }, 503);
+        } else if (path === '/api/transactions' && method === 'GET' && holdRead) {
+          holdRead = false; getSeen = true; await hold(getBarrier);
           if (spec.mode === 'read-error' || spec.refreshError) return json({ error: '本題合成重讀失敗' }, 503);
         }
         return response;
@@ -76,7 +92,7 @@ async function runCase() {
     const el = s => document.querySelector(s), query = s => { const n = el(s); assert(n, s); return n; };
     const waitFor = async predicate => { for (let n = 0; n < 500; n++) { if (predicate()) return; await new Promise(r => originalTimer(r, 10)); } assert.fail('操作未完成：' + JSON.stringify(errors) + document.querySelector('#modal-root')?.textContent); };
     const settle = async () => { await new Promise(r => win.requestAnimationFrame(r)); for (let n = 0; n < 4; n++) await new Promise(r => originalTimer(r, 0)); };
-    const navigate = async hash => { const seq = appModule.currentNavSeq(); window.location.hash = hash; await waitFor(() => appModule.currentNavSeq() > seq && !el('#view .loading')); await waitFor(() => [...pending].length <= 1); await settle(); };
+    const navigate = async hash => { const seq = appModule.currentNavSeq(); window.location.hash = hash; await waitFor(() => appModule.currentNavSeq() > seq && !el('#view .loading')); await waitFor(() => pending.size <= heldRequests.size); await settle(); };
     const alterContext = async action => {
       if (action === 'cancel') query('[data-cancel]').click();
       if (action === 'x') query('#modal-root .x-close').click();
@@ -178,9 +194,76 @@ async function runCase() {
         await waitFor(() => getSeen);
         if (spec.mode === 'done-read') {
           assert.equal(query('#modal-root h2').textContent, '匯入完成');
-          const staleDismiss = query('#modal-root [data-done]').onclick;
+          let staleDismiss = query('#modal-root [data-done]').onclick;
           if (spec.beforeClose) await alterContext(spec.beforeClose);
           if (spec.action === 'done') query('#modal-root [data-done]').click();
+          else if (spec.action === 'reassign') {
+            if (spec.loadAction) {
+              holdCards = true;
+              const open = query('#modal-root [data-reassign]').onclick, loading = open(); events.push(loading);
+              await waitFor(() => cardsSeen); const count = calls.length; await open(); assert.equal(calls.length, count, '載卡在途不重送');
+              await alterContext(spec.loadAction);
+              const modal = el('#modal-root .modal'), text = query('#toast-root').textContent;
+              releaseCards(); await loading; await settle();
+              assert.equal(el('#modal-root .modal'), modal); assert.equal(query('#toast-root').textContent, text);
+              releaseGet(); await work; await waitFor(() => pending.size === 0); await settle();
+              assert.equal(el('#modal-root .modal'), modal); assert.equal(imports().length, 1);
+              assert.equal(calls.filter(c => c.path === '/api/statement/reassign').length, 0);
+              assert.equal((await (await http(base + '/api/transactions')).json()).length, 2);
+              assert.deepEqual(errors, []);
+              return { nonce: process.env.CREDIT_SAVE_NONCE, name: spec.name, passed: true, realHttp: true };
+            }
+            await query('#modal-root [data-reassign]').onclick();
+            assert.equal(query('#modal-root h2').textContent, '整批改到其他卡片');
+            staleDismiss = query('#modal-root [data-cancel]').onclick;
+            if (spec.staleEntry) {
+              const rows = await (await http(base + '/api/transactions')).json();
+              await alterContext('hash-now');
+              const modal = el('#modal-root .modal'), page = query('#view').firstElementChild, text = query('#toast-root').textContent;
+              await query('#modal-root form').onsubmit({ preventDefault() {} });
+              releaseGet(); await work; await waitFor(() => pending.size === 0); await settle();
+              assert.equal(calls.filter(c => c.path === '/api/statement/reassign').length, 0);
+              assert.equal(el('#modal-root .modal'), modal); assert.equal(query('#view').firstElementChild, page); assert.equal(query('#toast-root').textContent, text);
+              assert.deepEqual(await (await http(base + '/api/transactions')).json(), rows);
+              query('#modal-root [data-cancel]').click(); assert.equal(el('#modal-root .modal'), null);
+              assert.deepEqual(errors, []);
+              return { nonce: process.env.CREDIT_SAVE_NONCE, name: spec.name, passed: true, realHttp: true };
+            }
+            armNewRead = !spec.postAction || spec.postAction === 'cancel';
+            if (spec.postAction) {
+              const beforeReassign = await (await http(base + '/api/transactions')).json();
+              const saving = query('#modal-root form').onsubmit({ preventDefault() {} }); events.push(saving);
+              await waitFor(() => reassignSeen); await alterContext(spec.postAction);
+              if (spec.postAction === 'cancel') { await waitFor(() => newReadSeen); releaseNewGet(); await settle(); await waitFor(() => pending.size <= heldRequests.size); }
+              const modal = el('#modal-root .modal'), page = query('#view').firstElementChild, text = query('#toast-root').textContent;
+              releaseReassign(); await saving; releaseGet(); await work; await waitFor(() => pending.size === 0); await settle();
+              assert.equal(el('#modal-root .modal'), modal); assert.equal(query('#view').firstElementChild, page); assert.equal(query('#toast-root').textContent, text);
+              const reassignCalls = calls.filter(c => c.path === '/api/statement/reassign');
+              assert.equal(reassignCalls.length, 1);
+              assert.deepEqual(reassignCalls[0].body, { batchId: beforeReassign[0].importBatch, toCardId: 'card2' });
+              assert.equal(reassignCalls[0].status, spec.reassignFailure ? 503 : 200);
+              const rows = await (await http(base + '/api/transactions')).json(); assert.equal(rows.length, 2);
+              assert.deepEqual(rows, beforeReassign.map(row => spec.reassignFailure ? row : { ...row, account: '合成卡乙', stmtRef: 'card2' + row.stmtRef.slice(row.stmtRef.indexOf('|')) }), '取消不撤回已送出的改卡，其他交易內容保留');
+              assert.deepEqual(errors, []);
+              return { nonce: process.env.CREDIT_SAVE_NONCE, name: spec.name, passed: true, realHttp: true };
+            }
+            if (spec.drag) {
+              const bg = query('#modal-root .modal-bg'), own = query('#modal-root .modal');
+              own.dispatchEvent(new win.MouseEvent('mousedown', { bubbles: true }));
+              for (const type of ['mouseup', 'click']) bg.dispatchEvent(new win.MouseEvent(type, { bubbles: true }));
+              await settle(); assert.equal(el('#modal-root .modal'), own); assert.equal(newReadSeen, false);
+            }
+            if (spec.closeAction === 'save') {
+              const submitReassign = query('#modal-root form').onsubmit({ preventDefault() {} }); events.push(submitReassign); await submitReassign;
+              assert.equal(calls.filter(c => c.path === '/api/statement/reassign').length, 1);
+              if (spec.reassignFailure) { assert.equal(query('#f_toCardId').value, 'card2'); assert.equal(query('#modal-root button[type=submit]').disabled, false); query('#modal-root [data-cancel]').click(); }
+            }
+            else if (spec.closeAction === 'backdrop') {
+              const bg = query('#modal-root .modal-bg');
+              for (const type of ['mousedown', 'mouseup', 'click']) bg.dispatchEvent(new win.MouseEvent(type, { bubbles: true }));
+            }
+            else await alterContext(spec.closeAction);
+          }
           else if (spec.action !== 'keep') await alterContext(spec.action);
           if (spec.action !== 'keep') assert.equal(el('#modal-root .modal'), null);
           if (spec.afterClose) {
@@ -192,9 +275,17 @@ async function runCase() {
         if (spec.mode === 'stale-read') await alterContext(spec.action);
         const page = query('#view').firstElementChild;
         const toast = query('#toast-root').textContent, modal = el('#modal-root .modal');
-        releaseGet(); await work; await waitFor(() => pending.size === 0); await settle();
+        if (spec.action === 'reassign') {
+          await settle();
+          assert.equal(newReadSeen, true, '有效改卡關窗必須另送列表 GET');
+          assert.equal(calls.filter(c => c.path === '/api/statement/reassign').length, spec.closeAction === 'save' ? 1 : 0, '取消不發改卡 POST');
+          releaseGet(); await work; await settle();
+          assert.equal(query('#view').firstElementChild, page, '原匯入 GET 不得藉改卡取消復活');
+          releaseNewGet();
+        } else releaseGet();
+        await work; await waitFor(() => pending.size === 0); await settle();
         if (spec.mode === 'stale-read' || spec.afterClose || spec.beforeClose) { assert.equal(query('#view').firstElementChild, page); assert.equal(query('#toast-root').textContent, toast); assert.equal(el('#modal-root .modal'), modal); }
-        else if (spec.mode === 'done-read' && !spec.refreshError) {
+        else if (spec.mode === 'done-read' && !spec.refreshError && !spec.cancelRefreshError) {
           assert.notEqual(query('#view').firstElementChild, page, '關掉本次完成窗仍須呈現已匯入的列表');
           assert.match(query('#view').textContent, /星巴克/); assert.match(query('#view').textContent, /全聯/);
           assert.equal(query('#monthSel').value, '2026-01'); assert.equal(query('#creditYearSel').value, '2026'); assert.equal(query('#creditMonthSel').value, '01');
@@ -225,7 +316,7 @@ async function runCase() {
     assert.deepEqual(errors, []);
     return { nonce: process.env.CREDIT_SAVE_NONCE, name: spec.name, passed: true, realHttp: true };
   } finally {
-    releasePost(); releaseGet(); await Promise.allSettled(events); await Promise.allSettled([...pending]); win?.close(); for (const timer of timers) clearTimeout(timer);
+    releasePost(); releaseGet(); releaseNewGet(); releaseCards(); releaseReassign(); await Promise.allSettled(events); await Promise.allSettled([...pending]); win?.close(); for (const timer of timers) clearTimeout(timer);
     globalThis.setTimeout = originalTimer; globalThis.fetch = http;
     if (server) { server.closeAllConnections(); await new Promise((ok, fail) => server.close(e => e ? fail(e) : ok())); }
   }

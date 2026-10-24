@@ -24,6 +24,13 @@ const cases = [
   ...['keep', 'done', 'x', 'escape'].flatMap(action => [false, true].map(refreshError => ({ name: `完成窗刷新/${action}/${refreshError}`, mode: 'done-read', action, refreshError }))),
   ...['other', 'opened-closed', 'navigate', 'return', 'hash-now'].map(afterClose => ({ name: `完成後過期刷新/${afterClose}`, mode: 'done-read', action: 'done', afterClose })),
   ...['navigate', 'return', 'hash-now'].map(beforeClose => ({ name: `換頁後仍能關完成窗/${beforeClose}`, mode: 'done-read', action: 'done', beforeClose })),
+  ...['cancel', 'x', 'escape', 'backdrop'].flatMap(closeAction => [false, true].map(cancelRefreshError => ({ name: `完成後改卡取消/${closeAction}/${cancelRefreshError}`, mode: 'done-read', action: 'reassign', closeAction, cancelRefreshError }))),
+  ...['other', 'opened-closed', 'navigate', 'return', 'hash-now', 'background'].flatMap(afterClose => [false, true].map(cancelRefreshError => ({ name: `改卡取消刷新過期/${afterClose}/${cancelRefreshError}`, mode: 'done-read', action: 'reassign', closeAction: 'cancel', afterClose, cancelRefreshError }))),
+  ...['cancel', 'x', 'escape'].map(closeAction => ({ name: `改卡拖出不關再取消/${closeAction}`, mode: 'done-read', action: 'reassign', closeAction, drag: true })),
+  ...[false, true].map(reassignFailure => ({ name: `完成後改卡保存/${reassignFailure}`, mode: 'done-read', action: 'reassign', closeAction: 'save', reassignFailure })),
+  ...['x', 'escape', 'other', 'opened-closed', 'navigate', 'return', 'hash-now'].flatMap(loadAction => [false, true].map(loadFailure => ({ name: `載卡晚回/${loadAction}/${loadFailure}`, mode: 'done-read', action: 'reassign', loadAction, loadFailure }))),
+  { name: '改卡過期入口/hash-now', mode: 'done-read', action: 'reassign', staleEntry: true },
+  ...['cancel', 'other', 'opened-closed', 'navigate', 'return', 'hash-now'].flatMap(postAction => [false, true].map(reassignFailure => ({ name: `改卡保存晚回/${postAction}/${reassignFailure}`, mode: 'done-read', action: 'reassign', postAction, reassignFailure }))),
   ...['other', 'opened-closed', 'navigate', 'return', 'background', 'hash-now'].flatMap(action => [false, true].map(refreshError => ({ name: `刷新晚回/${action}/${refreshError}`, mode: 'stale-read', action, refreshError }))),
   { name: '過期刷新入口不發 GET 或撤銷有效重畫', mode: 'render-entry' },
 ];
