@@ -140,9 +140,7 @@
 
 ## William 的常設指示
 
-- **Argon High 前置與資產配置單項修正｜2026-10-24 UTC**：本人在本對話原話（Codex 轉述）：「同意，先把 Argon High 的正式複審接法處理好，確認實際使用的模型與推理等級。再繼續這項資產配置儲存保護，不改畫面外觀，複審照流程並由你確認沒問題就合併。下一項仍先跟我說明再動工。」本次實作範圍與驗證界線見[前置計畫](docs/gemini-argon-review-plan.md)；這項指示不恢復其他優化或 Grok 掃描。
-
-- **2026-10-21 UTC**：本人：「本輪正式複審改用 Gemini（建議）」。[原話](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6308077455)。
+- **2026-10-24 UTC**：本人：「請確認Gemini是使用 Argon high來複審」。[完整授權與沿革](docs/gemini-argon-review-plan.md#授權原話)。
 
 收到跨 PR 都適用的指示時，收到的那一方當下寫進這一節。
 
