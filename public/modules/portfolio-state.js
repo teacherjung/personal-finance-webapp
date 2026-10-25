@@ -20,9 +20,9 @@ import { normalizePortfolioSymbol } from './portfolio-symbol.js';
  */
 export function buildPortfolioPageState(input) {
   /** @type {Record<string, number>} */
-  const layerValues = {};
+  const layerValues = Object.create(null);
   for (const row of input.rows) {
-    const layer = row.layer && input.layers[row.layer] ? row.layer : 'satellite';
+    const layer = row.layer && Object.hasOwn(input.layers, row.layer) && input.layers[row.layer] ? row.layer : 'satellite';
     layerValues[layer] = (layerValues[layer] || 0) + Number(row.valueTwd || 0);
   }
 

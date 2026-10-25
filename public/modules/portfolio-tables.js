@@ -61,15 +61,15 @@ export function holdingsTableHtml(rows, total, options) {
   const { escapeHtml: esc, formatMoney: money, formatPercent: pct } = formatters;
   const comparator = (Object.hasOwn(HOLDING_SORTERS, sortKey) && HOLDING_SORTERS[sortKey]) || HOLDING_SORTERS.value;
   const groups = LAYER_ORDER.map(layer => {
-    const list = rows.filter(row => (LAYERS[row.layer] ? row.layer : 'satellite') === layer).sort(comparator);
+    const list = rows.filter(row => (Object.hasOwn(LAYERS, row.layer) && LAYERS[row.layer] ? row.layer : 'satellite') === layer).sort(comparator);
     if (sortDir === 'desc') list.reverse();
     if (!list.length) return '';
     return `<tr class="group-row portfolio-layer-row"><td colspan="9"><span class="portfolio-layer-label"><span class="cat-dot" style="background:${LAYERS[layer].color}"></span>${LAYERS[layer].label}</span></td></tr>`
       + list.map(row => `<tr>
         <td class="nowrap">${holdingSymbolHtml(row, esc)}${row.quoteSymbol ? '' : ' <span class="tag" style="font-size:9px">手動</span>'}</td>
         <td class="muted nowrap portfolio-holding-name">${esc(row.name || '')}</td>
-        <td class="nowrap muted">${formatTablePrice((row.avgCost != null && row.avgCost !== '') ? row.avgCost : (Number(row.quantity) ? Number(row.cost || 0) / Number(row.quantity) : 0), row.currency)}</td>
-        <td class="nowrap">${formatTablePrice(row.price, row.currency)}</td>
+        <td class="nowrap muted">${esc(formatTablePrice((row.avgCost != null && row.avgCost !== '') ? row.avgCost : (Number(row.quantity) ? Number(row.cost || 0) / Number(row.quantity) : 0), row.currency))}</td>
+        <td class="nowrap">${esc(formatTablePrice(row.price, row.currency))}</td>
         <td class="num">${money(row.valueTwd)}</td>
         <td class="num ${row.pnlTwd >= 0 ? 'pos' : 'neg'}">${row.pnlTwd >= 0 ? '+' : ''}${money(row.pnlTwd)}</td>
         <td class="num ${row.pnlTwd >= 0 ? 'pos' : 'neg'}">${row.costTwd ? pct(row.pnlTwd / row.costTwd * 100) : '—'}</td>
@@ -117,8 +117,8 @@ export function watchlistSectionHtml(watchlist, formatters) {
     return `<tr>
       <td class="nowrap"><b>${esc(item.symbol)}</b></td>
       <td class="muted nowrap">${esc(item.name || '')}</td>
-      <td class="nowrap">${formatPrice(item.targetPrice, item.currency || 'USD')}</td>
-      <td class="nowrap">${last ? formatPrice(last, item.currency || 'USD') : '<span class="muted">按「更新報價」</span>'}</td>
+      <td class="nowrap">${esc(formatPrice(item.targetPrice, item.currency || 'USD'))}</td>
+      <td class="nowrap">${last ? esc(formatPrice(last, item.currency || 'USD')) : '<span class="muted">按「更新報價」</span>'}</td>
       <td>${status}</td>
       <td class="muted" style="font-size:12px">${esc(item.note || '')}</td>
       <td><div class="row-actions">

@@ -112,7 +112,7 @@ export function fxExposure(rows, accounts, fx) {
     return r.currency || 'TWD';   // 缺幣別預設台幣（與 derive/上面 rows 同口徑，自主體檢）
   };
   /** @type {Record<string, CurrencyExposure>} */
-  const byCur = {};
+  const byCur = Object.create(null);
   const bucket = (cur) => byCur[cur] = byCur[cur] || /** @type {CurrencyExposure} */ ({ stockTwd: 0, bondTwd: 0, goldTwd: 0, cashTwd: 0 });
   for (const r of rows) {
     const c = bucket(exposureCurrency(r));

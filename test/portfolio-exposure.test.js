@@ -2,6 +2,33 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { compOf, regionExposure, companyExposure, companyRegionOf, fxExposure } from '../public/modules/portfolio-exposure.js';
 
+test('幣別曝險｜原型名稱聚合保留金額且不改共用原型或輸入', () => {
+  const currencies = ['__proto__', 'constructor', 'toString'];
+  const rows = currencies.flatMap(currency => [
+    { symbol: 'SYNTH', currency, valueTwd: 7 },
+    { symbol: 'SYNTH', currency, valueTwd: 11 }
+  ]);
+  const original = structuredClone(rows);
+  const targets = [Object.prototype, Object, Object.prototype.toString];
+  const before = targets.map(target => Object.getOwnPropertyDescriptors(target));
+  try {
+    const result = fxExposure(rows, [], {});
+    assert.equal(Object.getPrototypeOf(result), null);
+    for (const currency of currencies) {
+      assert.equal(Object.hasOwn(result, currency), true);
+      assert.deepEqual(result[currency], { stockTwd: 18, bondTwd: 0, goldTwd: 0, cashTwd: 0, netTwd: 18 });
+    }
+    targets.forEach((target, i) => assert.deepEqual(Object.getOwnPropertyDescriptors(target), before[i]));
+    assert.deepEqual(rows, original);
+  } finally {
+    // 拿掉防護的突變也不能把污染帶進後續考題。
+    targets.forEach((target, i) => {
+      for (const key of Reflect.ownKeys(target)) if (!Object.hasOwn(before[i], key)) delete target[key];
+      Object.defineProperties(target, before[i]);
+    });
+  }
+});
+
 test('投資曝險｜已知代號走成分表，未知代號依 layer 退回', () => {
   assert.deepEqual(compOf({ symbol: ' eimi ', layer: 'core' }), {
     type: 'equity',
@@ -57,11 +84,11 @@ test('投資曝險｜幣別曝險維持美債 ETF、黃金與缺省幣別口徑'
     { symbol: '00719B', layer: 'bond', currency: 'TWD', valueTwd: 2_000 },
     { symbol: 'IAU', layer: 'gold', currency: 'USD', valueTwd: 3_000 },
     { symbol: 'UNKNOWN', layer: 'satellite', valueTwd: 4_000 }
-  ], [], { TWD: 1, USD: 32 }), {
+  ], [], { TWD: 1, USD: 32 }), Object.assign(Object.create(null), {
     USD: { stockTwd: 1_000, bondTwd: 2_000, goldTwd: 0, cashTwd: 0, netTwd: 3_000 },
     黃金: { stockTwd: 0, bondTwd: 0, goldTwd: 3_000, cashTwd: 0, netTwd: 3_000 },
     TWD: { stockTwd: 4_000, bondTwd: 0, goldTwd: 0, cashTwd: 0, netTwd: 4_000 }
-  });
+  }));
 });
 
 test('投資曝險｜現金依匯率換算且正數負債反向計入', () => {
@@ -72,11 +99,11 @@ test('投資曝險｜現金依匯率換算且正數負債反向計入', () => {
     { type: 'loan', currency: 'USD', balance: -20 },
     { type: 'cash', balance: 50 },
     { type: 'cash', currency: 'JPY', balance: 0 }
-  ], { TWD: 1, USD: 32, GBP: 40 }), {
+  ], { TWD: 1, USD: 32, GBP: 40 }), Object.assign(Object.create(null), {
     TWD: { stockTwd: 0, bondTwd: 0, goldTwd: 0, cashTwd: -350, netTwd: -350 },
     GBP: { stockTwd: 0, bondTwd: 0, goldTwd: 0, cashTwd: 400, netTwd: 400 },
     USD: { stockTwd: 0, bondTwd: 0, goldTwd: 0, cashTwd: -640, netTwd: -640 }
-  });
+  }));
 });
 
 test('丙｜fxExposure：表上有的幣別（含預設值）照算；表上沒有的幣別（EUR）不計入、不可當台幣', async () => {
