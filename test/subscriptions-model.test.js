@@ -121,6 +121,40 @@ test('costDetailRows：只留計入>0 的列、金額高→低、同額依服務
 });
 
 // ---------- 二、前後端對照考題（同步點保險）----------
+test('costDetailRows：缺名稱與非字串同額列保留計算、名稱呈現與輸入形狀', () => {
+  const cases = [
+    [{}, ''], [{ name: undefined }, ''], [{ name: null }, ''], [{ name: '' }, ''],
+    [{ name: 123 }, '123'], [{ name: false }, 'false'], [{ name: ['甲', '乙'] }, '甲,乙'],
+    [{ name: {} }, '[object Object]'], [{ name: JSON.parse('{"toString":null}') }, ''],
+    [{ name: '  <服務&>  ' }, '  <服務&>  '],
+  ];
+  for (const [fields, expected] of cases) {
+    const unnamed = { id: 'name-case', cycle: 'quarterly', amount: 600, since: '2026-06', ...fields };
+    const input = [mk({ name: '甲', amount: 200 }), unnamed, mk({ name: '零費', amount: 0 })];
+    const before = structuredClone(input);
+    const rows = costDetailRows(input, '2026-07');
+    assert.equal(rows.length, 2);
+    const expectedRows = [
+      { service: '甲', cycle: '月繳', formula: '月費', amount: 200 },
+      { service: expected, cycle: '季繳', formula: '季費 ÷ 3', amount: 200 },
+    ].sort((a, b) => a.service.localeCompare(b.service, 'zh-Hant'));
+    assert.deepEqual(rows, expectedRows);
+    assert.deepEqual(input, before);
+    assert.equal(Object.hasOwn(unnamed, 'name'), Object.hasOwn(fields, 'name'));
+  }
+});
+
+test('costDetailRows：同額空名稱維持來源順序，較高金額仍在前', () => {
+  const input = [
+    mk({ name: null, amount: 200 }),
+    mk({ name: undefined, cycle: 'quarterly', amount: 600 }),
+    mk({ name: '大額', amount: 500 }),
+  ];
+  assert.deepEqual(costDetailRows(input, '2026-07').map(r => [r.service, r.amount, r.formula]), [
+    ['大額', 500, '月費'], ['', 200, '月費'], ['', 200, '季費 ÷ 3'],
+  ]);
+});
+
 // 同一筆訂閱、同一個月份，前端 costForMonth（訂閱頁顯示）與後端 subCostForMonth
 //（總覽固定訂閱/緊急預備金）必須算出同一個數字——否則使用者兩頁看到不同的錢。
 
