@@ -125,8 +125,13 @@ export function costFormula(s, mk) {
 }
 
 export function costDetailRows(subs, mk) {
+  const displayName = value => {
+    // 舊資料的名稱不保證是字串，轉換失敗也不能讓整份成本明細消失。
+    try { return value == null ? '' : String(value); }
+    catch { return ''; }
+  };
   return subs.map(s => ({
-    service: s.name,
+    service: displayName(s.name),
     cycle: CYCLE_LABELS[s.cycle] || '月繳',
     formula: costFormula(s, mk),
     amount: costForMonth(s, mk)
