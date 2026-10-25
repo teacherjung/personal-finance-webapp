@@ -18,8 +18,11 @@ async function runCase() {
   let releasePost, releaseGet, releaseNewGet, newReadSeen = false, armNewRead = false;
   const postBarrier = new Promise(r => { releasePost = r; }), getBarrier = new Promise(r => { releaseGet = r; });
   const newGetBarrier = new Promise(r => { releaseNewGet = r; });
-  let holdCards = false, cardsSeen = false, releaseCards;
+  let holdCards = false, cardsSeen = false, releaseCards, cardsReserved;
   const cardsBarrier = new Promise(r => { releaseCards = r; });
+  let backgroundCards, pickerCards, backgroundReached = false, releaseBackground, releasePicker;
+  const backgroundBarrier = new Promise(r => { releaseBackground = r; });
+  const pickerBarrier = new Promise(r => { releasePicker = r; });
   let reassignSeen = false, releaseReassign;
   const reassignBarrier = new Promise(r => { releaseReassign = r; });
   const calls = [], pending = new Set(), errors = [], events = [];
@@ -58,6 +61,13 @@ async function runCase() {
         if (bootReplies.has(key)) return json(bootReplies.get(key));
         assert(path.startsWith('/api/'), '拒絕外部來源');
         const call = { path, method, body: init.body ? JSON.parse(init.body) : null }; calls.push(call);
+        // 回覆順序不能替換已選定的載卡請求，否則背景列表會收到別人的合成錯誤。
+        const targetCards = path === '/api/cards' && holdCards && !cardsReserved;
+        if (targetCards) cardsReserved = call;
+        if (spec.delayedBackgroundCards && path === '/api/cards') {
+          if (holdRead && !holdCards && !backgroundCards) backgroundCards = call;
+          if (holdCards && !pickerCards) pickerCards = call;
+        }
         const isImport = method === 'POST' && /\/cards\/[^/]+\/statement\/import$/.test(path);
         const isReparse = method === 'POST' && /\/cards\/[^/]+\/statement\/preview$/.test(path);
         const isReassign = method === 'POST' && path === '/api/statement/reassign';
@@ -67,8 +77,10 @@ async function runCase() {
         const response = failing
           ? json({ error: '本題合成請求失敗' }, 503) : await http(base + path, init);
         call.status = response.status;
+        if (call === backgroundCards) { await hold(backgroundBarrier); backgroundReached = true; }
+        if (call === pickerCards) await hold(pickerBarrier);
         if (isReassign && spec.postAction) { reassignSeen = true; await hold(reassignBarrier); }
-        if (path === '/api/cards' && holdCards && !cardsSeen) {
+        if (targetCards) {
           cardsSeen = true; await hold(cardsBarrier);
           if (spec.loadFailure) return json({ error: '本題合成載卡失敗' }, 503);
         }
@@ -201,11 +213,25 @@ async function runCase() {
             if (spec.loadAction) {
               holdCards = true;
               const open = query('#modal-root [data-reassign]').onclick, loading = open(); events.push(loading);
+              if (spec.delayedBackgroundCards) {
+                assert(backgroundCards); assert(pickerCards); assert.notEqual(backgroundCards, pickerCards);
+                assert.equal(cardsReserved, pickerCards, '入口認領只屬於稍後的改卡請求');
+                releaseBackground(); await waitFor(() => backgroundReached);
+                releasePicker();
+              }
               await waitFor(() => cardsSeen); const count = calls.length; await open(); assert.equal(calls.length, count, '載卡在途不重送');
+              const originalDialog = query('#modal-root .modal');
               await alterContext(spec.loadAction);
               const modal = el('#modal-root .modal'), text = query('#toast-root').textContent;
+              if (['x', 'escape', 'opened-closed'].includes(spec.loadAction)) { assert.equal(modal, null); assert.equal(originalDialog.isConnected, false); }
+              if (spec.loadAction === 'other') { assert.notEqual(modal, originalDialog); assert.equal(query('#f_marker').value, '本題未存輸入'); }
               releaseCards(); await loading; await settle();
-              assert.equal(el('#modal-root .modal'), modal); assert.equal(query('#toast-root').textContent, text);
+              assert.equal(el('#modal-root .modal'), modal);
+              if (spec.loadAction === 'keep') {
+                assert.equal(spec.loadFailure, true);
+                assert.equal(query('#toast-root').textContent, text + '本題合成載卡失敗');
+              } else assert.equal(query('#toast-root').textContent, text);
+              if (spec.loadAction === 'other') assert.equal(query('#f_marker').value, '本題未存輸入');
               releaseGet(); await work; await waitFor(() => pending.size === 0); await settle();
               assert.equal(el('#modal-root .modal'), modal); assert.equal(imports().length, 1);
               assert.equal(calls.filter(c => c.path === '/api/statement/reassign').length, 0);
@@ -316,7 +342,7 @@ async function runCase() {
     assert.deepEqual(errors, []);
     return { nonce: process.env.CREDIT_SAVE_NONCE, name: spec.name, passed: true, realHttp: true };
   } finally {
-    releasePost(); releaseGet(); releaseNewGet(); releaseCards(); releaseReassign(); await Promise.allSettled(events); await Promise.allSettled([...pending]); win?.close(); for (const timer of timers) clearTimeout(timer);
+    releaseBackground(); releasePicker(); releasePost(); releaseGet(); releaseNewGet(); releaseCards(); releaseReassign(); await Promise.allSettled(events); await Promise.allSettled([...pending]); win?.close(); for (const timer of timers) clearTimeout(timer);
     globalThis.setTimeout = originalTimer; globalThis.fetch = http;
     if (server) { server.closeAllConnections(); await new Promise((ok, fail) => server.close(e => e ? fail(e) : ok())); }
   }

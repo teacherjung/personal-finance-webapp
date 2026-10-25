@@ -72,14 +72,14 @@ export function buildPortfolioReport(data, options) {
   };
   const compare = (Object.hasOwn(sorters, sortKey) && sorters[sortKey]) || sorters.value;
   const holdingRows = layerOrder.map(key => {
-    const list = rows.filter(row => (layers[row.layer] ? row.layer : 'satellite') === key).sort(compare);
+    const list = rows.filter(row => (Object.hasOwn(layers, row.layer) && layers[row.layer] ? row.layer : 'satellite') === key).sort(compare);
     if (sortDir === 'desc') list.reverse();
     if (!list.length) return '';
     return `<tr><td colspan="8" class="group">${layers[key].label}</td></tr>` + list.map(row => {
       const avg = (row.avgCost != null && row.avgCost !== '') ? row.avgCost : (Number(row.quantity) ? Number(row.cost || 0) / Number(row.quantity) : 0);
       return `<tr>
         <td><b>${esc(row.symbol)}</b></td><td>${esc(row.name || '')}</td>
-        <td class="num">${fmtPrice0(avg, row.currency)}</td><td class="num">${fmtPrice0(row.price, row.currency)}</td>
+        <td class="num">${esc(fmtPrice0(avg, row.currency))}</td><td class="num">${esc(fmtPrice0(row.price, row.currency))}</td>
         <td class="num">${val(row.valueTwd)}</td>
         <td class="num">${row.pnlTwd >= 0 ? '+' : ''}${val(row.pnlTwd)}</td>
         <td class="num">${row.costTwd ? fmtPct(row.pnlTwd / row.costTwd * 100) : '—'}</td>

@@ -17,6 +17,31 @@ const holding = (overrides = {}) => ({
   ...overrides
 });
 
+test('投資表格｜原型分層不漏列且價格幣別只是文字', () => {
+  const currency = '<b data-currency-probe>合成 & "幣別"</b>';
+  const rows = [undefined, '', 'unknown', '__proto__', 'constructor', 'toString', 'core']
+    .map((layer, i) => holding({ id: `synthetic-${i}`, symbol: `SYNTH${i}`, layer, currency }));
+  const original = structuredClone(rows);
+  const dom = new JSDOM(holdingsTableHtml(rows, 840, { sortKey: 'value', sortDir: 'asc', formatters }));
+  const watch = new JSDOM(watchlistSectionHtml([{ id: 'synthetic-watch', symbol: 'WATCH', currency, targetPrice: 5.4, lastPrice: 12 }], formatters));
+  try {
+    const doc = dom.window.document;
+    rows.forEach(row => {
+      const matches = doc.querySelectorAll(`[data-edit-h="${row.id}"]`);
+      assert.equal(matches.length, 1);
+      const cells = matches[0].closest('tr').cells;
+      assert.equal(cells[2].textContent, `8.4 ${currency}`);
+      assert.equal(cells[3].textContent, `12 ${currency}`);
+    });
+    assert.equal(doc.querySelectorAll('[data-currency-probe]').length, 0);
+    const cells = watch.window.document.querySelector('tbody tr').cells;
+    assert.equal(cells[2].textContent, `5.4 ${currency}`);
+    assert.equal(cells[3].textContent, `12 ${currency}`);
+    assert.equal(watch.window.document.querySelectorAll('[data-currency-probe]').length, 0);
+    assert.deepEqual(rows, original);
+  } finally { dom.window.close(); watch.window.close(); }
+});
+
 test('投資主表｜依層分組、組內依市值排序，價格格式與手動標記維持原樣', () => {
   const html = holdingsTableHtml([
     holding({ id: 'a', symbol: 'AAA', valueTwd: 100 }),

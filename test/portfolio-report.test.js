@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPortfolioReport } from '../public/modules/portfolio-report.js';
+import { JSDOM } from 'jsdom';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -34,6 +35,29 @@ const baseData = {
   leverage: 1,
   capeInfo: { value: 30, percentile: 92, label: '偏高' }
 };
+
+test('投資報表｜原型分層不漏列且均價現價幣別只是文字', () => {
+  const currency = '<b data-currency-probe>合成 & "幣別"</b>';
+  const rows = [undefined, '', 'unknown', '__proto__', 'constructor', 'toString', 'core']
+    .map((layer, i) => ({ ...baseData.rows[0], symbol: `SYNTH${i}`, layer, currency, avgCost: 5.4, price: 12 }));
+  const original = structuredClone(rows);
+  const report = buildPortfolioReport({ ...baseData, rows }, {
+    viewCurrency: 'TWD', generated: '2026-10-25', sortKey: 'value', sortDir: 'asc', layers, layerOrder, escapeHtml
+  });
+  const dom = new JSDOM(report.html);
+  try {
+    const doc = dom.window.document;
+    rows.forEach(row => {
+      const matches = [...doc.querySelectorAll('td b')].filter(node => node.textContent === row.symbol);
+      assert.equal(matches.length, 1);
+      const cells = matches[0].closest('tr').cells;
+      assert.equal(cells[2].textContent, `5.4 ${currency}`);
+      assert.equal(cells[3].textContent, `12 ${currency}`);
+    });
+    assert.equal(doc.querySelectorAll('[data-currency-probe]').length, 0);
+    assert.deepEqual(rows, original);
+  } finally { dom.window.close(); }
+});
 
 test('投資報表｜台幣口徑、分層狀態與 CAPE 維持原本內容', () => {
   const report = buildPortfolioReport(baseData, {

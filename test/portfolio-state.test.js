@@ -9,6 +9,17 @@ const parseLocalDate = (value) => {
 
 const layers = { core: {}, satellite: {}, stock: {}, bond: {}, gold: {} };
 
+test('投資分層｜缺省與原型名稱沿未知退路且保留來源', () => {
+  const rows = [undefined, '', 'unknown', '__proto__', 'constructor', 'toString', 'core']
+    .map(layer => ({ symbol: 'SYNTH', layer, valueTwd: 7 }));
+  const before = structuredClone(rows);
+  const state = buildPortfolioPageState({ rows, regionMap: {}, equityValue: 49, settings: {},
+    snapshots: [], totalCost: 0, totalValue: 49, ibTrades: [], parseLocalDate, layers });
+  assert.equal(Object.getPrototypeOf(state.layerValues), null);
+  assert.deepEqual(Object.entries(state.layerValues), [['satellite', 42], ['core', 7]]);
+  assert.deepEqual(rows, before);
+});
+
 test('投資頁狀態｜分層、QQQM 核心佔比與未知分層退路維持原口徑', () => {
   const state = buildPortfolioPageState({
     rows: [
@@ -38,7 +49,7 @@ test('投資頁狀態｜分層、QQQM 核心佔比與未知分層退路維持原
     layers
   });
 
-  assert.deepEqual(state.layerValues, { core: 125, stock: 60, satellite: 10 });
+  assert.deepEqual(state.layerValues, Object.assign(Object.create(null), { core: 125, stock: 60, satellite: 10 }));
   assert.equal(state.qqqmShare, 40);
   assert.equal(state.qqqmMax, 28);
   assert.equal(state.netWorth, 1_000);
