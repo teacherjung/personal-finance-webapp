@@ -28,6 +28,7 @@ const cases = [
   ...['other', 'opened-closed', 'navigate', 'return', 'hash-now', 'background'].flatMap(afterClose => [false, true].map(cancelRefreshError => ({ name: `改卡取消刷新過期/${afterClose}/${cancelRefreshError}`, mode: 'done-read', action: 'reassign', closeAction: 'cancel', afterClose, cancelRefreshError }))),
   ...['cancel', 'x', 'escape'].map(closeAction => ({ name: `改卡拖出不關再取消/${closeAction}`, mode: 'done-read', action: 'reassign', closeAction, drag: true })),
   ...[false, true].map(reassignFailure => ({ name: `完成後改卡保存/${reassignFailure}`, mode: 'done-read', action: 'reassign', closeAction: 'save', reassignFailure })),
+  { name: '完成後改卡保存等待新列表回覆', mode: 'done-read', action: 'reassign', closeAction: 'save', reassignFailure: false, slowNewRead: true },
   ...['x', 'escape', 'other', 'opened-closed', 'navigate', 'return', 'hash-now'].flatMap(loadAction => [false, true].map(loadFailure => ({ name: `載卡晚回/${loadAction}/${loadFailure}`, mode: 'done-read', action: 'reassign', loadAction, loadFailure }))),
   ...[false, true].map(loadFailure => ({ name: `背景載卡先發晚回/${loadFailure}`, mode: 'done-read', action: 'reassign', loadAction: 'x', loadFailure, delayedBackgroundCards: true })),
   { name: '有效載卡失敗正常提示', mode: 'done-read', action: 'reassign', loadAction: 'keep', loadFailure: true, delayedBackgroundCards: true },

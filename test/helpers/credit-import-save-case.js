@@ -18,6 +18,8 @@ async function runCase() {
   let releasePost, releaseGet, releaseNewGet, newReadSeen = false, armNewRead = false;
   const postBarrier = new Promise(r => { releasePost = r; }), getBarrier = new Promise(r => { releaseGet = r; });
   const newGetBarrier = new Promise(r => { releaseNewGet = r; });
+  let slowReadCall, slowReadReady = false, releaseSlowRead, reassignBefore;
+  const slowReadBarrier = new Promise(r => { releaseSlowRead = r; });
   let holdCards = false, cardsSeen = false, releaseCards, cardsReserved;
   const cardsBarrier = new Promise(r => { releaseCards = r; });
   let backgroundCards, pickerCards, backgroundReached = false, releaseBackground, releasePicker;
@@ -61,6 +63,7 @@ async function runCase() {
         if (bootReplies.has(key)) return json(bootReplies.get(key));
         assert(path.startsWith('/api/'), '拒絕外部來源');
         const call = { path, method, body: init.body ? JSON.parse(init.body) : null }; calls.push(call);
+        if (spec.slowNewRead && armNewRead && path === '/api/transactions' && method === 'GET' && !slowReadCall) slowReadCall = call;
         // 回覆順序不能替換已選定的載卡請求，否則背景列表會收到別人的合成錯誤。
         const targetCards = path === '/api/cards' && holdCards && !cardsReserved;
         if (targetCards) cardsReserved = call;
@@ -77,6 +80,7 @@ async function runCase() {
         const response = failing
           ? json({ error: '本題合成請求失敗' }, 503) : await http(base + path, init);
         call.status = response.status;
+        if (call === slowReadCall) { slowReadReady = true; await hold(slowReadBarrier); }
         if (call === backgroundCards) { await hold(backgroundBarrier); backgroundReached = true; }
         if (call === pickerCards) await hold(pickerBarrier);
         if (isReassign && spec.postAction) { reassignSeen = true; await hold(reassignBarrier); }
@@ -280,6 +284,7 @@ async function runCase() {
               await settle(); assert.equal(el('#modal-root .modal'), own); assert.equal(newReadSeen, false);
             }
             if (spec.closeAction === 'save') {
+              reassignBefore = await (await http(base + '/api/transactions')).json();
               const submitReassign = query('#modal-root form').onsubmit({ preventDefault() {} }); events.push(submitReassign); await submitReassign;
               assert.equal(calls.filter(c => c.path === '/api/statement/reassign').length, 1);
               if (spec.reassignFailure) { assert.equal(query('#f_toCardId').value, 'card2'); assert.equal(query('#modal-root button[type=submit]').disabled, false); query('#modal-root [data-cancel]').click(); }
@@ -302,7 +307,19 @@ async function runCase() {
         const page = query('#view').firstElementChild;
         const toast = query('#toast-root').textContent, modal = el('#modal-root .modal');
         if (spec.action === 'reassign') {
-          await settle();
+          let readySettled = false;
+          const ready = waitFor(() => newReadSeen).then(() => { readySettled = true; });
+          if (spec.slowNewRead) {
+            await waitFor(() => slowReadReady);
+            assert.equal(calls.filter(c => c.path === '/api/statement/reassign' && c.status === 200).length, 1);
+            assert.equal(el('#modal-root .modal'), null);
+            assert.equal(slowReadCall.status, 200);
+            await settle();
+            assert.equal(readySettled, false, '回覆未到觀察點之前，刷新等待不得提早完成');
+            assert.equal(newReadSeen, false);
+            releaseSlowRead();
+          }
+          await ready;
           assert.equal(newReadSeen, true, '有效改卡關窗必須另送列表 GET');
           assert.equal(calls.filter(c => c.path === '/api/statement/reassign').length, spec.closeAction === 'save' ? 1 : 0, '取消不發改卡 POST');
           releaseGet(); await work; await settle();
@@ -338,11 +355,12 @@ async function runCase() {
       assert.equal(imports()[0].body.transactions.length, selectedCount); assert.equal(imports()[0].body.statementDue, 450);
       const rows = await (await http(base + '/api/transactions')).json();
       assert.equal(rows.length, spec.outcome === 'failure' ? 0 : selectedCount);
+      if (reassignBefore) assert.deepEqual(rows, reassignBefore.map(row => spec.reassignFailure ? row : { ...row, account: '合成卡乙', stmtRef: 'card2' + row.stmtRef.slice(row.stmtRef.indexOf('|')) }), '改卡保存只改所屬卡片，其餘交易內容保留');
     }
     assert.deepEqual(errors, []);
     return { nonce: process.env.CREDIT_SAVE_NONCE, name: spec.name, passed: true, realHttp: true };
   } finally {
-    releaseBackground(); releasePicker(); releasePost(); releaseGet(); releaseNewGet(); releaseCards(); releaseReassign(); await Promise.allSettled(events); await Promise.allSettled([...pending]); win?.close(); for (const timer of timers) clearTimeout(timer);
+    releaseSlowRead(); releaseBackground(); releasePicker(); releasePost(); releaseGet(); releaseNewGet(); releaseCards(); releaseReassign(); await Promise.allSettled(events); await Promise.allSettled([...pending]); win?.close(); for (const timer of timers) clearTimeout(timer);
     globalThis.setTimeout = originalTimer; globalThis.fetch = http;
     if (server) { server.closeAllConnections(); await new Promise((ok, fail) => server.close(e => e ? fail(e) : ok())); }
   }
