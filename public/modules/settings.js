@@ -953,6 +953,11 @@ function openParseRecipesManager(list) {
 
 function openBankLearnedManager(list) {
   const root = byId('modal-root');
+  const hash = location.hash, nav = currentNavSeq();
+  let dialog, unchanged, busy = false, unsynced = false;
+  const eligible = () => byId('modal-root') === root && root.querySelector('.modal') === dialog
+    && location.hash === hash && currentNavSeq() === nav && unchanged();
+  const syncButtons = () => root.querySelectorAll('[data-del]').forEach(btn => { btn.disabled = busy || unsynced || !eligible(); });
   const flowLbl = (/** @type {string} */ t) => t === 'income' ? '收入' : t === 'transfer' ? '內轉' : '支出';
   const flowCls = (/** @type {string} */ t) => t === 'income' ? 'pos' : t === 'transfer' ? 'muted' : 'neg';
   const render = (/** @type {any[]} */ rows) => {
@@ -961,28 +966,56 @@ function openBankLearnedManager(list) {
       <td><span class="flow-tag ${flowCls(r.type)}">${flowLbl(r.type)}</span> ${esc(r.category || '（不分類）')}${r.subcategory ? '・' + esc(r.subcategory) : ''}</td>
       <td><button class="btn-danger btn-sm" data-del="${esc(r.key)}" title="刪除這條規則">${icon('trash', 15)}</button></td>
     </tr>`).join('');
-    // 外殼歸戶（U3 擴大）：render() 每次重畫都重開外殼（刪除後就地重繪的既有行為不變）
-    const { close } = openModalShell({
+    const tableBody = body || '<tr><td colspan="3" class="empty">還沒有學過任何規則。編輯銀行交易的金流或分類後，系統會記住判斷。</td></tr>';
+    if (dialog) dialog.querySelector('tbody').innerHTML = tableBody;
+    else {
+      const { close } = openModalShell({
       title: '銀行收支學習', size: 'lg',
       bodyHtml: `
         <p class="muted" style="font-size:12px;margin-bottom:10px">每一列是你教過的一條金流與分類規則。刪除只影響下次匯入，不會回改既有紀錄。</p>
         <div class="tbl-wrap"><table>
           <thead><tr><th>摘要／對方</th><th>金流・分類</th><th></th></tr></thead>
-          <tbody>${body || '<tr><td colspan="3" class="empty">還沒有學過任何規則。編輯銀行交易的金流或分類後，系統會記住判斷。</td></tr>'}</tbody>
+          <tbody>${tableBody}</tbody>
         </table></div>
         <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>`,
     });
-    root.querySelector('[data-close]').onclick = close;
+      root.querySelector('[data-close]').onclick = close;
+      dialog = root.querySelector('.modal');
+      unchanged = watchModalRoot();
+    }
     root.querySelectorAll('[data-del]').forEach(btn => /** @type {HTMLElement} */ (btn).onclick = async () => {
       const key = /** @type {HTMLElement} */ (btn).dataset.del;
       const r = rows.find(x => x.key === key);
-      if (!window.confirm(`確定刪掉這條學過的規則嗎？（${r.summary}${r.counterparty ? ' → ' + r.counterparty : ''}）\n刪掉不影響已匯入的交易，只是下次匯入該對象回到自動判斷。`)) return;
+      if (!eligible() || busy || unsynced || !r || !btn.isConnected || !dialog.contains(btn)) return;
+      busy = true; syncButtons();
       try {
-        await api('/bank-learned/delete', { method: 'POST', body: { key } });
+        if (!window.confirm(`確定刪掉這條學過的規則嗎？（${r.summary}${r.counterparty ? ' → ' + r.counterparty : ''}）\n刪掉不影響已匯入的交易，只是下次匯入該對象回到自動判斷。`)) return;
+        if (!eligible() || !btn.isConnected || !dialog.contains(btn)) return;
+        try { await api('/bank-learned/delete', { method: 'POST', body: { key } }); }
+        catch {
+          if (!eligible()) return;
+          // 回應中斷不代表後端沒寫入；核對只讀，不重送刪除。
+          try {
+            const latest = await api('/bank-learned');
+            if (!eligible()) return;
+            render(latest);
+            toast('刪除結果未確認，已重新核對清單；請確認後再操作。', true);
+          } catch {
+            if (eligible()) { unsynced = true; toast('刪除結果未確認，清單未同步；請關閉後重新開啟核對。', true); }
+          }
+          return;
+        }
+        if (!eligible()) return;
+        render(rows.filter(x => x.key !== key));
         toast('已刪除這條規則');
-        render(rows.filter(x => x.key !== key));   // 就地移除、不必重抓
-      } catch (e) { toast('刪除失敗：' + /** @type {any} */ (e).message, true); }
+      } catch (e) {
+        if (eligible()) { unsynced = true; toast('畫面更新失敗：' + /** @type {any} */ (e).message, true); }
+      } finally {
+        busy = false;
+        if (eligible()) syncButtons();
+      }
     });
+    syncButtons();
   };
   render(list || []);
 }
@@ -990,36 +1023,69 @@ function openBankLearnedManager(list) {
 /** 摘要與備註的未來匯入規則獨立於金流／分類學習；刪規則不改舊交易。 @param {any} rules */
 function openCashflowTextRulesManager(rules) {
   const root = byId('modal-root');
-  const entries = /** @type {{part:'summary'|'remark',key:string,to:string}[]} */ (
+  const hash = location.hash, nav = currentNavSeq();
+  let dialog, unchanged, busy = false, unsynced = false;
+  const eligible = () => byId('modal-root') === root && root.querySelector('.modal') === dialog
+    && location.hash === hash && currentNavSeq() === nav && unchanged();
+  const syncButtons = () => root.querySelectorAll('[data-rule-index]').forEach(btn => { btn.disabled = busy || unsynced || !eligible(); });
+  const toEntries = (/** @type {any} */ value) => /** @type {{part:'summary'|'remark',key:string,to:string}[]} */ (
     /** @type {('summary'|'remark')[]} */ (['summary', 'remark']).flatMap(part =>
-      Object.entries(rules?.[part] || {}).map(([key, to]) => ({ part, key, to: String(to) }))));
-  const render = (/** @type {typeof entries} */ rows) => {
+      Object.entries(value?.[part] || {}).map(([key, to]) => ({ part, key, to: String(to) }))));
+  const render = (/** @type {ReturnType<typeof toEntries>} */ rows) => {
     const body = rows.map((r, i) => `<tr>
       <td>${r.part === 'summary' ? '摘要' : '備註'}</td>
       <td style="overflow-wrap:anywhere">${esc(r.key)}</td>
       <td style="overflow-wrap:anywhere">${r.to ? esc(r.to) : '（空白）'}</td>
       <td><button class="btn-danger btn-sm" data-rule-index="${i}" title="停止未來套用">${icon('trash', 15)}</button></td>
     </tr>`).join('');
-    const { close } = openModalShell({
+    const tableBody = body || '<tr><td colspan="4" class="empty">還沒有文字套用規則。</td></tr>';
+    if (dialog) dialog.querySelector('tbody').innerHTML = tableBody;
+    else {
+      const { close } = openModalShell({
       title: '摘要與備註套用', size: 'lg',
       bodyHtml: `<p class="muted" style="font-size:12px;margin-bottom:10px">這裡列的是帳單原文到你修改後文字的對應。刪除只停止未來匯入套用，已存紀錄不變。</p>
         <div class="tbl-wrap"><table><thead><tr><th>欄位</th><th>原文</th><th>改成</th><th></th></tr></thead>
-        <tbody>${body || '<tr><td colspan="4" class="empty">還沒有文字套用規則。</td></tr>'}</tbody></table></div>
+        <tbody>${tableBody}</tbody></table></div>
         <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>`,
     });
-    root.querySelector('[data-close]').onclick = close;
+      root.querySelector('[data-close]').onclick = close;
+      dialog = root.querySelector('.modal');
+      unchanged = watchModalRoot();
+    }
     root.querySelectorAll('[data-rule-index]').forEach(btn => /** @type {HTMLElement} */ (btn).onclick = async () => {
       const i = Number(/** @type {HTMLElement} */ (btn).dataset.ruleIndex);
       const row = rows[i];
-      if (!row || !window.confirm(`停止未來匯入時將「${row.key}」自動改成「${row.to || '空白'}」嗎？已存紀錄不會改動。`)) return;
+      if (!eligible() || busy || unsynced || !row || !btn.isConnected || !dialog.contains(btn)) return;
+      busy = true; syncButtons();
       try {
-        await api('/cashflow-text-rules/delete', { method: 'POST', body: { part: row.part, key: row.key } });
+        if (!window.confirm(`停止未來匯入時將「${row.key}」自動改成「${row.to || '空白'}」嗎？已存紀錄不會改動。`)) return;
+        if (!eligible() || !btn.isConnected || !dialog.contains(btn)) return;
+        try { await api('/cashflow-text-rules/delete', { method: 'POST', body: { part: row.part, key: row.key } }); }
+        catch {
+          if (!eligible()) return;
+          try {
+            const latest = await api('/settings');
+            if (!eligible()) return;
+            render(toEntries(latest.cashflowTextRules));
+            toast('刪除結果未確認，已重新核對清單；請確認後再操作。', true);
+          } catch {
+            if (eligible()) { unsynced = true; toast('刪除結果未確認，清單未同步；請關閉後重新開啟核對。', true); }
+          }
+          return;
+        }
+        if (!eligible()) return;
+        render(rows.filter(r => r.part !== row.part || r.key !== row.key));
         toast('已停止未來套用');
-        render(rows.filter((_, at) => at !== i));
-      } catch (e) { toast('刪除失敗：' + /** @type {any} */ (e).message, true); }
+      } catch (e) {
+        if (eligible()) { unsynced = true; toast('畫面更新失敗：' + /** @type {any} */ (e).message, true); }
+      } finally {
+        busy = false;
+        if (eligible()) syncButtons();
+      }
     });
+    syncButtons();
   };
-  render(entries);
+  render(toEntries(rules));
 }
 
 // 孤兒學習條目：對不上任何現存交易的學習規則——刪過整批帳單、或改規則讓鑰匙搬家後留下的。
