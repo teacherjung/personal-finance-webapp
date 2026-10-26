@@ -75,10 +75,12 @@ function assertStateBehavior(source) {
 
 function assertStateWiring(source) {
   const render = namedFunction(source, 'renderSecurities');
-  assert.match(render, /const seq = currentRouteSeq\(\);\s*const notice = securitiesNotice;\s*const syncWarning = securitiesSyncWarning;\s*if \(showLoading\) view\(\)\.innerHTML = securitiesLoadingHtml\(\);/);
+  assert.match(render, /const seq = currentRouteSeq\(\);/);
+  assert.match(render, /const notice = securitiesNotice;\s*const syncWarning = securitiesSyncWarning;\s*if \(showLoading\) view\(\)\.innerHTML = securitiesLoadingHtml\(\);/);
   assert.match(render, /try \{\s*\[secRes, settings\] = await Promise\.all\(\[api\('\/securities'\), api\('\/settings'\)\]\);\s*\} catch \(error\) \{/);
-  assert.match(render, /if \(seq !== currentRouteSeq\(\)\) return;\s*view\(\)\.innerHTML = securitiesLoadErrorHtml/);
+  assert.match(render, /if \(!isCurrent\(\)\) return;\s*view\(\)\.innerHTML = securitiesLoadErrorHtml/);
   assert.match(render, /byId\('retrySecurities'\)\.onclick = \(\) => renderSecurities\(\);/);
+  assert.match(render, /catch \(error\) \{\s*if \(!isCurrent\(\)\) return;\s*view\(\)\.innerHTML = securitiesLoadErrorHtml\([^\n]+\);\s*byId\('retrySecurities'\)\.onclick = \(\) => renderSecurities\(\);/);
   const fetchAt = render.indexOf('await Promise.all');
   const consumeNoticeAt = render.indexOf("securitiesNotice = '';");
   assert.ok(fetchAt >= 0 && consumeNoticeAt > fetchAt, '成功訊息只能在資料重載成功後消費');
@@ -106,7 +108,8 @@ function assertStateWiring(source) {
   assert.match(sync, /securitiesNotice = hasSyncWarning \? '' : 'IBKR 同步完成/);
   assert.match(sync, /securitiesNotice = hasSyncWarning[\s\S]*if \(seqAtStart === currentRouteSeq\(\)\) renderSecurities\(\);/);
   assert.match(sync, /catch \(err\)[\s\S]*if \(seqAtStart === currentRouteSeq\(\)\) setSecuritiesSyncButtonsBusy\(false\);/);
-  assert.match(namedFunction(source, 'openSecBatches'), /securitiesNotice = message;[\s\S]*renderSecurities\(\);/);
+  // 接線形狀以外的雙域實際讀取由 securities-batch-lifecycle.test.js 驗證。
+  assert.match(namedFunction(source, 'openSecBatches'), /securitiesNotice = message;[\s\S]*renderSecurities\(\{ canCommit: samePage \}\)/);
 }
 
 // openSecPreview 用行為釘（真的呼叫、按確認鈕），不用正則釘那兩行：正則只看得到「兩行相鄰存在」，分不出守門條件反轉

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, readFileSync, existsSync, rmSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
@@ -135,4 +135,41 @@ test('同群孫程序真的建立後也被收尾；不拿未建立的程序冒�
     assert.throws(() => process.kill(grandchild, 0), { code: 'ESRCH' });
     assert.throws(() => process.kill(-child.pid, 0), { code: 'ESRCH' });
   });
+});
+
+test('PID 半成品不發布；完整發布後仍驗活程序與群清理', async () => {
+  await withChild('group', async (child, marker) => {
+    const controller = new AbortController();
+    const result = collectNativeProcess(child, Buffer.from('synthetic'), { signal: controller.signal, wallMs: 5000 });
+    const checked = result.then(() => null, error => error);
+    const pending = marker + '.pending';
+    for (let i = 0; i < 100 && !existsSync(pending); i++) await delay(10);
+    assert.equal(existsSync(pending), true, '必須實際走到私人暫檔的寫入窗口');
+    assert.equal(readFileSync(pending, 'utf8'), '');
+    assert.equal(statSync(pending).mode & 0o777, 0o600);
+    assert.equal(existsSync(marker), false, '半成品不能成為就緒訊號');
+    writeFileSync(marker + '.release', '', { flag: 'wx', mode: 0o600 });
+    for (let i = 0; i < 100 && !existsSync(marker); i++) await delay(10);
+    assert.equal(existsSync(marker), true);
+    const raw = readFileSync(marker, 'utf8');
+    assert.match(raw, /^[1-9][0-9]+$/);
+    const grandchild = Number(raw); assert.ok(Number.isSafeInteger(grandchild) && grandchild > 1);
+    assert.equal(existsSync(pending), false);
+    assert.equal(statSync(marker).mode & 0o777, 0o600);
+    process.kill(grandchild, 0);
+    controller.abort(); assert.match((await checked).message, /ABORTED/);
+    assert.throws(() => process.kill(grandchild, 0), { code: 'ESRCH' });
+    assert.throws(() => process.kill(-child.pid, 0), { code: 'ESRCH' });
+  }, ['hold-publication']);
+});
+
+test('孫程序啟動失敗不發布假 PID', async () => {
+  await withChild('group', async (child, marker) => {
+    const result = await collectNativeProcess(child, Buffer.from('synthetic'), options());
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr.toString(), /ENOENT/);
+    assert.equal(existsSync(marker), false);
+    assert.equal(existsSync(marker + '.pending'), false);
+    assert.equal(result.groupCleared, true);
+  }, ['spawn-failure']);
 });

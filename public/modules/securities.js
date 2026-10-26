@@ -2,7 +2,7 @@
 // 證券交易頁（S3，藍圖 §二/§七/§八）：集中查閱與對帳 IBKR＋台新證券的歷史成交。
 // 分工（藍圖 §九）：這頁忠實呈現與搜尋歷史成交，**不改持股、不做績效分析、不計入收支**——分析在投資組合頁。
 // 呈現邏輯（篩選/排序/合計/HTML 字串）都在 securities-view.js 純函式（node --test 直測）；本檔只做 DOM 接線與 API。
-import { api, view, byId, esc, toast, moneyCur, todayStr, currentRouteSeq, openForm, openInfo } from '../app.js';
+import { api, view, byId, esc, toast, moneyCur, todayStr, currentRouteSeq, currentNavSeq, watchModalRoot, openForm, openInfo } from '../app.js';
 import { openModalShell } from './modal-shell.js';
 import { icon } from './icons.js';
 import { thBuilder } from './tx-sort.js';
@@ -88,6 +88,17 @@ function securitiesFilteredEmptyHtml() {
 }
 
 let securitiesNotice = '';
+let securitiesReadSeq = 0;
+let batchRevision = 0;
+const batchOperations = new Map();
+const batchResults = new Map();
+
+function coverBatchResults(domain, revision) {
+  for (const [id, result] of batchResults) {
+    if (result.revision <= revision) result[domain] = true;
+    if (result.page && result.batches && !batchOperations.has(id)) batchResults.delete(id);
+  }
+}
 // IBKR 部分同步代表帳上仍可能沿用舊值；篩選／排序等頁內重畫不可把警告吃掉。
 // 只有下一次 IBKR 完整同步成功時才清除。
 let securitiesSyncWarning = '';
@@ -97,8 +108,14 @@ function resetSecuritiesFilters() {
   return renderSecurities({ showLoading: false });
 }
 
-export async function renderSecurities({ showLoading = true } = {}) {
+/** @param {{showLoading?: boolean, canCommit?: () => boolean}} [options] */
+export async function renderSecurities({ showLoading = true, canCommit = () => true } = {}) {
+  if (!canCommit()) return;
   const seq = currentRouteSeq();
+  const reading = ++securitiesReadSeq, revision = batchRevision;
+  const hash = window.location.hash, nav = currentNavSeq();
+  const isCurrent = () => canCommit() && reading === securitiesReadSeq && seq === currentRouteSeq()
+    && hash === window.location.hash && nav === currentNavSeq();
   const notice = securitiesNotice;
   const syncWarning = securitiesSyncWarning;
   if (showLoading) view().innerHTML = securitiesLoadingHtml();
@@ -106,12 +123,18 @@ export async function renderSecurities({ showLoading = true } = {}) {
   try {
     [secRes, settings] = await Promise.all([api('/securities'), api('/settings')]);
   } catch (error) {
-    if (seq !== currentRouteSeq()) return;
+    if (!isCurrent()) return;
     view().innerHTML = securitiesLoadErrorHtml(error instanceof Error ? error.message : '無法連線');
     byId('retrySecurities').onclick = () => renderSecurities();
     return;
   }
-  if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別覆蓋新頁面
+  if (!isCurrent()) return;
+  if (revision !== batchRevision) {
+    view().innerHTML = securitiesLoadErrorHtml('資料在讀取期間有變動，請重新載入確認。');
+    byId('retrySecurities').onclick = () => renderSecurities();
+    return;
+  }
+  coverBatchResults('page', revision);
   // 一次性的操作成功訊息要等資料真的重載成功才消費；失敗後重試仍看得到。
   securitiesNotice = '';
   const all = secRes.trades || [];
@@ -179,7 +202,11 @@ export async function renderSecurities({ showLoading = true } = {}) {
 
   // ---- 接線 ----
   byId('secUpload').onclick = () => openSecUpload(pwSet);
-  byId('secBatches').onclick = () => openSecBatches();
+  const batchesButton = byId('secBatches');
+  batchesButton.onclick = () => {
+    if (!isCurrent() || !batchesButton.isConnected || byId('secBatches') !== batchesButton) return;
+    return openSecBatches();
+  };
   byId('secIbSync').onclick = () => syncIbFromSecurities();
   if (!all.length) {
     byId('emptySecUpload').onclick = () => openSecUpload(pwSet);
@@ -316,10 +343,27 @@ function openSecPreview(/** @type {any} */ p, /** @type {string} */ b64, /** @ty
 }
 
 // ---- 匯入紀錄與後悔機制（藍圖 §八）：台新批次可整批刪除重匯；IBKR 批次不提供刪除 ----
+let batchOpenSeq = 0;
+
 async function openSecBatches() {
+  const opening = ++batchOpenSeq;
+  const initialRevision = batchRevision;
+  const host = byId('modal-root'), hash = window.location.hash, nav = currentNavSeq();
+  const untouched = watchModalRoot();
+  const canOpen = () => opening === batchOpenSeq && host === byId('modal-root')
+    && hash === window.location.hash && nav === currentNavSeq() && untouched();
   let batches;
   try { batches = (await api('/securities/batches')).batches || []; }
-  catch (err) { return toast('讀取匯入紀錄失敗：' + /** @type {any} */ (err).message, true); }
+  catch (err) {
+    if (canOpen()) toast('讀取匯入紀錄失敗：' + /** @type {any} */ (err).message, true);
+    return;
+  }
+  if (!canOpen()) return;
+  if (initialRevision !== batchRevision) {
+    toast('匯入紀錄在讀取期間有變動，請重新開啟確認。', true);
+    return;
+  }
+  coverBatchResults('batches', initialRevision);
   const srcName = (/** @type {string} */ s) => s === 'ibkr' ? 'IBKR' : s === 'taishin' ? '台新證券' : (s || '—');
   const rowHtml = (/** @type {any} */ b) => `<tr>
     <td>${esc(srcName(b.source))}</td>
@@ -331,7 +375,6 @@ async function openSecBatches() {
       ? `<button class="btn-danger btn-sm" data-delbatch="${esc(b.batchId)}" title="整批刪除（刪掉後可重新上傳同一份對帳單）">${icon('trash', 15)}</button>`
       : '<span class="muted" title="IBKR 同步批次不提供整批刪除（避免誤刪長期歷史）；資料有誤請重新同步同一期間覆寫">—</span>'}</td>
   </tr>`;
-  // 外殼走 openModalShell（U3 試點）；刪除批次等內容事件照舊自理
   const { root, close } = openModalShell({
     title: '匯入紀錄', size: 'lg',
     bodyHtml: `
@@ -343,20 +386,68 @@ async function openSecBatches() {
       <div class="form-actions"><button type="button" class="btn" data-close>關閉</button></div>`,
   });
   root.querySelector('[data-close]').onclick = close;
-  root.querySelectorAll('[data-delbatch]').forEach((/** @type {any} */ btn) => btn.onclick = async () => {
-    const id = btn.dataset.delbatch || '';
-    const b = batches.find((/** @type {any} */ x) => x.batchId === id);
-    if (!window.confirm(`確定整批刪除這 ${b ? b.count : ''} 筆台新交易（${b ? b.minDate : ''}〜${b ? b.maxDate : ''}）嗎？\n刪除後可重新上傳同一份對帳單補回。`)) return;
-    const seqAtStart = currentRouteSeq();   // 守門（自審 r1#2）：同確認匯入——切走頁後不可蓋畫面、也不可把關掉的窗彈回來
+  const dialog = root.querySelector('.modal'), table = dialog.querySelector('tbody');
+  const owns = watchModalRoot();
+  const samePage = () => hash === window.location.hash && nav === currentNavSeq();
+  const active = () => samePage() && opening === batchOpenSeq && root === byId('modal-root')
+    && dialog === root.querySelector('.modal') && owns();
+  let readSeq = 0, snapshotRevision = initialRevision;
+  const readBatches = async () => {
+    if (!active()) return;
+    const reading = ++readSeq, revision = batchRevision;
     try {
-      const out = await api('/securities/batch/delete', { method: 'POST', body: { batchId: id } });
-      const message = `已刪除 ${out.deleted} 筆證券交易`;
-      toast(message);
-      if (seqAtStart === currentRouteSeq()) {
+      const next = (await api('/securities/batches')).batches || [];
+      if (!active() || reading !== readSeq) return;
+      if (revision !== batchRevision) throw new Error('資料在讀取期間有變動');
+      batches = next;
+      snapshotRevision = revision;
+      table.innerHTML = batches.map(rowHtml).join('') || '<tr><td colspan="6" class="empty">還沒有任何匯入或同步。</td></tr>';
+      coverBatchResults('batches', revision);
+      bindRows();
+    } catch (err) {
+      if (active() && reading === readSeq) toast('匯入紀錄更新失敗，請關閉後重新開啟確認：' + /** @type {any} */ (err).message, true);
+    }
+  };
+  const bindRows = () => table.querySelectorAll('[data-delbatch]').forEach((/** @type {any} */ btn) => {
+    const row = btn.closest('tr'), rowRevision = snapshotRevision;
+    const id = btn.dataset.delbatch || '';
+    const matches = batches.filter((/** @type {any} */ b) => b.batchId === id);
+    const b = matches[0];
+    const eligible = () => active() && row.parentElement === table && row.contains(btn)
+      && rowRevision === snapshotRevision && id && matches.length === 1 && b.source === 'taishin'
+      && !(batchResults.get(id)?.revision > rowRevision);
+    btn.disabled = batchOperations.has(id) || batchResults.get(id)?.revision > rowRevision;
+    btn.onclick = async () => {
+      if (!eligible() || batchOperations.has(id)) return;
+      const operation = {};
+      batchOperations.set(id, operation);
+      try {
+        if (!window.confirm(`確定整批刪除這 ${b ? b.count : ''} 筆台新交易（${b ? b.minDate : ''}〜${b ? b.maxDate : ''}）嗎？\n刪除後可重新上傳同一份對帳單補回。`)) return;
+        if (!eligible()) return;
+        btn.disabled = true;
+        let out, failure;
+        try { out = await api('/securities/batch/delete', { method: 'POST', body: { batchId: id } }); }
+        catch (err) { failure = err; }
+        const confirmed = !failure && out?.ok === true && out.batchId === id;
+        batchResults.set(id, { revision: ++batchRevision, page: false, batches: false });
+        if (!active() || batchOperations.get(id) !== operation) return;
+        if (!confirmed) {
+          toast('刪除結果尚未確認，正在重新讀取資料確認。', true);
+          await Promise.all([readBatches(), renderSecurities({ canCommit: samePage })]);
+          return;
+        }
+        const message = Number.isSafeInteger(out.deleted) && out.deleted >= 0
+          ? `已刪除 ${out.deleted} 筆證券交易` : '證券批次已刪除，請重新載入確認筆數。';
+        toast(message);
         securitiesNotice = message;
-        openSecBatches();      // 重畫紀錄窗（重抓最新）
-        renderSecurities();    // 背後頁面同步更新
+        // 兩域各自收尾；批次窗更新不能撤銷已接受的主列表讀取。
+        await Promise.all([readBatches(), renderSecurities({ canCommit: samePage })]);
+      } finally {
+        if (batchOperations.get(id) === operation) batchOperations.delete(id);
+        coverBatchResults('page', -1);
+        if (active()) bindRows();
       }
-    } catch (err) { toast('刪除失敗：' + /** @type {any} */ (err).message, true); }
+    };
   });
+  bindRows();
 }
