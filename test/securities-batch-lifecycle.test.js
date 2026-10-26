@@ -24,6 +24,10 @@ test('證券測試入口｜無案例不啟動、部分或非法設定必須失�
   }
 });
 const cases = [
+  ...['reverse-unknown-batch', 'reverse-unknown-page', 'reverse-unknown-batch-error', 'reverse-unknown-page-error'].map(mode => ({ mode, outcome: 'success' })),
+  ...['revision-batch', 'revision-page'].map(mode => ({ mode, outcome: 'failure' })),
+  ...['unknown-no-write', 'unknown-batch-error', 'unknown-page-error'].map(mode => ({ mode, outcome: 'success' })),
+  ...['other', 'opened-closed', 'x', 'escape', 'close', 'hash-now', 'navigate-return'].map(mode => ({ mode, outcome: 'failure' })),
   ...['confirm-reentrant', 'navigate-return'].map(mode => ({ mode, outcome: 'success' })),
   ...['initial-double', 'initial-new-failure', 'confirm-cancel'].map(mode => ({ mode, outcome: 'success' })),
   { mode: 'boot-delayed', outcome: 'success' },

@@ -416,7 +416,7 @@ async function openSecBatches() {
     const eligible = () => active() && row.parentElement === table && row.contains(btn)
       && rowRevision === snapshotRevision && id && matches.length === 1 && b.source === 'taishin'
       && !(batchResults.get(id)?.revision > rowRevision);
-    btn.disabled = batchOperations.has(id);
+    btn.disabled = batchOperations.has(id) || batchResults.get(id)?.revision > rowRevision;
     btn.onclick = async () => {
       if (!eligible() || batchOperations.has(id)) return;
       const operation = {};
@@ -432,7 +432,8 @@ async function openSecBatches() {
         batchResults.set(id, { revision: ++batchRevision, page: false, batches: false });
         if (!active() || batchOperations.get(id) !== operation) return;
         if (!confirmed) {
-          toast('刪除結果尚未確認，請關閉後重新開啟匯入紀錄確認。', true);
+          toast('刪除結果尚未確認，正在重新讀取資料確認。', true);
+          await Promise.all([readBatches(), renderSecurities({ canCommit: samePage })]);
           return;
         }
         const message = Number.isSafeInteger(out.deleted) && out.deleted >= 0
@@ -444,11 +445,7 @@ async function openSecBatches() {
       } finally {
         if (batchOperations.get(id) === operation) batchOperations.delete(id);
         coverBatchResults('page', -1);
-        if (active()) {
-          for (const current of table.querySelectorAll('[data-delbatch]')) {
-            if (/** @type {HTMLElement} */ (current).dataset.delbatch === id) /** @type {HTMLButtonElement} */ (current).disabled = false;
-          }
-        }
+        if (active()) bindRows();
       }
     };
   });

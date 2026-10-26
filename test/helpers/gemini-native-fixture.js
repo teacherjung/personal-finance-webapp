@@ -1,7 +1,9 @@
 // 合成夾具只接收測試程序提供的字串；沒有官方 CLI、認證或網路呼叫。
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { readSync, writeFileSync } from 'node:fs';
+import { readSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import { isMainModule } from '../../lib/is-main.js';
 import { findingsSchema } from '../../scripts/gemini-native-protocol.js';
 
@@ -48,8 +50,20 @@ if (isMainModule(import.meta.url) && process.argv[2] !== undefined) {
     process.stdout.write(streamBytes(events));
   }
   else if (mode === 'group') {
-    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { env: { PATH: '/usr/bin:/bin' }, stdio: 'ignore' });
-    writeFileSync(marker, String(child.pid)); setInterval(() => {}, 1000);
+    const executable = prefixLength === 'spawn-failure' ? marker + '.missing-executable' : process.execPath;
+    const child = spawn(executable, ['-e', 'setInterval(() => {}, 1000)'], { env: { PATH: '/usr/bin:/bin' }, stdio: 'ignore' });
+    await once(child, 'spawn');
+    if (!Number.isSafeInteger(child.pid) || child.pid <= 1) throw Error('synthetic group PID invalid');
+    // 檔案存在是讀端的就緒訊號，不能讓它看見寫入中的內容。
+    const pending = marker + '.pending';
+    writeFileSync(pending, '', { flag: 'wx', mode: 0o600 });
+    if (prefixLength === 'hold-publication') {
+      for (let i = 0; i < 200 && !existsSync(marker + '.release'); i++) await delay(10);
+      if (!existsSync(marker + '.release')) throw Error('synthetic publication gate not released');
+    }
+    writeFileSync(pending, String(child.pid));
+    renameSync(pending, marker);
+    setInterval(() => {}, 1000);
   } else {
     const chunks = [];
     for await (const chunk of process.stdin) chunks.push(chunk);

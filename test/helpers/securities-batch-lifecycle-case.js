@@ -11,10 +11,10 @@ async function runCase() {
 const source = process.env.SEC_BATCH_SOURCE;
 const mode = process.env.SEC_BATCH_MODE;
 assert(source && fs.existsSync(source + '/public/modules/securities.js'), '案例來源必須完整');
-assert(['confirm-reentrant', 'navigate-return', 'normal', 'boot-delayed', 'parallel', 'reverse-batch', 'reverse-page', 'revision-batch', 'revision-page', 'render-race', 'render-error', 'render-entry', 'stale-button', 'initial', 'initial-double', 'initial-new-failure', 'confirm-cancel', 'other', 'opened-closed', 'x', 'escape', 'close', 'hash-now', 'background', 'unknown', 'wrong-id', 'wrong-ok', 'bad-count', 'batch-error', 'page-error'].includes(mode), '案例模式非法');
+assert(['reverse-unknown-batch', 'reverse-unknown-page', 'reverse-unknown-batch-error', 'reverse-unknown-page-error', 'unknown-no-write', 'unknown-batch-error', 'unknown-page-error', 'confirm-reentrant', 'navigate-return', 'normal', 'boot-delayed', 'parallel', 'reverse-batch', 'reverse-page', 'revision-batch', 'revision-page', 'render-race', 'render-error', 'render-entry', 'stale-button', 'initial', 'initial-double', 'initial-new-failure', 'confirm-cancel', 'other', 'opened-closed', 'x', 'escape', 'close', 'hash-now', 'background', 'unknown', 'wrong-id', 'wrong-ok', 'bad-count', 'batch-error', 'page-error'].includes(mode), '案例模式非法');
 assert(['success', 'failure'].includes(process.env.SEC_BATCH_OUTCOME), '案例結果設定非法');
 const revisionCase = mode.startsWith('revision');
-const multiple = ['parallel', 'reverse-batch', 'reverse-page'].includes(mode) || revisionCase;
+const multiple = mode === 'parallel' || mode.startsWith('reverse') || revisionCase;
 assert.equal(dirname(process.env.STORE_FILE), fs.realpathSync(process.env.TMPDIR));
 assert.equal(fs.existsSync(process.env.STORE_FILE), false);
 assert.equal(process.env.NOTEASY_HOSTED, '');
@@ -74,16 +74,24 @@ try {
     if (mode === 'boot-delayed' && path === '/api/securities' && !bootReserved) {
       bootReserved = true; bootReached = true; await bootHeld;
     }
-    const reverseRead = afterPost && !reverseReserved &&
-      ((['reverse-batch', 'revision-batch'].includes(mode) && isBatch) || (['reverse-page', 'revision-page'].includes(mode) && path === '/api/securities'));
+    const interleavedDomain = (mode.startsWith('reverse') || revisionCase) &&
+      ((mode.includes('batch') && isBatch) || (mode.includes('page') && path === '/api/securities'));
+    const reverseRead = afterPost && !reverseReserved && interleavedDomain;
     if (reverseRead) reverseReserved = true;
     if (isBatch) batchCalls++;
     const batchCall = batchCalls;
     const secondDelete = isDelete && JSON.parse(init.body).batchId === 'synthetic-batch-B';
     if (secondDelete) await secondHeld;
+    if (isDelete && mode === 'unknown-no-write') {
+      postReached = true;
+      await held;
+      throw new Error('合成：寫入前傳輸失敗');
+    }
     const response = await http(base + path, init);
     if (initialRead) initialReads--;
     if (reverseRead) {
+      assert.equal(response.status, 200);
+      assert.match(await response.clone().text(), /synthetic-batch-B|SYNTHB/, '扣住的成功快照必須仍包含尚未寫入刪除的 B');
       reverseReached = true;
       await readHeld;
     }
@@ -96,17 +104,18 @@ try {
       assert.equal(response.status, 200);
       postReached = true;
       await held;
-      if (revisionCase && secondDelete) throw new Error('合成：第二批已刪，回覆遺失');
-      if (mode === 'unknown') throw new Error('合成：後端已刪，回應遺失');
+      if (secondDelete && (mode.startsWith('reverse-unknown') || (revisionCase && process.env.SEC_BATCH_OUTCOME === 'failure'))) throw new Error('合成：第二批已刪，回覆遺失');
+      if (mode.startsWith('unknown') || (!revisionCase && process.env.SEC_BATCH_OUTCOME === 'failure')) throw new Error('合成：後端已刪，回應遺失');
       if (mode === 'wrong-id') return json({ ok: true, batchId: 'another-batch', deleted: 1 });
       if (mode === 'wrong-ok') return json({ ok: 'true', batchId: JSON.parse(init.body).batchId, deleted: 1 });
       if (mode === 'bad-count') return json({ ok: true, batchId: JSON.parse(init.body).batchId, deleted: -1 });
     }
     if (path === '/api/securities' && afterPost) {
       pageReadsAfterPost++;
-      if (mode === 'page-error') return json({ error: '本題主頁重讀失敗' }, 503);
+      if (['page-error', 'unknown-page-error'].includes(mode)) return json({ error: '本題主頁重讀失敗' }, 503);
     }
-    if (isBatch && mode === 'batch-error' && afterPost) return json({ error: '本題批次重讀失敗' }, 503);
+    if (afterPost && interleavedDomain && !reverseRead && mode.endsWith('-error')) return json({ error: '本題較新讀取失敗' }, 503);
+    if (isBatch && ['batch-error', 'unknown-batch-error'].includes(mode) && afterPost) return json({ error: '本題批次重讀失敗' }, 503);
     if (isBatch && mode.startsWith('initial')) {
       assert.equal(response.status, 200);
       if (batchCall === 1) await held;
@@ -220,6 +229,60 @@ try {
       assert.deepEqual(await repo.getDb(), before);
       win.confirm = () => true;
     }
+    if (revisionCase) {
+      const oldB = dialog.querySelector('[data-delbatch="synthetic-batch-B"]');
+      const oldSubmit = oldB.onclick, deletingB = oldSubmit();
+      assert.equal(postCalls, 1);
+      assert.deepEqual(await repo.getDb(), before, 'B 在 HTTP 前扣住，不能提早刪除');
+      dialog.querySelector('[data-close]').click();
+      await document.querySelector('#secBatches').onclick();
+      const currentDialog = document.querySelector('#modal-root .modal');
+      assert.notEqual(currentDialog, dialog);
+      const deletingA = currentDialog.querySelector('[data-delbatch="synthetic-batch-0"]').onclick();
+      for (let i = 0; !postReached && i < 200; i++) await new Promise(resolve => timer(resolve, 5));
+      assert(postReached); release();
+      for (let i = 0; !reverseReached && i < 200; i++) await new Promise(resolve => timer(resolve, 5));
+      assert(reverseReached);
+      const otherDomainSettled = () => mode === 'revision-page'
+        ? !currentDialog.querySelector('[data-delbatch="synthetic-batch-0"]')
+        : !document.querySelector('#view .loading') && !document.querySelector('#view').textContent.includes('SYNTH0');
+      for (let i = 0; !otherDomainSettled() && i < 200; i++) await new Promise(resolve => timer(resolve, 5));
+      assert(otherDomainSettled(), '先等另一域自身呈現完成，才量失格 B 的副作用');
+      const rows = [...currentDialog.querySelector('tbody').children];
+      const content = currentDialog.innerHTML, toast = document.querySelector('#toast-root').textContent;
+      const requests = requestCount;
+      releaseSecond(); await deletingB;
+      assert.equal(requestCount, requests, '失格 B 回覆不得啟動任何新請求');
+      assert.equal(document.querySelector('#modal-root .modal'), currentDialog);
+      assert.equal(currentDialog.innerHTML, content);
+      assert.equal(document.querySelector('#toast-root').textContent, toast);
+      releaseRead(); await deletingA;
+      if (mode === 'revision-batch') {
+        const afterRows = [...currentDialog.querySelector('tbody').children];
+        assert.equal(afterRows.length, rows.length);
+        rows.forEach((row, i) => assert.equal(afterRows[i], row, '修訂過期快照不得替換現存列'));
+        assert.match(document.querySelector('#toast-root').textContent, /匯入紀錄更新失敗/);
+      } else {
+        assert(document.querySelector('#retrySecurities'));
+        assert.match(document.querySelector('#view').textContent, /資料在讀取期間有變動/);
+      }
+      assert.equal(batchCalls, 3); assert.equal(pageReadsAfterPost, 1); assert.equal(postCalls, 2);
+      await oldSubmit(); assert.equal(postCalls, 2);
+      const after = await repo.getDb();
+      assert.deepEqual(after.securityTrades, before.securityTrades.filter(r => r.source === 'ibkr'));
+      assert.deepEqual({ ...after, securityTrades: [] }, { ...before, securityTrades: [] });
+      currentDialog.querySelector('[data-close]').click();
+      if (mode === 'revision-page') {
+        await document.querySelector('#retrySecurities').onclick();
+        assert(!document.querySelector('#retrySecurities'));
+        assert(!document.querySelector('#view').textContent.includes('SYNTHB'));
+      }
+      await document.querySelector('#secBatches').onclick();
+      assert.equal(document.querySelectorAll('[data-delbatch]').length, 0, '有效恢復入口必須真的讀到已刪結果');
+      assert.equal(batchCalls, 4);
+      console.log('SEC_BATCH_CASE_PASSED');
+      return;
+    }
     const submit = firstButton.onclick, deleting = submit();
     for (let i = 0; !postReached && i < 200; i++) await new Promise(resolve => timer(resolve, 5));
     assert(postReached);
@@ -229,26 +292,13 @@ try {
       const secondSubmit = oldSecond.onclick, secondDeleting = secondSubmit();
       assert.equal(postCalls, 2);
       release();
-      if (mode.startsWith('reverse') || revisionCase) {
+      if (mode.startsWith('reverse')) {
         for (let i = 0; !reverseReached && i < 200; i++) await new Promise(resolve => timer(resolve, 5));
         assert(reverseReached, '較早重讀必須實際取得舊快照');
         releaseSecond(); await secondDeleting;
-        if (revisionCase) {
-          assert.match(document.querySelector('#toast-root').textContent, /結果尚未確認/);
-          const rowsBefore = [...dialog.querySelector('tbody').children];
-          releaseRead(); await deleting;
-          if (mode === 'revision-batch') {
-            const rowsAfter = [...dialog.querySelector('tbody').children];
-            assert.equal(rowsAfter.length, rowsBefore.length);
-            rowsBefore.forEach((row, i) => assert.equal(rowsAfter[i], row, '修訂過期的表格快照不得提交'));
-            assert.match(document.querySelector('#toast-root').textContent, /匯入紀錄更新失敗/);
-          } else {
-            assert(document.querySelector('#retrySecurities'), '修訂過期的主頁必須可重試，不留載入中');
-            assert.match(document.querySelector('#view').textContent, /資料在讀取期間有變動/);
-          }
-          await secondSubmit(); assert.equal(postCalls, 2, '舊列不可把未知結果重送');
-        } else {
-        assert.equal(dialog.querySelector('[data-delbatch]'), null);
+        if (mode.endsWith('batch-error')) assert.match(document.querySelector('#toast-root').textContent, /本題較新讀取失敗/);
+        else assert.equal(dialog.querySelector('[data-delbatch]'), null);
+        if (mode.endsWith('page-error')) assert(document.querySelector('#retrySecurities'));
         const latestTable = dialog.querySelector('tbody').innerHTML;
         const latestPage = document.querySelector('#view').firstElementChild;
         const latestToast = document.querySelector('#toast-root').textContent;
@@ -256,7 +306,6 @@ try {
         assert.equal(dialog.querySelector('tbody').innerHTML, latestTable, '較早批次快照不得復活已刪列');
         assert.equal(document.querySelector('#view').firstElementChild, latestPage, '較早主頁快照不得替換最新頁');
         assert.equal(document.querySelector('#toast-root').textContent, latestToast);
-        }
       } else {
       await deleting;
       const newSecond = dialog.querySelector('[data-delbatch="synthetic-batch-B"]');
@@ -266,14 +315,14 @@ try {
       releaseSecond(); await secondDeleting;
       }
       assert.equal(document.querySelector('#modal-root .modal'), dialog);
-      if (!revisionCase) {
+      if (!mode.endsWith('-error')) {
         assert.equal(dialog.querySelector('[data-delbatch]'), null);
         assert(!document.querySelector('#view').textContent.includes('SYNTHB'));
       }
       const after = await repo.getDb();
       assert.deepEqual(after.securityTrades, before.securityTrades.filter(r => r.source === 'ibkr'));
       assert.deepEqual({ ...after, securityTrades: [] }, { ...before, securityTrades: [] });
-      assert.equal(batchCalls, revisionCase ? 2 : 3); assert.equal(pageReadsAfterPost, revisionCase ? 1 : 2); assert.equal(postCalls, 2);
+      assert.equal(batchCalls, 3); assert.equal(pageReadsAfterPost, 2); assert.equal(postCalls, 2);
       console.log('SEC_BATCH_CASE_PASSED');
     } else {
     const duplicate = submit();
@@ -299,17 +348,31 @@ try {
     release(); await deleting;
     assert.equal(document.querySelector('#modal-root .modal'), newer, '原窗內容更新不重開外殼');
     const after = await repo.getDb();
-    assert.deepEqual(after.securityTrades, before.securityTrades.filter(r => r.source === 'ibkr'));
+    assert.deepEqual(after.securityTrades, mode === 'unknown-no-write' ? before.securityTrades : before.securityTrades.filter(r => r.source === 'ibkr'));
     assert.deepEqual({ ...after, securityTrades: [] }, { ...before, securityTrades: [] });
     assert.equal(postCalls, 1);
     if (stale) {
       if (mode === 'other') assert.equal(document.querySelector('#f_marker').value, '本題專屬未存值');
       assert.equal(document.querySelector('#toast-root').textContent, toastBefore);
       assert.equal(batchCalls, 1); assert.equal(pageReadsAfterPost, readsBefore);
-    } else if (['unknown', 'wrong-id', 'wrong-ok'].includes(mode)) {
-      assert.match(document.querySelector('#toast-root').textContent, /結果尚未確認/);
+    } else if (mode.startsWith('unknown') || ['wrong-id', 'wrong-ok'].includes(mode)) {
+      assert.match(document.querySelector('#toast-root').textContent, mode === 'unknown-batch-error' ? /匯入紀錄更新失敗/ : /結果尚未確認/);
       await submit(); assert.equal(postCalls, 1, '未知結果舊快照不可重送');
-      assert.equal(batchCalls, 1); assert.equal(pageReadsAfterPost, 0);
+      assert.equal(batchCalls, 2); assert.equal(pageReadsAfterPost, 1);
+      if (mode === 'unknown-no-write') {
+        assert(dialog.querySelector('[data-delbatch]'));
+        assert.equal(dialog.querySelector('[data-delbatch]').disabled, false, '有效新快照允許重新確認');
+        assert(document.querySelector('#view').textContent.includes('SYNTH0'));
+      } else if (mode === 'unknown-batch-error') {
+        assert.equal(dialog.querySelector('[data-delbatch]'), button);
+        assert.equal(button.disabled, true);
+      } else assert.equal(dialog.querySelector('[data-delbatch]'), null);
+      if (mode === 'unknown-page-error') assert(document.querySelector('#retrySecurities'));
+      else {
+        if (mode !== 'unknown-no-write') assert(!document.querySelector('#view').textContent.includes('SYNTH0'), '未知回應後主頁須呈現實際讀取結果');
+        assert(document.querySelector('#view').textContent.includes('SYNTH1'));
+      }
+      assert(!document.querySelector('.securities-notice'), '未知回應不能冒稱刪除成功');
     } else {
       if (mode === 'bad-count') {
         assert.match(document.querySelector('#toast-root').textContent, /請重新載入確認筆數/);
@@ -318,6 +381,7 @@ try {
       assert.equal(batchCalls, 2); assert.equal(pageReadsAfterPost, readsBefore + 1);
       if (mode === 'batch-error') {
         assert(dialog.contains(button));
+        assert.equal(button.disabled, true, '未被新讀取消化的舊列不能顯示可按');
         assert.match(document.querySelector('#toast-root').textContent, /匯入紀錄更新失敗/);
         await submit(); assert.equal(postCalls, 1);
       } else assert.equal(dialog.querySelector('[data-delbatch]'), null);
