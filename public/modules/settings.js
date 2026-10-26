@@ -17,6 +17,9 @@ import { subcategoryOptionsHtml } from './form-options.js';   // 子類下拉「
 /** 店家表的排序狀態（模組級：切走再回來仍記得剛才排哪一欄）。 @type {{key:string, dir:string}} */
 const storeSort = { ...STORE_SORT_DEFAULT };
 
+// 跨管理器共用排序，避免舊入口先開窗而撤銷較新的讀取資格。
+let managerEntryIntent = 0;
+
 /**
  * ⏳ 文案（Claude 起草、**待 William 審改**）：「資料備份」卡的說明。
  *
@@ -447,30 +450,36 @@ export async function renderSettings() {
       if (info) openInfo(info.title, info.html, { size: 'md' });
     }; });
   }
-  byId('manageCatsBtn').onclick = async () => {
-    try { openCategoryEditor(await api('/categories'), CAT_CFG.expense); }
-    catch (err) { toast('讀取分類失敗：' + err.message, true); }
+  const entryView = view(), entryHash = location.hash, entryNav = currentNavSeq();
+  /** @param {string} id @param {()=>Promise<any>} read @param {(data:any)=>void} open @param {string} failure */
+  const bindManagerEntry = (id, read, open, failure) => {
+    const button = byId(id);
+    button.onclick = async () => {
+      if (location.hash !== entryHash || entryHash.replace(/^#/, '').split('?')[0] !== 'settings'
+        || currentNavSeq() !== entryNav || view() !== entryView
+        || !button.isConnected || byId(id) !== button || !entryView.contains(button)) return;
+      const root = byId('modal-root');
+      if (!root) return;
+      const intent = ++managerEntryIntent, unchanged = watchModalRoot();
+      // 接受後不再驗按鈕連線，讓同頁背景重畫不會丟掉有效讀取。
+      const eligible = () => intent === managerEntryIntent && location.hash === entryHash
+        && currentNavSeq() === entryNav && view() === entryView
+        && byId('modal-root') === root && unchanged();
+      let data;
+      try { data = await read(); }
+      catch (err) { if (eligible()) toast(failure + err.message, true); return; }
+      if (!eligible()) return;
+      // 同步開窗會取得新章；它自己的例外不能再用開窗前的章過濾。
+      try { open(data); }
+      catch (err) { toast(failure + err.message, true); }
+    };
   };
-  byId('manageIncomeCatsBtn').onclick = async () => {
-    try { openCategoryEditor(await api('/income-categories'), CAT_CFG.income); }
-    catch (err) { toast('讀取收入分類失敗：' + err.message, true); }
-  };
-  byId('manageParseRecipesBtn').onclick = async () => {
-    try { openParseRecipesManager(await api('/parse-recipes')); }
-    catch (e) { toast('讀取規則卡失敗：' + /** @type {any} */ (e).message, true); }
-  };
-  byId('manageBankLearnedBtn').onclick = async () => {
-    try { openBankLearnedManager(await api('/bank-learned')); }
-    catch (err) { toast('讀取已學規則失敗：' + err.message, true); }
-  };
-  byId('manageCashflowTextRulesBtn').onclick = async () => {
-    try { openCashflowTextRulesManager((await api('/settings')).cashflowTextRules); }
-    catch (err) { toast('讀取文字套用規則失敗：' + err.message, true); }
-  };
-  byId('manageTransferSubsBtn').onclick = async () => {
-    try { openTransferSubEditor(await api('/transfer-subcategories')); }
-    catch (err) { toast('讀取內轉分類失敗：' + err.message, true); }
-  };
+  bindManagerEntry('manageCatsBtn', () => api('/categories'), data => openCategoryEditor(data, CAT_CFG.expense), '讀取分類失敗：');
+  bindManagerEntry('manageIncomeCatsBtn', () => api('/income-categories'), data => openCategoryEditor(data, CAT_CFG.income), '讀取收入分類失敗：');
+  bindManagerEntry('manageParseRecipesBtn', () => api('/parse-recipes'), openParseRecipesManager, '讀取規則卡失敗：');
+  bindManagerEntry('manageBankLearnedBtn', () => api('/bank-learned'), openBankLearnedManager, '讀取已學規則失敗：');
+  bindManagerEntry('manageCashflowTextRulesBtn', () => api('/settings'), data => openCashflowTextRulesManager(data.cashflowTextRules), '讀取文字套用規則失敗：');
+  bindManagerEntry('manageTransferSubsBtn', () => api('/transfer-subcategories'), openTransferSubEditor, '讀取內轉分類失敗：');
   // 帳單說明／分類學習（合併卡）：編輯這一列的顯示名＋分類——以「帳單原文」為準
   //（同原文整批改＋記學習，未來匯入沿用；不同分店可各自取名/分類。2026-07-18 使用者定）
   const expParents = Object.keys(expTree || {});
