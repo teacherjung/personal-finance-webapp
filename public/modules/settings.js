@@ -19,6 +19,9 @@ const storeSort = { ...STORE_SORT_DEFAULT };
 
 // 跨管理器共用排序，避免舊入口先開窗而撤銷較新的讀取資格。
 let managerEntryIntent = 0;
+let settingsRead = 0;
+/** @type {{dirty:boolean, cleanup:()=>void}|null} */
+let settingsPresentation = null;
 
 /**
  * ⏳ 文案（Claude 起草、**待 William 審改**）：「資料備份」卡的說明。
@@ -41,7 +44,10 @@ let managerEntryIntent = 0;
 const BACKUP_CARD_NOTE = '可以把你的資料匯出成一個檔案（JSON 檔）存起來。'
   + '建議定期匯一份、放到你自己找得到的地方——要還原的時候用「匯入備份」讀回來。';
 
-export async function renderSettings() {
+/** @param {()=>boolean} [canCommit] */
+export async function renderSettings(canCommit = () => true) {
+  if (!canCommit()) return;
+  const read = ++settingsRead;
   const seq = currentRouteSeq();
   const [s, txs, expTree, health, rulesRes, orphans] = await Promise.all([
     api('/settings'), api('/transactions'), api('/categories'),
@@ -49,6 +55,7 @@ export async function renderSettings() {
     api('/statement/rules').catch(() => ({ rules: null })),
     api('/statement/learned/orphans').catch(() => ({ items: [], total: 0 }))]);
   if (seq !== currentRouteSeq()) return;   // 期間切走了頁就別覆蓋新頁面（Codex r10#6）
+  if (read !== settingsRead || !canCommit()) return;
   const myRules = rulesRes?.rules || null;
   const ruleCount = myRules ? Object.values(myRules).reduce((n, v) => n + (Array.isArray(v) ? v.length : 0), 0) : 0;
   // 帳單說明／分類學習（合併卡，使用者定 2026-07-18）：一列＝一個帳單原文（藏在 stmtRef 第 4 段），
@@ -82,6 +89,7 @@ export async function renderSettings() {
   const storeMapRows = storeRows.length
     ? `<div class="tbl-wrap" id="storeMapWrap" style="max-height:44vh;overflow:auto">${storeTableHtml()}</div>`
     : '<p class="empty">尚無帳單記錄。匯入信用卡帳單後，這裡會列出每家店的顯示名與分類。</p>';
+  settingsPresentation?.cleanup();
   view().innerHTML = `
     <div class="page-head"><div><h1>設定</h1><p>依分頁分組——要調整哪個分頁的行為，到對應區塊找</p></div></div>
 
@@ -643,6 +651,20 @@ export async function renderSettings() {
     } catch (err) { toast('匯入失敗：' + err.message, true); }
     finally { input.value = ''; }   // 清空（自主體檢）：不清的話取消 confirm 或匯入失敗後，同一檔案重選不觸發 onchange
   };
+  const host = view();
+  const presentation = { dirty: false, cleanup: () => {
+    host.removeEventListener('input', edited, true);
+    host.removeEventListener('change', edited, true);
+  } };
+  // 只記編輯事實，避免為保存畫面而收集鑰匙或其他欄位值。
+  const edited = event => {
+    const control = event.target;
+    if (control instanceof HTMLElement && host.contains(control)
+      && control.matches('input:not([disabled]):not([readonly]),select:not([disabled]),textarea:not([disabled]):not([readonly])')) presentation.dirty = true;
+  };
+  host.addEventListener('input', edited, true);
+  host.addEventListener('change', edited, true);
+  settingsPresentation = presentation;
 }
 
 // ---------- 帳務體檢佇列（第二帖，使用者定 2026-07-19） ----------
@@ -743,6 +765,12 @@ const CAT_CFG = {
 /** @param {Record<string,string[]>} tree @param {typeof CAT_CFG.expense} [cfg] 支出或收入的設定（預設支出） */
 function openCategoryEditor(tree, cfg = CAT_CFG.expense) {
   const root = byId('modal-root');
+  const hash = location.hash, nav = currentNavSeq(), intent = managerEntryIntent;
+  const presentation = settingsPresentation, readAtOpen = settingsRead;
+  let busy = false;
+  const eligible = () => location.hash === hash && currentNavSeq() === nav
+    && managerEntryIntent === intent && byId('modal-root') === root
+    && root.querySelector('.modal') === dialog && unchanged();
   // 狀態：[{orig, name, subs:[{orig,name}]}]，orig=null＝新增（非改名）；退路大類（其他）與其退路子類受保護不可刪改
   /** @type {{orig: string|null, name: string, subs: {orig: string|null, name: string}[]}[]} */
   const state = Object.entries(tree || {}).map(([name, subs]) => ({
@@ -751,8 +779,8 @@ function openCategoryEditor(tree, cfg = CAT_CFG.expense) {
   const isOther = (p) => p.orig === cfg.otherCat;
 
   const syncFromDom = () => {
-    root.querySelectorAll('input.cat-name').forEach(inp => { const p = Number(inp.dataset.p); if (state[p]) state[p].name = inp.value; });
-    root.querySelectorAll('input.sub-name').forEach(inp => { const p = Number(inp.dataset.p), s = Number(inp.dataset.s); if (state[p] && state[p].subs[s]) state[p].subs[s].name = inp.value; });
+    dialog.querySelectorAll('input.cat-name').forEach(inp => { const p = Number(inp.dataset.p); if (state[p]) state[p].name = inp.value; });
+    dialog.querySelectorAll('input.sub-name').forEach(inp => { const p = Number(inp.dataset.p), s = Number(inp.dataset.s); if (state[p] && state[p].subs[s]) state[p].subs[s].name = inp.value; });
   };
 
   const blockHtml = (p, i) => `
@@ -772,7 +800,7 @@ function openCategoryEditor(tree, cfg = CAT_CFG.expense) {
       </div>
     </div>`;
 
-  const redraw = () => { byId('catEditorBody').innerHTML = state.map((p, i) => blockHtml(p, i)).join(''); };
+  const redraw = () => { dialog.querySelector('#catEditorBody').innerHTML = state.map((p, i) => blockHtml(p, i)).join(''); };
 
   // 外殼歸戶（U3 擴大）：title 傳原文（外殼負責 esc，勿雙重跳脫）
   const { close } = openModalShell({
@@ -783,11 +811,14 @@ function openCategoryEditor(tree, cfg = CAT_CFG.expense) {
       <div style="margin-top:10px"><button type="button" class="btn-ghost btn-sm" data-act="addP">＋ 新增大類</button></div>
       <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button><button type="button" class="btn" id="catSave">儲存分類</button></div>`,
   });
-  root.querySelector('[data-cancel]').onclick = close;
+  const dialog = root.querySelector('.modal');
+  const unchanged = watchModalRoot();
+  dialog.querySelector('[data-cancel]').onclick = close;
   redraw();
 
   // 委派按鈕事件（結構性動作：先 syncFromDom 保住已打的字，再改 state、重繪）
   root.querySelector('.modal-body').addEventListener('click', (e) => {
+    if (busy || !eligible()) return;
     const btn = e.target.closest('[data-act]');
     if (!btn) return;
     const act = btn.dataset.act, p = Number(btn.dataset.p), s = Number(btn.dataset.s);
@@ -802,7 +833,9 @@ function openCategoryEditor(tree, cfg = CAT_CFG.expense) {
     redraw();
   });
 
-  byId('catSave').onclick = async () => {
+  const saveButton = dialog.querySelector('#catSave');
+  saveButton.onclick = async () => {
+    if (busy || !eligible() || !saveButton.isConnected || !dialog.contains(saveButton)) return;
     syncFromDom();
     /** @type {Record<string,string[]>} */
     const outTree = Object.create(null);   // 大類名是使用者文字：普通物件遇「__proto__」不是寫鍵、是換原型——鍵在送出前就消失，後端收到 {} 卻回報「儲存成功」（Codex r6#3）。null-proto 讓保留字成為自有鍵、真的送到後端拿 400，使用者才看得到真錯誤
@@ -827,13 +860,29 @@ function openCategoryEditor(tree, cfg = CAT_CFG.expense) {
       outTree[name] = subs;
       if (p.orig && p.orig !== name) parentRenames.push({ from: p.orig, to: name });
     }
-    try {
-      const r = await api(cfg.endpoint, { method: 'POST', body: { tree: outTree, parentRenames, subRenames } });
-      close();
-      const n = r.changedTx || 0;
-      toast(n ? `分類已儲存，${n} 筆舊交易一併更新` : '分類已儲存');
-      renderSettings();
-    } catch (err) { toast('儲存失敗：' + err.message, true); }
+    busy = true;
+    // 唯讀保留選取草稿的能力；未知結果時不能重送，但仍需讓使用者帶走輸入。
+    dialog.querySelectorAll('input').forEach(control => { control.readOnly = true; });
+    dialog.querySelectorAll('[data-act],#catSave').forEach(control => { control.disabled = true; });
+    let r;
+    try { r = await api(cfg.endpoint, { method: 'POST', body: { tree: outTree, parentRenames, subRenames } }); }
+    catch (err) {
+      if (!eligible()) return;
+      toast('儲存結果尚未確認，請關閉後重新開啟分類核對；不會自動重送。' + (err.message || ''), true);
+      return;
+    }
+    if (!eligible()) return;
+    close();
+    const follow = watchModalRoot();
+    const canRefresh = () => location.hash === hash && currentNavSeq() === nav
+      && managerEntryIntent === intent && byId('modal-root') === root && follow()
+      && !root.querySelector('.modal') && settingsPresentation === presentation && !presentation?.dirty;
+    const n = r.changedTx || 0;
+    toast(n ? `分類已儲存，${n} 筆舊交易一併更新` : '分類已儲存');
+    if (settingsRead !== readAtOpen || !canRefresh()) return;
+    const refreshRead = settingsRead + 1;
+    try { await renderSettings(canRefresh); }
+    catch (err) { if (settingsRead === refreshRead && canRefresh()) toast('分類已儲存，畫面更新失敗：' + (err.message || ''), true); }
   };
 }
 
