@@ -891,12 +891,18 @@ function openCategoryEditor(tree, cfg = CAT_CFG.expense) {
 /** @param {{label:string, role?:string}[]} list */
 function openTransferSubEditor(list) {
   const root = byId('modal-root');
+  const hash = location.hash, nav = currentNavSeq(), intent = managerEntryIntent;
+  const presentation = settingsPresentation, readAtOpen = settingsRead;
+  let busy = false;
+  const eligible = () => location.hash === hash && currentNavSeq() === nav
+    && managerEntryIntent === intent && byId('modal-root') === root
+    && root.querySelector('.modal') === dialog && unchanged();
   /** @type {Record<string,string>} */
   const roleLabel = { out: '出', in: '進', settle: '交割' };
   /** @type {{orig: string|null, label: string, role?: string}[]} */
   const state = (list || []).map(s => ({ orig: s.label, label: s.label, role: s.role }));
   const syncFromDom = () => {
-    root.querySelectorAll('input.tsub-name').forEach((/** @type {any} */ inp) => { const i = Number(inp.dataset.i); if (state[i]) state[i].label = inp.value; });
+    dialog.querySelectorAll('input.tsub-name').forEach((/** @type {any} */ inp) => { const i = Number(inp.dataset.i); if (state[i]) state[i].label = inp.value; });
   };
   const rowHtml = (/** @type {any} */ s, /** @type {number} */ i) => `
     <div class="cat-block-head" style="margin-bottom:8px">
@@ -908,7 +914,7 @@ function openTransferSubEditor(list) {
         <button type="button" class="btn-icon danger" data-act="del" data-i="${i}" title="刪除">✕</button>
       </span>
     </div>`;
-  const redraw = () => { byId('tsubEditorBody').innerHTML = state.map(rowHtml).join(''); };
+  const redraw = () => { dialog.querySelector('#tsubEditorBody').innerHTML = state.map(rowHtml).join(''); };
   // 外殼歸戶（U3 擴大）
   const { close } = openModalShell({
     title: '內轉分類管理', size: 'md',
@@ -918,9 +924,12 @@ function openTransferSubEditor(list) {
       <div style="margin-top:10px"><button type="button" class="btn-ghost btn-sm" data-act="add">＋ 新增內轉分類</button></div>
       <div class="form-actions"><button type="button" class="btn-ghost" data-cancel>取消</button><button type="button" class="btn" id="tsubSave">儲存</button></div>`,
   });
-  root.querySelector('[data-cancel]').onclick = close;
+  const dialog = root.querySelector('.modal');
+  const unchanged = watchModalRoot();
+  dialog.querySelector('[data-cancel]').onclick = close;
   redraw();
   root.querySelector('.modal-body').addEventListener('click', (/** @type {any} */ e) => {
+    if (busy || !eligible()) return;
     const btn = e.target.closest('[data-act]');
     if (!btn) return;
     const act = btn.dataset.act, i = Number(btn.dataset.i);
@@ -932,7 +941,9 @@ function openTransferSubEditor(list) {
     else return;
     redraw();
   });
-  byId('tsubSave').onclick = async () => {
+  const saveButton = dialog.querySelector('#tsubSave');
+  saveButton.onclick = async () => {
+    if (busy || !eligible() || !saveButton.isConnected || !dialog.contains(saveButton)) return;
     syncFromDom();
     /** @type {{label:string, role?:string}[]} */
     const subs = [];
@@ -948,12 +959,28 @@ function openTransferSubEditor(list) {
       if (s.orig && s.orig !== label) renames.push({ from: s.orig, to: label });
     }
     if (!subs.length) return toast('至少要保留一個內轉分類', true);
-    try {
-      const r = await api('/transfer-subcategories', { method: 'POST', body: { subs, renames } });
-      close();
-      toast(r.changedTx ? `已儲存，${r.changedTx} 筆舊內轉交易一併更新` : '內轉分類已儲存');
-      renderSettings();
-    } catch (err) { toast('儲存失敗：' + err.message, true); }
+    busy = true;
+    // 未知結果需保留可選取的草稿，但不能以同一快照盲目重送。
+    dialog.querySelectorAll('input').forEach(control => { control.readOnly = true; });
+    dialog.querySelectorAll('[data-act],#tsubSave').forEach(control => { control.disabled = true; });
+    let r;
+    try { r = await api('/transfer-subcategories', { method: 'POST', body: { subs, renames } }); }
+    catch (err) {
+      if (!eligible()) return;
+      toast('儲存結果尚未確認，請關閉後重新開啟內轉分類核對；不會自動重送。' + (err.message || ''), true);
+      return;
+    }
+    if (!eligible()) return;
+    close();
+    const follow = watchModalRoot();
+    const canRefresh = () => location.hash === hash && currentNavSeq() === nav
+      && managerEntryIntent === intent && byId('modal-root') === root && follow()
+      && !root.querySelector('.modal') && settingsPresentation === presentation && !presentation?.dirty;
+    toast(r.changedTx ? `已儲存，${r.changedTx} 筆舊內轉交易一併更新` : '內轉分類已儲存');
+    if (settingsRead !== readAtOpen || !canRefresh()) return;
+    const refreshRead = settingsRead + 1;
+    try { await renderSettings(canRefresh); }
+    catch (err) { if (settingsRead === refreshRead && canRefresh()) toast('內轉分類已儲存，畫面更新失敗：' + (err.message || ''), true); }
   };
 }
 
