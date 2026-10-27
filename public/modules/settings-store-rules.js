@@ -5,9 +5,9 @@
 // settings.js 只留設定頁本體；儲存成功後經 renderSettings 接縫回頭重繪設定頁。
 // 循環 import 安全：本檔 ↔ settings.js ↔ app.js 成環，所有 import 綁定一律只在函式內取用
 //（勿在檔案頂層取用＝TDZ 陷阱，見 theme.js 註記；本檔頂層只有常數字面量與函式宣告）。
-import { api, byId, esc, toast, modalSizeClass, bindModalAccessibility, claimModalRoot } from '../app.js';
+import { api, byId, esc, toast, modalSizeClass, bindModalAccessibility, claimModalRoot, watchModalRoot, currentNavSeq } from '../app.js';
 import { openModalShell } from './modal-shell.js';
-import { renderSettings } from './settings.js';
+import { storeRulesContext } from './settings.js';
 
 // ---------- 店名規則自助管理（第三帖，使用者定 2026-07-19） ----------
 // 以前每發現一條店名規則要改，就得等 Claude 改程式→PR→合併→重啟。這裡把規則變成可編輯的資料。
@@ -33,9 +33,14 @@ const RULE_SECTIONS = [
     ph: ['要維持原名的店名'] }
 ];
 
-/** @param {any} rules 目前規則（後端 GET /statement/rules） */
-export function openStoreRulesEditor(rules) {
+/** @param {any} rules 目前規則（後端 GET /statement/rules）
+ * @param {ReturnType<typeof storeRulesContext>} [context] */
+export function openStoreRulesEditor(rules, context = storeRulesContext()) {
   const root = byId('modal-root');
+  const hash = location.hash, nav = currentNavSeq();
+  let busy = false;
+  const eligible = () => context.eligible() && location.hash === hash && currentNavSeq() === nav
+    && byId('modal-root') === root && root.querySelector('.modal') === dialog && unchanged();
   /** @type {Record<string, any[]>} 編輯中的狀態（一律轉成物件陣列，single 型的存 {to}） */
   const state = {};
   for (const sec of RULE_SECTIONS) {
@@ -46,7 +51,7 @@ export function openStoreRulesEditor(rules) {
 
   // 打字時不重繪（保住焦點）；結構性動作（新增/刪除）才 syncFromDom→重繪，同 openCategoryEditor 的做法
   const syncFromDom = () => {
-    root.querySelectorAll('[data-rk]').forEach((/** @type {any} */ inp) => {
+    dialog.querySelectorAll('[data-rk]').forEach((/** @type {any} */ inp) => {
       const row = state[inp.dataset.rk]?.[Number(inp.dataset.ri)];
       if (row) row[inp.dataset.rf] = inp.value;
     });
@@ -72,7 +77,7 @@ export function openStoreRulesEditor(rules) {
       <button type="button" class="btn-ghost btn-sm" data-ract="add" data-rk="${sec.key}">＋ 加一條</button>
     </div>`;
 
-  const redraw = () => { byId('ruleEditorBody').innerHTML = RULE_SECTIONS.map(secHtml).join(''); };
+  const redraw = () => { dialog.querySelector('#ruleEditorBody').innerHTML = RULE_SECTIONS.map(secHtml).join(''); };
 
   /**
    * 把編輯狀態轉回後端形狀。預設丟掉「填一半」的列（送出去也會被後端丟棄，不如不送）；
@@ -105,10 +110,19 @@ export function openStoreRulesEditor(rules) {
         <button type="button" class="btn" id="ruleSave">儲存並套用</button>
       </div>`,
   });
-  root.querySelector('[data-cancel]').onclick = close;
+  const dialog = root.querySelector('.modal');
+  const unchanged = watchModalRoot();
+  const setBusy = (value) => {
+    busy = value;
+    dialog.querySelectorAll('input').forEach(control => { control.readOnly = value; });
+    dialog.querySelectorAll('select,[data-ract],#rulePreview,#ruleSave').forEach(control => { control.disabled = value; });
+  };
+  const unlock = () => { if (eligible()) setBusy(false); };
+  dialog.querySelector('[data-cancel]').onclick = close;
   redraw();
 
   root.querySelector('.modal-body').addEventListener('click', (/** @type {any} */ e) => {
+    if (busy || !eligible()) return;
     const btn = e.target.closest('[data-ract]');
     if (!btn) return;
     syncFromDom();
@@ -118,9 +132,14 @@ export function openStoreRulesEditor(rules) {
     redraw();
   });
 
-  byId('rulePreview').onclick = async () => {
+  const previewButton = dialog.querySelector('#rulePreview'), saveButton = dialog.querySelector('#ruleSave');
+  previewButton.onclick = async () => {
+    if (busy || !eligible() || !previewButton.isConnected || !dialog.contains(previewButton)) return;
+    const payload = collect(), snapshot = collect(true);
+    setBusy(true);
     try {
-      const r = await api('/statement/rules/preview', { method: 'POST', body: { rules: collect() } });
+      const r = await api('/statement/rules/preview', { method: 'POST', body: { rules: payload } });
+      if (!eligible()) return;
       // 「什麼都不會改」的判斷要**把不可逆的兩種也算進去**（Codex r3#2）：
       // 孤兒學習的自訂名被改到時，changed 與 keyChanged 都是 0——只看這兩個數字就會在這裡早退，
       // 跳出「不會改動任何既有記錄」的安心訊息，然後使用者按儲存、名字就沒了。
@@ -130,20 +149,24 @@ export function openStoreRulesEditor(rules) {
       // 回上一頁＝用「目前編輯到的內容」重開編輯窗（含填一半的列）。
       // ⚠️ 不可以用 innerHTML 快照還原（實測踩到）：使用者打進 input 的字不會反映到 HTML 屬性上，
       // 還原回去會整片空白——去看一眼預覽就把心血全弄丟，是最不能忍的那種 bug。
-      const snapshot = collect(true);
-      openRulePreview(r, () => openStoreRulesEditor(snapshot));
-    } catch (e) { toast('預覽失敗：' + e.message, true); }
+      openRulePreview(r, () => openStoreRulesEditor(snapshot, context), context);
+    } catch (e) { if (eligible()) toast('預覽失敗：' + e.message, true); }
+    finally { unlock(); }
   };
-  byId('ruleSave').onclick = async () => {
+  saveButton.onclick = async () => {
+    if (busy || !eligible() || !saveButton.isConnected || !dialog.contains(saveButton)) return;
+    const rules = collect();
+    setBusy(true);
+    let unknown = false;
     try {
-      const rules = collect();
       // 「預覽影響」是自願按的，但學習表衝突是不可逆的——直接按儲存的人更需要被擋一下。
       // 先偷跑一次預覽，只有真的會蓋掉教過的設定時才出聲（沒衝突就安靜地存，不多一步打擾）。
       // ⚠️ 預覽失敗就**不要儲存**（Codex r3#7）：原本用 .catch(() => null) 吞掉錯誤照樣往下存，
       // 等於在「算不出有什麼不可逆變更」的情況下硬做——安全帶斷了就該停車，不是繼續開。
       let pre;
       try { pre = await api('/statement/rules/preview', { method: 'POST', body: { rules } }); }
-      catch (e) { return toast('無法確認這些規則會改到什麼，為安全起見沒有儲存：' + e.message, true); }
+      catch (e) { if (eligible()) toast('無法確認這些規則會改到什麼，為安全起見沒有儲存：' + e.message, true); return; }
+      if (!eligible()) return;
       const cf = pre?.learnedConflicts || [];
       const nc = pre?.learnedNameChanges || [];
       // ⚠️ 用**真實總數**（Total），不是被截到 50 的陣列長度（Codex r4#5）：
@@ -159,7 +182,15 @@ export function openStoreRulesEditor(rules) {
         if (!confirm(`有 ${cfTotal + ncTotal} 項你教過／取過的東西會被蓋掉，刪掉規則也救不回來：\n\n`
           + lines.join('\n') + (extra > 0 ? `\n…另外 ${extra} 項` : '') + '\n\n確定要套用嗎？')) return;
       }
-      const r = await api('/statement/rules', { method: 'POST', body: { rules } });
+      if (!eligible()) return;
+      let r;
+      try { r = await api('/statement/rules', { method: 'POST', body: { rules } }); }
+      catch (e) {
+        unknown = true;
+        if (eligible()) toast('儲存結果尚未確認，請關閉後重新開啟店名規則核對；不會自動重送。' + (e.message || ''), true);
+        return;
+      }
+      if (!eligible()) return;
       // ⚠️ needsConfirmation 是後端共用的「停下來問」旗標（形狀與理由見
       // lib/services/statement-import.js 的 normalizeIfRulesChanged）：只要回了它就代表
       // **什麼都沒存**，所以這條路一律接住。不接的話畫面會顯示「規則已儲存」而其實一個字都沒寫
@@ -170,8 +201,9 @@ export function openStoreRulesEditor(rules) {
       const bits = [r.changed && `${r.changed} 筆顯示名`, r.keyChanged && `${r.keyChanged} 筆店家身分`,
         r.learnedNamesFixed && `${r.learnedNamesFixed} 筆學過的舊名`].filter(Boolean);
       toast(bits.length ? `規則已儲存，整理了 ${bits.join('、')} ✨` : '規則已儲存（沒有既有記錄需要整理）');
-      renderSettings();
-    } catch (e) { toast('儲存失敗：' + e.message, true); }
+      await context.refresh();
+    } catch (e) { if (eligible()) toast('儲存失敗：' + e.message, true); }
+    finally { if (!unknown) unlock(); }
   };
 }
 
@@ -181,12 +213,14 @@ export function openStoreRulesEditor(rules) {
 /** @param {{changed:number, keyChanged:number, changes:{id:string,before:string,after:string}[],
  *            learnedConflicts:{key:string,field:string,kept:string,dropped:string}[], learnedConflictTotal?:number,
  *            learnedNameChanges:{key:string,before:string,after:string}[], learnedNameChangeTotal?:number}} r
- *  @param {() => void} onBack 回到編輯窗（呼叫端負責帶著「編輯到一半的內容」重開） */
-function openRulePreview(r, onBack) {
+ *  @param {() => void} onBack 回到編輯窗（呼叫端負責帶著「編輯到一半的內容」重開）
+ *  @param {ReturnType<typeof storeRulesContext>} context */
+function openRulePreview(r, onBack, context) {
   // ⚠️ 刻意**不用** openModalShell（U3 擴大的記錄在案例外）：這個窗的「×」是**返回編輯**（onBack）
   // 不是關閉，且**沒有**背景點擊關閉——防止使用者點到背景把「編輯到一半的規則」整窗弄丟。
   // 外殼會接管 x-close 與 bindBackdropClose，語意不同不可硬套（Codex U3 修訂點名的情況）。
   const root = byId('modal-root');
+  const hash = location.hash, nav = currentNavSeq();
   const returnFocusTo = document.activeElement;
   const rows = r.changes.map(c => `<tr><td>${esc(c.before)}</td><td class="muted" style="text-align:center">→</td><td><b>${esc(c.after)}</b></td></tr>`).join('');
   // 學習表衝突＝整個自助化唯一「刪掉規則也救不回來」的效果：兩把鑰匙併成一把時，
@@ -212,7 +246,7 @@ function openRulePreview(r, onBack) {
       <ul>${nameChanges.map(c => `<li>「${esc(c.key)}」：<b>${esc(c.before)}</b> → <span class="rule-drop">${esc(blank(c.after))}</span></li>`).join('')}${ncTotal > nameChanges.length ? `<li class="muted">…另外 ${ncTotal - nameChanges.length} 項（清單僅顯示前 ${nameChanges.length} 筆）</li>` : ''}</ul>
       <p>想留住原本的名字，就先回去把規則改得窄一點，別命中這幾家。</p>
     </div>` : '';
-  claimModalRoot();   // r7：接管 modal-root＝作廢在途的 openForm(async)，它回來時不會清掉這個預覽窗
+  const owns = claimModalRoot();
   root.innerHTML = `<div class="modal-bg"><div class="${modalSizeClass('md')}">
     <div class="modal-head"><h2>規則影響預覽</h2><button class="x-close">×</button></div>
     <div class="modal-body">
@@ -225,7 +259,13 @@ function openRulePreview(r, onBack) {
       ${r.changed > r.changes.length ? `<p class="muted" style="font-size:11px;margin-top:8px">（清單僅顯示前 ${r.changes.length} 筆）</p>` : ''}
       <div class="form-actions"><button type="button" class="btn" data-back>回去繼續編輯</button></div>
     </div></div></div>`;
-  root.querySelector('.x-close').onclick = onBack;
-  root.querySelector('[data-back]').onclick = onBack;
-  bindModalAccessibility(root, onBack, returnFocusTo, '回去繼續編輯');
+  const dialog = root.querySelector('.modal'), unchanged = watchModalRoot();
+  const back = () => {
+    if (byId('modal-root') !== root || root.querySelector('.modal') !== dialog) return;
+    if (context.eligible() && location.hash === hash && currentNavSeq() === nav && unchanged()) onBack();
+    else { root.innerHTML = ''; owns.release(); }
+  };
+  dialog.querySelector('.x-close').onclick = back;
+  dialog.querySelector('[data-back]').onclick = back;
+  bindModalAccessibility(root, back, returnFocusTo, '回去繼續編輯');
 }

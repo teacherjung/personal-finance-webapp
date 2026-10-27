@@ -6,6 +6,10 @@
 
 預計修改本計畫、`public/modules/settings-store-rules.js`、`public/modules/settings.js`、`docs/contracts/frontend-features.md`、`test/settings-store-rules-lifecycle.test.js`、`test/helpers/settings-store-rules-lifecycle-case.js`。D5 核對均為專案自有，不改共用 API、彈窗框架、後端或端點。
 
+驗證前置另涉及專案自有 `test/modal-ownership.test.js`：依 [原題](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6443331578) 與 [Sol 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6443364611)，移除綁死產品回呼識別字的形狀斷言，保留共用 helper 的名稱行為題；由正式預覽 DOM 的返回名稱斷言及移除名稱的有效突變驗證接線。失敗紀錄保留，不更改檢查門檻。
+
+管理意圖的突變考題依 [原題](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6444489974) 與 [Sol 裁示](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6444522787) 使用完成旗標：等待原操作完成或多餘請求出現，先驗請求數才等待操作。保留 finally 屏障釋放及事件收尾，避免錯誤追加的保存被測試自身扣住而只得到逾時。原逾時拒收紀錄不追認為有效紅。
+
 ## 流程與保護
 
 - 店名規則入口接既有 `bindManagerEntry` 與共享管理意圖，以既有 GET `/statement/rules` 取編輯資料。初載快取只能作卡片計數，不能在新讀取失敗時充當編輯備援。
