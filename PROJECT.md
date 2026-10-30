@@ -30,6 +30,10 @@
   - **較早後台優先指示（原話保留，範圍由新目標更新）**：本人：「我想問一下待辦清單裏面的東西，能不能之後我邊使用理財網頁、邊提出修改的時候，再慢慢邊完成？只有後台的修正先完成就好。」[原話](https://github.com/teacherjung/personal-finance-webapp/pull/725#issuecomment-6285303047)。較早 10/18 的分工原話及來源完整保留於[協作附則](docs/project-collaboration.md#本次分工更新)，不改寫其當時效力；[入口三行整理裁示](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6298037415)。
   - 入口背景移錄（舊紀錄，非本輪重測）：⚠️ **實測代價**：#417 的 r7–r13 七輪退回全屬這一族；事後窮舉稽核 311 句現況斷言、**58 句站不住**（19%）。；沙盒落點沿革：舊的第二個落點 `test/cross-pr-merge.test.js` 2026-09-18 第 7 步隨舊閘退役。
 
+### 既有相依安全通報（CI 核對）
+
+- **GHSA-6pq8-jhm2-2vcw｜qs 的 comma 陣列序列化通報，尚未修補**：在 `a583022f5536420fb6e12632e1763b93d25ab139` 的 [CI](https://github.com/teacherjung/personal-finance-webapp/actions/runs/40993329773) 核到 qs 6.16.0／Express 相依傳遞的同一中度通報；[上游公告](https://github.com/advisories/GHSA-6pq8-jhm2-2vcw)列修補版 6.16.1。限定查證未找到應用直接載入 qs 或指定 comma 陣列格式的呼叫，已讀 Express／body-parser 路徑是解析；未證全應用或全部間接相依不可利用，也未驗修補版相容性。落點：`package.json` 的 qs override、`package-lock.json` 與後續實際相依修補 PR。觸發：下一個可依既定程序開工的後端相依修補優先處理，不等實際故障；若取得不可信輸入可到達 comma stringify 的證據，立即重裁為先修。依 [原題](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6513981708)及 [Sol 完整技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6514104671)，#748 僅登記未修風險，新版本完整驗證後才可續正式複審；不夾帶相依更新、不放寬 audit 或合併閘，不以既有 CI 成功當安全豁免。後續修補的 PR 額度、所有權與相依操作權限仍須先核，掃描維持暫停。
+
 ### 提供掃描的核實與分流（2026-10-20）
 
 使用者提供的 Gemini 文字未附受掃版本；以下核對基準為 `0a52f82cbdc3e902839ebf260735511a31faed5a`。[#727](https://github.com/teacherjung/personal-finance-webapp/pull/727) 僅登記待辦，未修產品程式；後續承接狀態列在各項。該次分流未重啟掃描、手機或 HOSTED；後續掃描依上列新條件承接。來源逐項對帳見 [#727](https://github.com/teacherjung/personal-finance-webapp/pull/727)，分類依 [Sol 完整諮詢](https://github.com/teacherjung/personal-finance-webapp/pull/727#issuecomment-6293758167)。
