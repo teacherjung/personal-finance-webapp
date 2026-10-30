@@ -19,6 +19,7 @@
   "forbidden-defaults.test.js",
   "forbidden-tools.test.js",
   "git-env.test.js",
+  "grok-strict-regression.test.js",
   "guard-copy-claude.test.js",
   "guard-copy.test.js",
   "ignore-lists.test.js",

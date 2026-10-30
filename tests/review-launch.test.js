@@ -35,7 +35,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { gitEnv } = require('../tools/git-env.js');
-const { main, launch, close, post, prepareVerdict, scanPost, scanClose, prepareScan, resolveScannerSpec, deriveScanCommand, stripGrokPreamble, splitCommandArgs, defaultRunPost, defaultRunExec, substitute, fill, promptPart, scopeOf, roundsOf, twoMissesInARow, parseArgs, templateProblems, freshEntries, materializeIsolatedGitRepo, runGrokExec, GROK_PINNED_ISSUER, GROK_PINNED_CLIENT_ID, FILL, SCAN_FILL, SCAN_TEMPLATE, SAFE, LaunchError } = require('../tools/review-launch.js');
+const { main, launch, close, post, prepareVerdict, scanPost, scanClose, prepareScan, unwrapScanOutput, resolveScannerSpec, deriveScanCommand, stripGrokPreamble, splitCommandArgs, defaultRunPost, defaultRunExec, substitute, fill, promptPart, scopeOf, roundsOf, twoMissesInARow, parseArgs, templateProblems, freshEntries, materializeIsolatedGitRepo, runGrokExec, GROK_PINNED_ISSUER, GROK_PINNED_CLIENT_ID, FILL, SCAN_FILL, SCAN_TEMPLATE, SAFE, LaunchError } = require('../tools/review-launch.js');
 const { evaluate: evaluateVerdicts, VERDICTS } = require('../tools/gates/check-review-verdicts.js');
 const { read: readSettings } = require('../tools/build-settings.js');
 const { PlatformError } = require('../tools/platform.js');
@@ -123,6 +123,336 @@ const answersFor = ({ head, base }, over = {}) => ({
   ...over,
 });
 const values = () => Object.fromEntries(FILL.filter(([, k]) => k).map(([, k]) => [k, `〔${k}〕`]));
+
+/** 同 CLI 的不同身分：主審通過不能代結原身分的歷史阻擋。全為合成留言及本題倉庫。 */
+function continuationFixture(r) {
+  const s = settingsFor({ owner: 'Boss' });
+  s.participants[1].id = 'Codex';
+  s.participants[2].id = 'Sol';
+  const reviewer = s.reviewers[0];
+  s.reviewers = [
+    { ...reviewer, participant: 'Codex', source: 'codex CLI', strongest: 'gpt-6-astra', maxEffort: 'max' },
+    { ...reviewer, participant: 'Sol', source: 'codex CLI', strongest: 'gpt-6.1-sol', maxEffort: 'xhigh' },
+  ];
+  const url = (id) => `https://x.invalid/acme/kit/pull/7#c-${id}`;
+  const cv = (id, role, round, sha, conclusion, time) => ({
+    id, author: 'ai-acct', createdAt: `2026-10-28T${time}:00Z`,
+    body: `🤖 ${role}｜來源：codex CLI｜審 \`${sha.slice(0, 7)}\`｜r${round}｜結論：${conclusion}\n\n### 本輪實際用的設定\n- 合成\n\n### 清單逐項結果\n- 合成\n`,
+  });
+  const comments = [
+    cv('block', 'Codex', 1, r.base, '需修改後再審', '00:00'),
+    cv('old-pass', 'Codex', 3, r.base, '通過', '00:01'),
+    cv('primary-pass', 'Sol', 2, r.head, '通過', '00:02'),
+    { id: 'question', author: 'ai-acct', createdAt: '2026-10-28T01:00:00Z',
+      body: '## ❓ 待裁（2026-10-28）：保留 Sol 主審，是否追加獨立 Codex 續審？\n\n請本人批准。\n' },
+    { id: 'approval', author: 'boss-acct', createdAt: '2026-10-28T02:00:00Z',
+      body: `## ⚖️ Boss 裁示（2026-10-28）：保留主審，追加獨立續審\n\n原話（對話中，Codex 轉述）：**「同意追加獨立 Codex 續審（建議）」**\n\n原題：${url('question')}\n` },
+  ];
+  const a = answersFor(r, { change: { ...answersFor(r).change, body: BODY.replaceAll('Alpha', 'Codex').replaceAll('Beta', 'Sol') } });
+  a.comments = () => comments;
+  a.allComments = () => comments.map((c) => ({ ...c, change: '7' }));
+  const refs = { question: url('question'), approval: url('approval'), blocker: url('block') };
+  const flags = ['--continue-blocker', refs.blocker, '--owner-question', refs.question, '--owner-approval', refs.approval];
+  const dir = tmp('review-continuation-');
+  const options = { settings: s, platform: fakePlatform(a), cwd: r.dir, dir, template: TEMPLATE,
+    now: () => new Date('2026-10-29T00:00:00Z'), leftoverRoots: [] };
+  const output = `🤖 Codex｜來源：codex CLI｜審 \`${r.head.slice(0, 7)}\`｜r4｜結論：通過\n\n### 本輪實際用的設定\n- 合成\n\n### 清單逐項結果\n- 合成\n`;
+  return { s, a, comments, refs, flags, dir, options, output, cv };
+}
+
+test('獨立續審：明確本人配對才備審，保留主審與舊阻擋、沿原來源最高輪次且強制全審', () => {
+  const r = repo();
+  const f = continuationFixture(r);
+  const before = structuredClone(f.comments);
+  const ordinary = main(['7', '--reviewer', 'Codex', '--dir', f.dir], f.options);
+  assert.equal(ordinary.code, 2);
+  assert.match(ordinary.lines.join('\n'), /複審者.*Sol/u);
+  assert.deepEqual(fs.readdirSync(f.dir), []);
+  const launched = main(['7', '--reviewer', 'Codex', '--dir', f.dir, ...f.flags], f.options);
+  assert.equal(launched.code, 0, launched.lines.join('\n'));
+  const rec = launched.record;
+  assert.equal(rec.round, 4);
+  assert.equal(rec.continuation.primary, 'Sol');
+  assert.equal(rec.continuation.reviewer, 'Codex');
+  assert.equal(rec.continuation.source, 'codex CLI');
+  assert.equal(rec.continuation.model, 'gpt-6-astra');
+  assert.equal(rec.continuation.effort, 'max');
+  assert.equal(rec.continuation.blocker.sha, r.base.slice(0, 7));
+  assert.equal(rec.head, r.head);
+  assert.match(rec.continuation.approval.bodySha256, /^[0-9a-f]{64}$/u);
+  assert.match(launched.command, /--model gpt-6-astra --effort max/u);
+  assert.match(launched.prompt, /本輪範圍：全審/u);
+  assert.ok(launched.prompt.includes(f.refs.question) && launched.prompt.includes(f.refs.approval));
+  assert.equal(sh(rec.tree, 'rev-parse', 'HEAD'), r.head);
+  assert.equal(sh(rec.mutation, 'rev-parse', 'HEAD'), r.head);
+  assert.deepEqual(f.comments, before, '備審不得改寫平台原件');
+  const gate = evaluateVerdicts(f.comments, r.head, 'Sol', ['Boss', 'Codex', 'Sol'], { ownerRole: 'Boss' });
+  assert.ok(gate.problems.some((p) => p.includes('留言 block')), '主審通過尚未消掉歷史 Codex 阻擋');
+  assert.equal(main(['--close', '7', '--dir', f.dir], f.options).code, 0);
+});
+
+test('獨立續審：備審資格失敗零開樹、不寫場次、不啟模型', () => {
+  const r = repo();
+  const cases = [
+    ['缺明確批准旗標', (f) => { f.flags.splice(4, 2); }, /須一起給/u],
+    ['跨 PR 原件', (f) => { f.flags[1] = f.flags[1].replace('/pull/7', '/pull/8'); }, /同倉庫同 PR/u],
+    ['跨倉庫引用同錨點', (f) => { f.comments[4].body = f.comments[4].body.replace('acme/kit', 'other/kit'); }, /不配對/u],
+    ['批准帳號不符', (f) => { f.comments[4].author = 'intruder'; }, /不配對/u],
+    ['非本人裁示', (f) => { f.comments[4].body = f.comments[4].body.replace('⚖️ Boss', '⚖️ Sol'); }, /不配對/u],
+    ['批准早於原題', (f) => { f.comments[4].createdAt = '2026-10-28T00:30:00Z'; }, /不配對/u],
+    ['批准不含逐字原話', (f) => { f.comments[4].body = f.comments[4].body.replace('同意追加獨立 Codex 續審（建議）', '同意處理'); }, /不配對/u],
+    ['混入另一列假轉述', (f) => { f.comments[4].body = f.comments[4].body.replace('Codex 轉述', 'Intruder 轉述') + '\n原話（對話中，Codex 轉述）：**「不同意」**\n'; }, /不配對/u],
+    ['雙列相同原話', (f) => { f.comments[4].body += '\n原話（對話中，Codex 轉述）：**「同意追加獨立 Codex 續審（建議）」**\n'; }, /不配對/u],
+    ['原題主審不符', (f) => { f.comments[3].body = f.comments[3].body.replace('保留 Sol', '保留 Codex'); }, /不配對/u],
+    ['原題藏在引用段', (f) => { f.comments[3].body = '## ❓ 待裁（2026-10-28）：其他\n\n> 保留 Sol 主審，獨立 Codex 續審\n'; }, /不配對/u],
+    ['原件重複', (f) => { f.comments.push({ ...f.comments[0] }); }, /唯一留言/u],
+    ['原阻擋角色不符', (f) => { f.comments[0].body = f.comments[0].body.replace('🤖 Codex', '🤖 Sol'); }, /角色或來源/u],
+    ['原阻擋來源不符', (f) => { f.comments[0].body = f.comments[0].body.replace('codex CLI', 'desktop'); }, /角色或來源/u],
+    ['原件不是阻擋', (f) => { f.comments[0].body = f.comments[0].body.replace('需修改後再審', '通過'); }, /角色或來源/u],
+    ['歷史阻擋已解除', (f) => { f.comments[1].body = f.comments[1].body.replace(r.base.slice(0, 7), r.head.slice(0, 7)); }, /未被原結論閘/u],
+    ['主審沒有當版通過', (f) => { f.comments[2].body = f.comments[2].body.replace(r.head.slice(0, 7), r.base.slice(0, 7)); }, /須先取得指定主審/u],
+    ['主審通過缺小標', (f) => { f.comments[2].body = f.comments[2].body.replace('### 清單逐項結果', '結果'); }, /須先取得指定主審/u],
+    ['主審同輪衝突', (f) => { f.comments.push({ ...f.comments[2], id: 'conflict', body: f.comments[2].body.replace('通過', '需修改後再審') }); }, /須先取得指定主審/u],
+    ['PR 已關閉', (f) => { f.a.change.state = 'CLOSED'; }, /開啟中 PR/u],
+    ['HEAD 非完整碼', (f) => { f.a.change.headSha = r.head.slice(0, 7); }, /完整 HEAD/u],
+    ['無法核先後', (f) => { f.comments[0].createdAt = 'not-a-time'; }, /不配對/u],
+    ['普通模式不能帶收件參數', (f) => { f.flags.push('--post', '7'); }, /只用於備審/u],
+    ['重複授權旗標', (f) => { f.flags.push('--owner-approval', f.refs.approval); }, /不可重複/u],
+    ['一鍵不得清除證據', (f) => { f.flags.push('--run', '--purge'); }, /不自動 purge/u],
+  ];
+  for (const [name, alter, error] of cases) {
+    const f = continuationFixture(r); alter(f);
+    let execCalls = 0;
+    const result = main(['7', '--reviewer', 'Codex', '--dir', f.dir, ...f.flags], { ...f.options, runExec() { execCalls++; } });
+    assert.equal(result.code, 2, `${name}：${result.lines.join('\n')}`);
+    assert.match(result.lines.join('\n'), error, name);
+    assert.deepEqual(fs.readdirSync(f.dir), [], name);
+    assert.equal(sh(r.dir, 'worktree', 'list', '--porcelain').match(/^worktree /gmu).length, 1, name);
+    assert.equal(execCalls, 0, name);
+  }
+});
+
+test('獨立續審：收件重核原件、用途、設定、版本與輪次，拒收不記 postedAt', () => {
+  const r = repo();
+  const cases = [
+    ['原題正文改動', (f) => { f.comments[3].body += '改動\n'; }],
+    ['批准正文改動', (f) => { f.comments[4].body += '改動\n'; }],
+    ['阻擋正文改動', (f) => { f.comments[0].body += '改動\n'; }],
+    ['原件時間改動', (f) => { f.comments[0].createdAt = '2026-10-28T00:00:01Z'; }],
+    ['刪除原件', (f) => { f.comments.splice(3, 1); }],
+    ['換主審', (f) => { f.a.change.body = f.a.change.body.replace('**複審者**：Sol', '**複審者**：Boss'); }],
+    ['換實作者', (f) => { f.a.change.body = f.a.change.body.replace('**實作者**：Codex', '**實作者**：Boss'); }],
+    ['換 HEAD', (f) => { f.a.change.headSha = r.base; }],
+    ['換基底分支', (f) => { f.a.change.baseBranch = 'another'; }],
+    ['主審新阻擋', (f) => { f.comments.push(f.cv('primary-fail', 'Sol', 3, r.head, '需修改後再審', '04:00')); }],
+    ['追加更高輪', (f) => { f.comments.push(f.cv('newer', 'Codex', 8, r.base, '需修改後再審', '04:00')); }],
+    ['角色來源改動', (f) => { f.s.reviewers[0].source = 'desktop'; }],
+    ['模型改動', (f) => { f.s.reviewers[0].strongest = 'other-model'; }],
+    ['推理改動', (f) => { f.s.reviewers[0].maxEffort = 'low'; }],
+    ['啟動指令改動', (f) => { f.s.reviewers[0].command += ' extra'; }],
+    ['用途消失', (_f, rec) => { delete rec.continuation; }],
+    ['用途為 null', (_f, rec) => { rec.continuation = null; }],
+    ['用途未知', (_f, rec) => { rec.continuation.purpose = 'other-purpose'; }],
+    ['輪次漂移', (_f, rec) => { rec.round = 5; }],
+    ['場次時間漂移', (_f, rec) => { rec.startedAt = '2026-10-29T00:00:01Z'; }],
+    ['場次時間無時區', (_f, rec) => { rec.startedAt = '2026-10-29T00:00:00'; }],
+    ['場次基底漂移', (_f, rec) => { rec.base = r.head; }],
+    ['場次紀錄缺綁定', (_f, rec) => { delete rec.continuation.session; }],
+    ['場次輸出檔被換', (f, rec) => { rec.outFile = path.join(f.dir, 'other-output.log'); fs.writeFileSync(rec.outFile, f.output); }],
+    ['完整結論只剩摘要', (f, rec) => { fs.writeFileSync(rec.outFile, '審查完成，詳見平台\n'); }],
+  ];
+  for (const [name, alter] of cases) {
+    const f = continuationFixture(r);
+    const launched = main(['7', '--reviewer', 'Codex', ...f.flags], f.options);
+    assert.equal(launched.code, 0, launched.lines.join('\n'));
+    const rec = launched.record;
+    fs.writeFileSync(rec.outFile, f.output);
+    alter(f, rec);
+    const recFile = path.join(path.dirname(rec.promptFile), 'launch.json');
+    fs.writeFileSync(recFile, JSON.stringify(rec));
+    let postCalls = 0;
+    const got = main(['--post', '7', '--dir', f.dir], { ...f.options, runPost() { postCalls++; } });
+    assert.notEqual(got.code, 0, `${name}：${got.lines.join('\n')}`);
+    assert.equal(postCalls, 0, name);
+    assert.equal(JSON.parse(fs.readFileSync(recFile, 'utf8')).postedAt, undefined, name);
+    assert.ok(fs.existsSync(rec.tree) && fs.existsSync(rec.mutation), name);
+  }
+});
+
+test('獨立續審：正式代貼及完整自貼承接逐字一致，F7 只由同身分新結論解除', () => {
+  const r = repo();
+  for (const self of [false, true]) {
+    const f = continuationFixture(r);
+    let execCalls = 0;
+    let postCalls = 0;
+    const posted = { id: 'fresh-pass', author: 'ai-acct', createdAt: '2026-10-29T00:01:00Z', body: f.output };
+    const got = main(['7', '--reviewer', 'Codex', '--run', ...f.flags], {
+      ...f.options,
+      runExec(_cmd, { record }) {
+        execCalls++;
+        assert.equal(record.round, 4);
+        fs.writeFileSync(record.outFile, `${f.output}\n未貼\n`);
+        if (self) f.comments.push(posted);
+      },
+      runPost(_cmd, args) {
+        postCalls++;
+        assert.equal(fs.readFileSync(args.at(-1), 'utf8'), f.output);
+        f.comments.push(posted);
+      },
+    });
+    assert.equal(got.code, 0, got.lines.join('\n'));
+    assert.equal(execCalls, 1);
+    assert.equal(postCalls, self ? 0 : 1);
+    const record = JSON.parse(fs.readFileSync(path.join(f.dir, 'review-acme-kit-7-r4', 'launch.json'), 'utf8'));
+    assert.ok(record.postedAt && record.closedAt);
+    assert.equal(record.continuation.primary, 'Sol');
+    assert.ok(f.a.change.body.includes('**複審者**：Sol'));
+    const gate = evaluateVerdicts(f.comments, r.head, 'Sol', ['Boss', 'Codex', 'Sol'], { ownerRole: 'Boss' });
+    assert.deepEqual(gate.problems, []);
+  }
+});
+
+test('獨立續審：備審後、原生啟動前資格改變，保留雙樹而不呼叫模型', () => {
+  const r = repo(); const f = continuationFixture(r);
+  let commentsReads = 0;
+  f.a.comments = () => {
+    if (++commentsReads === 2) f.comments[4].body += 'changed\n';
+    return f.comments;
+  };
+  let execCalls = 0; let postCalls = 0;
+  const got = main(['7', '--reviewer', 'Codex', '--run', ...f.flags], { ...f.options,
+    runExec() { execCalls++; }, runPost() { postCalls++; } });
+  assert.equal(got.code, 1, got.lines.join('\n'));
+  assert.equal(execCalls, 0); assert.equal(postCalls, 0);
+  const rec = JSON.parse(fs.readFileSync(path.join(f.dir, 'review-acme-kit-7-r4', 'launch.json'), 'utf8'));
+  assert.equal(rec.postedAt, undefined); assert.equal(rec.closedAt, undefined);
+  assert.ok(fs.existsSync(rec.tree) && fs.existsSync(rec.mutation));
+});
+
+test('獨立續審：代貼前後競態與不明結果不重貼、不寫收據、不刪現場', () => {
+  const r = repo();
+  for (const mode of ['before-candidate', 'after-missing', 'after-different', 'after-question', 'after-record', 'throw-after-send']) {
+    const f = continuationFixture(r);
+    const launched = main(['7', '--reviewer', 'Codex', ...f.flags], f.options);
+    assert.equal(launched.code, 0, launched.lines.join('\n'));
+    const rec = launched.record; const recFile = path.join(path.dirname(rec.promptFile), 'launch.json');
+    fs.writeFileSync(rec.outFile, f.output);
+    const candidate = { id: 'new-pass', author: 'ai-acct', createdAt: '2026-10-29T00:01:00Z', body: f.output };
+    let reads = 0; let postCalls = 0;
+    f.a.comments = () => {
+      if (mode === 'before-candidate' && ++reads === 2) f.comments.push(candidate);
+      return f.comments;
+    };
+    const got = main(['--post', '7', '--dir', f.dir], { ...f.options,
+      runPost() {
+        postCalls++;
+        if (mode !== 'after-missing') f.comments.push(candidate);
+        if (mode === 'after-different') candidate.body += 'different\n';
+        if (mode === 'after-question') f.comments[3].body += 'changed\n';
+        if (mode === 'after-record') fs.writeFileSync(recFile, JSON.stringify({ ...rec, injected: true }));
+        if (mode === 'throw-after-send') throw new LaunchError('transport ended without confirmation');
+      },
+    });
+    assert.equal(got.code, 2, `${mode}：${got.lines.join('\n')}`);
+    assert.equal(postCalls, mode === 'before-candidate' ? 0 : 1, mode);
+    if (postCalls) assert.match(got.lines.join('\n'), /已送出或結果不明/u);
+    const saved = JSON.parse(fs.readFileSync(recFile, 'utf8'));
+    assert.equal(saved.postedAt, undefined, mode); assert.equal(saved.closedAt, undefined, mode);
+    assert.ok(fs.existsSync(rec.tree) && fs.existsSync(rec.mutation), mode);
+    assert.ok(fs.existsSync(rec.promptFile) && fs.existsSync(rec.outFile), mode);
+  }
+});
+
+test('獨立續審：自貼必須唯一、啟動後、完整同正文；模型失敗不承接既有候選', () => {
+  const r = repo();
+  for (const mode of ['summary', 'missing', 'duplicate', 'conflict', 'different', 'early', 'exec-fail']) {
+    const f = continuationFixture(r); let postCalls = 0;
+    const got = main(['7', '--reviewer', 'Codex', '--run', ...f.flags], { ...f.options,
+      runExec(_cmd, { record }) {
+        const body = f.output;
+        f.comments.push({ id: 'self-pass', author: 'ai-acct', createdAt: mode === 'early' ? record.startedAt : '2026-10-29T00:01:00Z', body });
+        if (mode === 'duplicate' || mode === 'conflict') f.comments.push({ ...f.comments.at(-1), id: 'another',
+          body: mode === 'conflict' ? body.replace('結論：通過', '結論：需修改後再審') : body });
+        if (mode !== 'missing') fs.writeFileSync(record.outFile, mode === 'summary' ? '完成，請看平台\n' : mode === 'different' ? `${body}different\n` : body);
+        if (mode === 'exec-fail') throw new LaunchError('native failed');
+      }, runPost() { postCalls++; },
+    });
+    assert.notEqual(got.code, 0, `${mode}：${got.lines.join('\n')}`);
+    assert.equal(postCalls, 0, mode);
+    const rec = JSON.parse(fs.readFileSync(path.join(f.dir, 'review-acme-kit-7-r4', 'launch.json'), 'utf8'));
+    assert.equal(rec.postedAt, undefined, mode); assert.equal(rec.closedAt, undefined, mode);
+    assert.ok(fs.existsSync(rec.tree) && fs.existsSync(rec.mutation), mode);
+  }
+});
+
+test('獨立續審：非通過結論照實代貼，普通 Sol 備審不受新用途影響', () => {
+  const r = repo();
+  for (const conclusion of ['需修改後再審', '不可合併']) {
+    const f = continuationFixture(r);
+    const launched = main(['7', '--reviewer', 'Codex', ...f.flags], f.options);
+    assert.equal(launched.code, 0, launched.lines.join('\n'));
+    const body = f.output.replace('結論：通過', `結論：${conclusion}`);
+    fs.writeFileSync(launched.record.outFile, body);
+    const got = main(['--post', '7', '--dir', f.dir], { ...f.options, runPost(_cmd, args) {
+      assert.equal(fs.readFileSync(args.at(-1), 'utf8'), body);
+      f.comments.push({ id: 'new-block', author: 'ai-acct', createdAt: '2026-10-29T00:01:00Z', body });
+    } });
+    assert.equal(got.code, 0, got.lines.join('\n'));
+    assert.ok(evaluateVerdicts(f.comments, r.head, 'Sol', ['Boss', 'Codex', 'Sol'], { ownerRole: 'Boss' }).problems.length);
+  }
+  const f = continuationFixture(r);
+  const ordinary = main(['7', '--reviewer', 'Sol'], f.options);
+  assert.equal(ordinary.code, 0, ordinary.lines.join('\n'));
+  assert.equal(ordinary.record.continuation, undefined);
+  assert.match(ordinary.command, /--model gpt-6.1-sol --effort xhigh/u);
+});
+
+test('獨立續審：真 CLI 穿過合成平台與原生命令替身，留正文及同版紀錄、不啟真模型', () => {
+  const r = repo(); const f = continuationFixture(r);
+  const copy = tmp('continuation-native-kit-');
+  fs.cpSync(path.join(__dirname, '..', 'tools'), path.join(copy, 'tools'), { recursive: true });
+  fs.cpSync(path.join(__dirname, '..', 'templates'), path.join(copy, 'templates'), { recursive: true });
+  const platformData = path.join(copy, 'answers.json');
+  const platformScript = path.join(copy, 'platform.cjs');
+  const runner = path.join(copy, 'model-fixture.cjs');
+  const answers = { ...f.a, branchSha: { sha: r.base }, comments: f.comments, allComments: f.a.allComments() };
+  fs.writeFileSync(platformData, JSON.stringify(answers));
+  fs.writeFileSync(platformScript, `
+const fs = require('node:fs');
+const dataFile = ${JSON.stringify(platformData)};
+const data = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+const op = process.argv[2];
+if (op === 'post') {
+  data.comments.push({id: 'native-pass', author: 'ai-acct', createdAt: new Date(Date.now() + 1000).toISOString(), body: fs.readFileSync(process.argv[4], 'utf8')});
+  fs.writeFileSync(dataFile, JSON.stringify(data));
+} else process.stdout.write(JSON.stringify(data[op]));
+`);
+  fs.writeFileSync(runner, `
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+assert.equal(process.argv[2], 'gpt-6-astra');
+assert.equal(process.argv[3], 'max');
+assert.notEqual(process.argv[4], process.argv[5]);
+fs.writeFileSync(process.argv[6], ${JSON.stringify(f.output)});
+`);
+  f.s.platform.operations = Object.fromEntries(['change', 'comments', 'changedFiles', 'branchSha', 'allComments'].map((op) =>
+    [op, [process.execPath, platformScript, op, ...(op === 'allComments' ? [] : [op === 'branchSha' ? '{branch}' : '{change}'])]]));
+  f.s.reviewers[0].command = `"${process.execPath}" "${runner}" {model} {effort} {reviewTree} {mutationCopy} {outFile}`;
+  f.s.reviewLaunch.postComment = `"${process.execPath}" "${platformScript}" post {change} <你寫好的結論檔>`;
+  fs.writeFileSync(path.join(copy, 'settings.json'), JSON.stringify(f.s));
+  const env = gitEnv(); delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync(process.execPath, [path.join(copy, 'tools/review-launch.js'), '7', '--reviewer', 'Codex', '--run', '--dir', f.dir, ...f.flags],
+    { cwd: r.dir, env, encoding: 'utf8', timeout: 30000 });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const recFile = path.join(f.dir, 'review-acme-kit-7-r4', 'launch.json');
+  const rec = JSON.parse(fs.readFileSync(recFile, 'utf8'));
+  assert.ok(rec.postedAt && rec.closedAt);
+  assert.equal(rec.head, r.head); assert.equal(rec.continuation.primary, 'Sol');
+  assert.equal(fs.readFileSync(rec.outFile, 'utf8'), f.output);
+  assert.ok(fs.existsSync(rec.promptFile));
+  const posted = JSON.parse(fs.readFileSync(platformData, 'utf8')).comments.filter((c) => c.id === 'native-pass');
+  assert.equal(posted.length, 1); assert.equal(posted[0].body, f.output);
+});
 
 test('①範本的格子跟產生器的表一一對上；同一個字樣在不同位置填不同的值；只留 <三選一>', () => {
   const text = fill(TEMPLATE, values());
@@ -1347,6 +1677,11 @@ test('⑫複審後掃生命週期（G1、G2）：templates/scan-record.md 提示
     });
     assert.equal(ok.code, 0, ok.lines.join('\n'));
     assert.match(ok.prompt, /這一支的實作者：`Alpha`；複審者：`Beta`/u, '掃描提示的實作者與複審者填對角色');
+    const capabilityHint = '檢查 templates/scan-record.md 的能力分支，重跑 node --test tests/review-launch.test.js';
+    assert.match(ok.prompt, /Grok 隔離掃描無法使用終端/u, capabilityHint);
+    assert.match(ok.prompt, /考題未執行/u, capabilityHint);
+    assert.match(ok.prompt, /僅在明確允許終端的環境執行/u, capabilityHint);
+    assert.doesNotMatch(ok.prompt, /整支變更怎麼看：在掃描樹裡跑/u, capabilityHint);
     const folder = path.dirname(ok.record.promptFile);
     assert.ok(fs.existsSync(path.join(ok.record.tree, 'a.txt')), '唯讀掃描樹已開出');
     assert.ok(fs.existsSync(ok.record.promptFile) && fs.existsSync(path.join(folder, 'scan.json')), '提示檔與 scan.json 已寫出');
@@ -1701,7 +2036,7 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
     const expiredAuth = {
       [entryKey]: {
         auth_mode: 'oidc',
-        user_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        user_id: '10000000-0000-4000-8000-000000000001',
         create_time: '2026-10-19T00:00:00.000Z',
         expires_at: '2026-10-19T00:10:00.000Z',
         oidc_issuer: GROK_PINNED_ISSUER,
@@ -1771,18 +2106,25 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
       spawnGrok: async ({ boxWorktree, boxMutation, boxPromptFile, grokArgs }) => {
         const pTxt = fs.readFileSync(boxPromptFile, 'utf8');
         assert.ok(pTxt.includes(boxWorktree) && pTxt.includes(boxMutation), '提示檔內審查樹與突變副本路徑皆已改寫為盒內路徑');
-        assert.ok(grokArgs.at(-1).includes(pTxt), '-p 指令直接帶入完整提示全文，避免跨目錄讀檔卡住');
+        assert.ok(grokArgs.at(-1).includes(boxPromptFile), '指令含 boxPromptFile');
+        assert.ok(!grokArgs.at(-1).includes(pTxt), '未 inline 全文');
+        assert.ok(pTxt.includes('審查樹：') && pTxt.includes(boxWorktree), '實檔包含原提示且 rewrite paths 正確');
         const leak = spawnSync('git', ['-C', boxWorktree, 'show', `${unrelatedSha}:private-branch.txt`], { env: gitEnv(), encoding: 'utf8' });
         assert.notEqual(leak.status, 0, '盒內工作樹不可含未送審本機分支物件');
         const prevDiff = sh(boxWorktree, 'diff', `${prevRoundSha}..${r.head}`);
         assert.match(prevDiff, /-prev-round-diverged/u, '盒內工作樹必須保留非祖先的上一輪提交並可比對跨輪差異');
         // 盒內突變副本的工作區可改檔，盒內審查樹與兩邊 .git 保持不變
         fs.writeFileSync(path.join(boxMutation, 'a.txt'), 'mutated\n');
-        return { status: 0, stdout: '🤖 Grok｜來源：Grok CLI｜審 `1234567`｜r1｜結論：通過\n### 本輪實際用的設定\n- ok\n### 清單逐項結果\n- 零發現\n未貼\n', stderr: '' };
+        const text = '🤖 Grok｜來源：Grok CLI｜審 `1234567`｜r1｜結論：通過\n### 本輪實際用的設定\n- ok\n### 清單逐項結果\n- 零發現\n未貼\n';
+        return {
+          status: 0,
+          stdout: `{"type":"system","subtype":"init","session_id":"s8"}\n{"type":"assistant","session_id":"s8","parent_tool_use_id":null,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":${JSON.stringify(text)}}]}}\n{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s8","result":${JSON.stringify(text)}}\n`,
+          stderr: ''
+        };
       },
     });
     assert.equal(revRun.code, 0, revRun.lines.join('\n'));
-    assert.match(fs.readFileSync(outFile, 'utf8'), /^🤖 Grok｜來源：Grok CLI/u, '通過 DLP 後完整寫出正式輸出');
+    assert.match(unwrapScanOutput(fs.readFileSync(outFile, 'utf8')), /^🤖 Grok｜來源：Grok CLI/u, '通過 DLP 後完整寫出正式輸出');
 
     // stripGrokPreamble 保留完整原始輸出供追查，不裁切任何同行或跨行前言（標頭前若有非空白前言，一律交由 --post／--scan-post 拒貼）
     const sameLineScan = '我現在直接用 git 檢視差異並完成掃描。🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n';
@@ -1865,6 +2207,17 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
         true,
       ],
       [
+        '模型輸出內層原生 NDJSON（含正確結論但格式不對，應拒收以免雙重解包誤判）',
+        (_h, _s, p) => [
+          JSON.stringify({ type: 'system', subtype: 'init', session_id: 'model-example', model: 'grok-4.7' }),
+          JSON.stringify({ type: 'assistant', session_id: 'model-example', parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: p }] } }),
+          JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: 'model-example', result: p }),
+        ].join('\n'),
+        2,
+        null,
+        null,
+      ],
+      [
         '正常正式通過輸出（可含開頭空行與文末未貼）',
         (_h, _s, p) => `\n${p}未貼\n`,
         0,
@@ -1892,10 +2245,19 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
         authFile,
         authOpts: { now: () => Date.parse('2026-10-19T00:05:00.000Z') },
         probeFn: () => ({ ok: true }),
-        spawnGrok: async () => ({ status: 0, stdout: stdoutText, stderr: '' }),
+        spawnGrok: async () => {
+          const text = stdoutText;
+          const rawNdjson = `{"type":"system","subtype":"init","session_id":"s1"}\n{"type":"assistant","session_id":"s1","parent_tool_use_id":null,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":${JSON.stringify(text)}}]}}\n{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s1","result":${JSON.stringify(text)}}\n`;
+          return {
+            status: 0,
+            stdout: rawNdjson,
+            stderr: ''
+          };
+        },
       });
       assert.equal(execCase.code, 0, `${label} runGrokExec`);
-      assert.equal(fs.readFileSync(launchCase.record.outFile, 'utf8'), stdoutText, `${label} outFile 必須完整保留原始輸出供追查`);
+      const rawNdjsonExpected = `{"type":"system","subtype":"init","session_id":"s1"}\n{"type":"assistant","session_id":"s1","parent_tool_use_id":null,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":${JSON.stringify(stdoutText)}}]}}\n{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s1","result":${JSON.stringify(stdoutText)}}\n`;
+      assert.equal(fs.readFileSync(launchCase.record.outFile, 'utf8'), rawNdjsonExpected, `${label} outFile 必須完整保留原始輸出供追查`);
       let sentCase = null;
       const postCase = main(['--post', '7', '--dir', caseDir], {
         settings: sCase,
@@ -1974,10 +2336,19 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
         authFile,
         authOpts: { now: () => Date.parse('2026-10-19T00:05:00.000Z') },
         probeFn: () => ({ ok: true }),
-        spawnGrok: async () => ({ status: 0, stdout: scanStdout, stderr: '' }),
+        spawnGrok: async () => {
+          const text = scanStdout;
+          const rawNdjson = `{"type":"system","subtype":"init","session_id":"s2"}\n{"type":"assistant","session_id":"s2","parent_tool_use_id":null,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":${JSON.stringify(text)}}]}}\n{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s2","result":${JSON.stringify(text)}}\n`;
+          return {
+            status: 0,
+            stdout: rawNdjson,
+            stderr: ''
+          };
+        },
       });
       assert.equal(scanExecRes.code, 0, `${scanLabel} runGrokExec`);
-      assert.equal(fs.readFileSync(scanLaunchRes.record.outFile, 'utf8'), scanStdout, `${scanLabel} outFile 必須完整保留原始輸出供追查`);
+      const rawNdjsonExpected = `{"type":"system","subtype":"init","session_id":"s2"}\n{"type":"assistant","session_id":"s2","parent_tool_use_id":null,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":${JSON.stringify(scanStdout)}}]}}\n{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s2","result":${JSON.stringify(scanStdout)}}\n`;
+      assert.equal(fs.readFileSync(scanLaunchRes.record.outFile, 'utf8'), rawNdjsonExpected, `${scanLabel} outFile 必須完整保留原始輸出供追查`);
       let sentScanBody = null;
       const scanPostRes = main(['--scan-post', '7', '--dir', scanCaseDir], {
         settings: sScanCase,
@@ -2016,7 +2387,15 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
         authFile,
         authOpts: { now: () => Date.parse('2026-10-19T00:05:00.000Z') },
         probeFn: () => { probeCalls += 1; return probeRet; },
-        spawnGrok: async () => { modelCalls += 1; return { status: 0, stdout: '🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n', stderr: '' }; },
+        spawnGrok: async () => {
+          modelCalls += 1;
+          const text = '🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n';
+          return {
+            status: 0,
+            stdout: `{"type":"system","subtype":"init","session_id":"s3"}\n{"type":"assistant","session_id":"s3","parent_tool_use_id":null,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":${JSON.stringify(text)}}]}}\n{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s3","result":${JSON.stringify(text)}}\n`,
+            stderr: ''
+          };
+        },
       });
       assert.equal(probeCalls, 1, `${probeLabel} 應實際執行預檢一次`);
       assert.equal(modelCalls, 0, `${probeLabel} 預檢未通過時絕不可啟動模型程序`);
@@ -2024,6 +2403,9 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
       assert.match(probeFailRun.lines.join('\n'), /拒絕啟動/u, `${probeLabel} 應印拒絕啟動原因`);
       assert.equal(fs.existsSync(probeFailOut), false, `${probeLabel} 不可寫出結果檔`);
     }
+
+    const dummyScanJsonPath = path.join(tmp, 'scan.json');
+    fs.writeFileSync(dummyScanJsonPath, JSON.stringify({ root: r.dir, base: r.base, head: r.head }));
 
     // 受控認證通道攔截到未授權請求（blockingRefusals > 0）時，正式啟動端必須退 2 且拒絕寫出結果
     const relayRefusalOut = path.join(tmp, 'relay-refusal-out.md');
@@ -2041,9 +2423,10 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
       spawnGrok: async ({ relayPort }) => {
         const res = await fetch(`http://127.0.0.1:${relayPort}/v1/forbidden-endpoint`);
         assert.equal(res.status, 403, '受控轉送器對未授權路徑應回 403');
+        const text = '🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n';
         return {
           status: 0,
-          stdout: '🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n',
+          stdout: `{"type":"system","subtype":"init","session_id":"s5"}\n{"type":"assistant","session_id":"s5","parent_tool_use_id":null,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":${JSON.stringify(text)}}]}}\n{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s5","result":${JSON.stringify(text)}}\n`,
           stderr: '',
         };
       },
@@ -2065,11 +2448,14 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
       authFile,
       authOpts: { now: () => Date.parse('2026-10-19T00:05:00.000Z') },
       probeFn: () => ({ ok: true }),
-      spawnGrok: async () => ({
-        status: 0,
-        stdout: '前言洩漏 NEW-KEY-SECRET-3333\n🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n',
-        stderr: '',
-      }),
+      spawnGrok: async () => {
+        const text = '前言洩漏 NEW-KEY-SECRET-3333\n🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n';
+        return {
+          status: 0,
+          stdout: `{"type":"system","subtype":"init","session_id":"s6"}\n{"type":"assistant","session_id":"s6","parent_tool_use_id":null,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":${JSON.stringify(text)}}]}}\n{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s6","result":${JSON.stringify(text)}}\n`,
+          stderr: '',
+        };
+      },
     });
     assert.equal(dlpRun.code, 2, '前言含憑證針必須被 DLP 攔截');
     assert.equal(fs.existsSync(dlpOut), false);
@@ -2092,7 +2478,12 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
         const hook = path.join(boxWorktree, '.git', 'r5-fsmonitor.sh');
         fs.writeFileSync(hook, `#!/bin/sh\nprintf 'SYNTHETIC-HOST-EXECUTION' > '${marker}'\nprintf 'token\\000'\n`, { mode: 0o700 });
         sh(boxWorktree, 'config', 'core.fsmonitor', hook);
-        return { status: 0, stdout: '🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n', stderr: '' };
+        const text = '🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n';
+        return {
+          status: 0,
+          stdout: `{"type":"system","subtype":"init","session_id":"s7"}\n{"type":"assistant","session_id":"s7","parent_tool_use_id":null,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":${JSON.stringify(text)}}]}}\n{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s7","result":${JSON.stringify(text)}}\n`,
+          stderr: ''
+        };
       },
     });
     assert.equal(fs.existsSync(marker), false, '盒外收尾絕不可執行盒內 .git/config 的 core.fsmonitor');
@@ -2100,6 +2491,1157 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
     assert.equal(fs.existsSync(badOut), false);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('Grok 隔離執行：startGrokRelay 未完上游串流與連線時，close 應在合理短界內結束且資源確實關閉', async () => {
+  const http = require('node:http');
+  const net = require('node:net');
+  const { startGrokRelay, GROK_DUMMY_BEARER_PREFIX } = require('../tools/review-launch.js');
+  let relay;
+  let upstreamServer;
+  let upstreamSocket;
+  let clientSocket;
+
+  try {
+    upstreamServer = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.write('{"streaming": "start"}\n');
+      // 保持連線開啟，不 end()
+    });
+    const upstreamHost = await new Promise((resolve) => {
+      upstreamServer.listen(0, '127.0.0.1', () => {
+        resolve(`http://127.0.0.1:${upstreamServer.address().port}`);
+      });
+    });
+    upstreamServer.on('connection', (socket) => { upstreamSocket = socket; });
+
+    const dummyToken = GROK_DUMMY_BEARER_PREFIX + 'a'.repeat(64);
+    relay = await startGrokRelay({
+      realBearer: 'REAL-TOKEN',
+      dummyBearer: dummyToken,
+      upstreamHost,
+      requestImpl: (options, onResponse) => {
+        return http.request({
+          hostname: '127.0.0.1',
+          port: upstreamServer.address().port,
+          method: options.method,
+          path: options.path,
+          headers: options.headers
+        }, onResponse);
+      },
+    });
+
+    clientSocket = new net.Socket();
+    await new Promise((resolve) => clientSocket.connect(relay.port, '127.0.0.1', resolve));
+
+    const chunkReceived = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('chunk timeout')), 2000);
+      clientSocket.on('data', (data) => {
+        if (data.toString().includes('{"streaming": "start"}')) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    });
+
+    clientSocket.write(`GET /v1/models HTTP/1.1\r\nHost: 127.0.0.1:${relay.port}\r\nAuthorization: Bearer ${dummyToken}\r\n\r\n`);
+    await chunkReceived;
+
+    const t0 = Date.now();
+
+    const closePromise = relay.close();
+    let closeTimer;
+    const timeoutPromise = new Promise((_, reject) => {
+      closeTimer = setTimeout(() => reject(new Error('TIMEOUT')), 1000);
+    });
+    try {
+      await Promise.race([closePromise, timeoutPromise]);
+    } catch (err) {
+      if (err.message === 'TIMEOUT') {
+        assert.fail('relay.close() hung and timed out');
+      }
+      throw err;
+    } finally {
+      clearTimeout(closeTimer);
+    }
+    const t1 = Date.now();
+
+    await relay.close(); // Verify double close is safe
+
+    assert.ok(t1 - t0 < 500, `close 應該在短時間內結束，實際花了 ${t1 - t0}ms`);
+
+    await new Promise(resolve => {
+      if (clientSocket.destroyed) resolve();
+      else clientSocket.once('close', resolve);
+    });
+  } finally {
+    if (clientSocket) clientSocket.destroy();
+    if (upstreamSocket) upstreamSocket.destroy();
+    if (relay && relay.server) relay.server.closeAllConnections();
+    if (upstreamServer) upstreamServer.closeAllConnections();
+    if (relay && typeof relay.close === 'function') await relay.close().catch(() => {});
+    if (upstreamServer) upstreamServer.close();
+  }
+});
+
+function cleanupFailureEvidence(result, signals = []) {
+  const diagnostic = result.diagnostic || {};
+  const pick = (value, values) => values.includes(value) ? value : null;
+  const integer = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+  const boolean = value => typeof value === 'boolean' ? value : null;
+  const projected = {
+    status: integer(result.status), groupEmpty: boolean(result.groupEmpty),
+    diagnostic: {
+      trigger: pick(diagnostic.trigger, ['record_failed', 'spawn_failed', 'child_exit', 'deadline', 'cancelled', 'relay_problem', 'unknown']),
+      vetoTrigger: pick(diagnostic.vetoTrigger, ['none', 'deadline', 'cancelled', 'relay_problem', 'unknown']),
+      childExitCode: integer(diagnostic.childExitCode), childSignalled: boolean(diagnostic.childSignalled),
+      groupState: pick(diagnostic.groupState, ['empty', 'alive', 'unknown']), pipesClosed: boolean(diagnostic.pipesClosed),
+      cleanupFailed: boolean(diagnostic.cleanupFailed), elapsedMs: integer(diagnostic.elapsedMs),
+    },
+    signals: signals.map(event => ({
+      signal: pick(event.signal, [0, 'SIGTERM', 'SIGKILL']), ownGroup: boolean(event.ownGroup),
+      outcome: pick(event.outcome, ['ok', 'ESRCH', 'EPERM', 'EACCES', 'EINVAL', 'OTHER']),
+    })),
+  };
+  return `檢查 runGrokChild 群組清理，重跑本檔有界子程序題；${JSON.stringify(projected)}`;
+}
+
+function observeCleanupKill(events, getPid, kill) {
+  return (pid, signal) => {
+    const ownPid = getPid();
+    const ownGroup = Number.isSafeInteger(ownPid) && ownPid > 1 && pid === -ownPid;
+    try {
+      const value = kill(pid, signal);
+      events.push({ signal, ownGroup, outcome: 'ok' });
+      return value;
+    } catch (error) {
+      events.push({ signal, ownGroup, outcome: ['ESRCH', 'EPERM', 'EACCES', 'EINVAL'].includes(error.code) ? error.code : 'OTHER' });
+      throw error;
+    }
+  };
+}
+
+test('Grok 清理考題診斷先投影且觀測不改呼叫結果', () => {
+  const secret = 'SYNTHETIC-UNSAFE-CLEANUP-CONTENT';
+  const events = [];
+  const calls = [];
+  const error = Object.assign(new Error(secret), { code: secret });
+  const value = {};
+  const observed = observeCleanupKill(events, () => 12345, (pid, signal) => {
+    calls.push([pid, signal]);
+    if (signal === 0) throw error;
+    return value;
+  });
+  assert.equal(observed(-12345, 'SIGTERM'), value);
+  assert.throws(() => observed(-12345, 0), e => e === error);
+  assert.deepEqual(calls, [[-12345, 'SIGTERM'], [-12345, 0]]);
+  assert.deepEqual(events, [{ signal: 'SIGTERM', ownGroup: true, outcome: 'ok' }, { signal: 0, ownGroup: true, outcome: 'OTHER' }]);
+  const text = cleanupFailureEvidence({ status: 2, groupEmpty: false, stdout: secret, stderr: secret, error, env: secret, command: secret, path: secret,
+    diagnostic: { trigger: 'child_exit', vetoTrigger: secret, childExitCode: 0, childSignalled: false, groupState: 'unknown', pipesClosed: true,
+      cleanupFailed: true, elapsedMs: 42, extra: secret } }, [...events, { signal: secret, ownGroup: secret, outcome: secret, error }]);
+  assert.equal(text.includes(secret), false, '檢查 cleanupFailureEvidence 的白名單投影，重跑本檔清理考題診斷題');
+  assert.ok(text.includes('"groupState":"unknown"') && text.includes('"cleanupFailed":true'));
+  assert.ok(text.includes('"outcome":"OTHER"') && text.includes('"signal":null'));
+});
+
+test('Grok 有界子程序正常、非零、逾時與取消皆收本次群組', async () => {
+  const { runGrokChild } = require('../tools/review-launch');
+  assert.equal(typeof runGrokChild, 'function');
+  const { gitEnv } = require('../tools/git-env');
+  for (const mode of ['normal', 'nonzero', 'timeout', 'cancel', 'relay', 'SIGINT', 'SIGTERM']) {
+    const controller = new AbortController();
+    let broken = false;
+    const beforeInt = process.listenerCount('SIGINT');
+    const beforeTerm = process.listenerCount('SIGTERM');
+    const timer = mode === 'cancel' ? setTimeout(() => controller.abort(), 100)
+      : mode === 'relay' ? setTimeout(() => { broken = true; }, 100)
+      : ['SIGINT', 'SIGTERM'].includes(mode) ? setTimeout(() => process.emit(mode, mode, mode === 'SIGINT' ? 2 : 15), 100) : null;
+    const source = mode === 'normal' ? 'process.stdout.write("合成🤖");'
+      : mode === 'nonzero' ? 'process.exitCode=3;' : 'setTimeout(()=>process.exit(0),500);';
+    let result;
+    let fixedLimits;
+    try {
+      result = await runGrokChild(process.execPath, ['-e', source], { env: gitEnv() }, {
+        signal: controller.signal, wallMs: mode === 'timeout' ? 100 : 3000,
+        cleanupMs: 2000, failed: () => broken,
+        onStart: limits => { fixedLimits = limits; },
+      });
+    } finally { clearTimeout(timer); }
+    const evidence = `${mode}：${cleanupFailureEvidence(result)}`;
+    assert.equal(result.status, mode === 'normal' ? 0 : mode === 'nonzero' ? 3 : 2, evidence);
+    assert.ok(result.diagnostic, '檢查 runGrokChild 的有限診斷，重跑本檔有界子程序題');
+    assert.equal(result.diagnostic.trigger, ({ normal: 'child_exit', nonzero: 'child_exit', timeout: 'deadline', cancel: 'cancelled', relay: 'relay_problem', SIGINT: 'cancelled', SIGTERM: 'cancelled' })[mode]);
+    assert.equal(result.diagnostic.childExitCode, mode === 'normal' ? 0 : mode === 'nonzero' ? 3 : null);
+    assert.equal(result.diagnostic.groupState, 'empty', evidence);
+    assert.equal(result.diagnostic.pipesClosed, true, evidence);
+    assert.equal(result.diagnostic.cleanupFailed, false, evidence);
+    assert.ok(result.diagnostic.elapsedMs >= 0);
+    if (mode === 'normal') assert.equal(result.stdout, '合成🤖');
+    assert.equal(result.groupEmpty, true, evidence);
+    assert.equal(result.deadline, fixedLimits.deadline);
+    assert.equal(fixedLimits.deadline - fixedLimits.startedAt, mode === 'timeout' ? 100 : 3000);
+    assert.throws(() => process.kill(-result.pid, 0), { code: 'ESRCH' });
+    assert.equal(process.listenerCount('SIGINT'), beforeInt);
+    assert.equal(process.listenerCount('SIGTERM'), beforeTerm);
+  }
+});
+
+test('Grok 清理期間的首個否決保留原始退出與安全診斷', async () => {
+  const { runGrokChild } = require('../tools/review-launch');
+  const { EventEmitter } = require('node:events');
+  const { PassThrough } = require('node:stream');
+  for (const mode of ['cancelled', 'deadline', 'relay_problem', 'cancel_then_relay', 'none']) {
+    const controller = new AbortController();
+    const child = new EventEmitter();
+    child.pid = 12345678;
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.unref = () => {};
+    let cleaning = false;
+    let empty = false;
+    let relayObserved = false;
+    const timers = [];
+    const close = () => { empty = true; child.emit('close', 0, null); };
+    let result;
+    try {
+      result = await runGrokChild('synthetic-only', [], {}, {
+        signal: controller.signal, wallMs: mode === 'deadline' ? 50 : 2000, cleanupMs: 1000,
+        spawnChild() { queueMicrotask(() => child.emit('exit', 0, null)); return child; },
+        kill(pid, signal) {
+          assert.equal(pid, -child.pid);
+          if (signal === 0 && empty) throw Object.assign(new Error('synthetic'), { code: 'ESRCH' });
+          if (signal === 'SIGTERM') {
+            cleaning = true;
+            queueMicrotask(() => {
+              if (mode === 'cancelled' || mode === 'cancel_then_relay') controller.abort();
+              if (mode === 'none' || mode === 'cancelled') close();
+              if (mode === 'deadline') timers.push(setTimeout(close, 100));
+            });
+          }
+          return true;
+        },
+        failed() {
+          if (!cleaning || !['relay_problem', 'cancel_then_relay'].includes(mode)) return false;
+          relayObserved = true;
+          queueMicrotask(close);
+          return true;
+        },
+      });
+    } finally { timers.forEach(clearTimeout); }
+    assert.equal(cleaning, true, mode);
+    assert.equal(relayObserved, ['relay_problem', 'cancel_then_relay'].includes(mode), mode);
+    assert.equal(result.status, mode === 'none' ? 0 : 2, `${mode}：${cleanupFailureEvidence(result)}`);
+    assert.equal(result.diagnostic.trigger, 'child_exit', mode);
+    assert.equal(result.diagnostic.childExitCode, 0, mode);
+    assert.equal(result.diagnostic.childSignalled, false, mode);
+    assert.equal(result.diagnostic.groupState, 'empty', mode);
+    assert.equal(result.diagnostic.pipesClosed, true, mode);
+    assert.equal(result.diagnostic.cleanupFailed, false, mode);
+    assert.equal(result.diagnostic.vetoTrigger, mode === 'cancel_then_relay' ? 'cancelled' : mode, mode);
+  }
+});
+
+test('Grok 有界子程序診斷分離觸發與清理且不留合成機密', async () => {
+  const { runGrokChild } = require('../tools/review-launch');
+  const { gitEnv } = require('../tools/git-env');
+  const secret = 'SYNTHETIC-PRIVATE-DIAGNOSTIC';
+  const source = `process.stdout.write(${JSON.stringify(secret)});process.stderr.write(${JSON.stringify(secret)});process.exitCode=2;`;
+  const direct = await runGrokChild(process.execPath, ['-e', source], { env: gitEnv() });
+  assert.equal(direct.status, 2);
+  assert.equal(direct.diagnostic.trigger, 'child_exit');
+  assert.equal(direct.diagnostic.childExitCode, 2);
+  assert.equal(direct.diagnostic.childSignalled, false);
+  assert.equal(direct.stdout, secret);
+  assert.equal(direct.stderr, secret);
+  assert.equal(JSON.stringify(direct.diagnostic).includes(secret), false);
+  for (const stage of ['record', 'spawn']) {
+    let spawned = false;
+    const failed = await runGrokChild(secret, [secret], { env: gitEnv() }, {
+      onStart() { if (stage === 'record') throw new Error(secret); },
+      spawnChild() { spawned = true; throw new Error(secret); },
+    });
+    assert.equal(failed.status, 2);
+    assert.equal(failed.diagnostic.trigger, stage === 'record' ? 'record_failed' : 'spawn_failed');
+    assert.equal(spawned, stage === 'spawn');
+    assert.equal(failed.diagnostic.childExitCode, null);
+    assert.equal(JSON.stringify(failed.diagnostic).includes(secret), false);
+  }
+  const missing = await runGrokChild(`/synthetic-missing/${secret}`, [], { env: gitEnv() }, { cleanupMs: 100 });
+  assert.equal(missing.status, 2);
+  assert.equal(missing.diagnostic.trigger, 'spawn_failed');
+  assert.equal(missing.diagnostic.childExitCode, null);
+  assert.equal(JSON.stringify(missing.diagnostic).includes(secret), false);
+  const combined = await runGrokChild(process.execPath, ['-e', 'setTimeout(()=>process.exit(0),250)'], { env: gitEnv() }, {
+    wallMs: 50, cleanupMs: 500,
+    kill(pid, signal) { if (signal === 0) throw Object.assign(new Error(secret), { code: 'EPERM' }); return process.kill(pid, signal); },
+  });
+  assert.equal(combined.status, 2, cleanupFailureEvidence(combined));
+  assert.equal(combined.diagnostic.trigger, 'deadline');
+  assert.equal(combined.diagnostic.childExitCode, 0);
+  assert.equal(combined.diagnostic.groupState, 'unknown');
+  assert.equal(combined.diagnostic.cleanupFailed, true);
+  assert.equal(combined.diagnostic.pipesClosed, true);
+  assert.equal(JSON.stringify(combined.diagnostic).includes(secret), false);
+  assert.throws(() => process.kill(-combined.pid, 0), { code: 'ESRCH' });
+});
+
+test('Grok 有界子程序收持管線後代且不碰另一群組，未知狀態拒收', async () => {
+  const { runGrokChild } = require('../tools/review-launch');
+  const { spawn } = require('node:child_process');
+  const { gitEnv } = require('../tools/git-env');
+  const other = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { env: gitEnv(), detached: true, stdio: 'ignore' });
+  const otherClosed = new Promise(resolve => other.once('close', resolve));
+  assert.ok(other.pid > 1);
+  try {
+    let groupPid;
+    const signals = [];
+    const source = `const {spawn}=require('node:child_process');
+      const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore',1,2]});
+      child.once('spawn',()=>{console.log(child.pid);setTimeout(()=>process.exit(0),50);});`;
+    const result = await runGrokChild(process.execPath, ['-e', source], { env: gitEnv() }, { wallMs: 3000, cleanupMs: 2000,
+      spawnChild(...args) { const child = spawn(...args); groupPid = child.pid; return child; },
+      kill: observeCleanupKill(signals, () => groupPid, process.kill.bind(process)),
+    });
+    const evidence = cleanupFailureEvidence(result, signals);
+    const descendant = Number(result.stdout.trim());
+    assert.ok(Number.isSafeInteger(descendant) && descendant > 1, '後代確實建立且持有管線');
+    assert.equal(result.groupEmpty, true, evidence);
+    assert.equal(result.status, 0, evidence);
+    assert.throws(() => process.kill(descendant, 0), { code: 'ESRCH' });
+    assert.doesNotThrow(() => process.kill(other.pid, 0));
+    let unknownPid;
+    const unknownSignals = [];
+    const unknown = await runGrokChild(process.execPath, ['-e', 'process.stdout.write("synthetic")'], { env: gitEnv() }, {
+      wallMs: 3000, cleanupMs: 500,
+      spawnChild(...args) { const child = spawn(...args); unknownPid = child.pid; return child; },
+      kill: observeCleanupKill(unknownSignals, () => unknownPid, (pid, signal) => {
+        if (signal === 0) throw Object.assign(new Error('synthetic'), { code: 'EPERM' }); return process.kill(pid, signal);
+      }),
+    });
+    const unknownEvidence = cleanupFailureEvidence(unknown, unknownSignals);
+    assert.ok(unknownSignals.some(event => event.signal === 0 && event.ownGroup && event.outcome === 'EPERM'), unknownEvidence);
+    assert.equal(unknown.status, 2, unknownEvidence);
+    assert.ok(unknown.diagnostic, '檢查 runGrokChild 的清理診斷，重跑本檔有界子程序題');
+    assert.equal(unknown.diagnostic.trigger, 'child_exit');
+    assert.equal(unknown.diagnostic.childExitCode, 0);
+    assert.equal(unknown.diagnostic.cleanupFailed, true, unknownEvidence);
+    assert.equal(unknown.diagnostic.groupState, 'unknown', unknownEvidence);
+    assert.equal(unknown.groupEmpty, false, unknownEvidence);
+    assert.throws(() => process.kill(-unknown.pid, 0), { code: 'ESRCH' });
+  } finally {
+    try { process.kill(-other.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+    await otherClosed;
+  }
+});
+
+test('Grok 剖面直接執行與檔案型 socket 的拒絕接線缺失會拒啟', () => {
+  const { GROK_SEATBELT_PROFILE, verifyGrokSeatbeltProfile } = require('../tools/review-launch');
+  const required = [
+    '(deny process-exec* (literal "/usr/bin/security"))',
+    '(deny process-exec* (literal "/usr/bin/open"))',
+    '(deny process-exec* (literal "/usr/bin/osascript"))',
+    '(deny network-outbound (remote unix-socket))',
+    '(deny mach-lookup (global-name-prefix ""))',
+  ];
+  assert.equal(verifyGrokSeatbeltProfile(GROK_SEATBELT_PROFILE).ok, true);
+  for (const rule of required) {
+    assert.ok(GROK_SEATBELT_PROFILE.split('\n').includes(rule), '正式剖面必須接上指定拒絕');
+    assert.equal(verifyGrokSeatbeltProfile(GROK_SEATBELT_PROFILE.replace(rule, '')).ok, false);
+    assert.equal(verifyGrokSeatbeltProfile(GROK_SEATBELT_PROFILE.replace(rule, '; ' + rule)).ok, false);
+    assert.equal(verifyGrokSeatbeltProfile(GROK_SEATBELT_PROFILE.replace(rule, '(deny mach-lookup)')).ok, false);
+  }
+});
+
+test('Seatbelt 預檢拒寫只接受權限錯誤，不把路徑錯誤當成功', { skip: process.platform !== 'darwin' }, () => {
+  const vm = require('node:vm');
+  const { runGrokSeatbeltProbe } = require('../tools/review-launch');
+  const scenarios = ['EPERM', 'EACCES', 'ENOENT', 'ENOTDIR', 'EIO'].map(code => ({ code, mode: 'normal' }));
+  for (const mode of ['device', 'inode', 'symlink', 'directory', 'missing', 'changed', 'positive']) scenarios.push({ code: 'EPERM', mode });
+  for (const { code, mode } of scenarios) {
+    const boxDir = tmp('seatbelt-errno-');
+    let executed = false;
+    try {
+      const result = runGrokSeatbeltProbe({ boxDir, relayPort: 54321, spawnSyncImpl: (_bin, args) => {
+        if (!args.includes('-e')) return { status: 0 };
+        executed = true;
+        let status = null;
+        let stdout = '';
+        let attempted = false;
+        const exit = {};
+        const fakeFs = {
+          readFileSync: (file) => file.endsWith('.probe-ok') ? 'ok' : mode === 'changed' && attempted ? 'changed' : 'probe-original',
+          writeFileSync: (file) => {
+            if (file.endsWith('.probe-ro') || file.endsWith('prompt.md')) {
+              attempted = true;
+              throw Object.assign(new Error('synthetic'), { code });
+            }
+            if (mode === 'positive' && file.includes('/mutation/')) throw Object.assign(new Error('synthetic'), { code });
+          },
+          lstatSync: (file) => {
+            const alias = file.endsWith('.GIT');
+            if (alias && mode === 'missing') throw Object.assign(new Error('synthetic'), { code: 'ENOENT' });
+            return { dev: alias && mode === 'device' ? 9 : 1, ino: alias && mode === 'inode' ? 9 : 2,
+              isDirectory: () => !(alias && mode === 'directory'), isSymbolicLink: () => alias && mode === 'symlink' };
+          },
+          statSync: () => ({ dev: 1, ino: 2, isDirectory: () => true }),
+          existsSync: () => false,
+        };
+        try {
+          vm.runInNewContext(args[args.indexOf('-e') + 1], {
+            require: (name) => name === 'node:fs' ? fakeFs : name === 'node:path' ? path : {
+              connect: () => ({ on(event, cb) { if (event === 'error') cb(); }, destroy() {} }),
+            },
+            process: { env: { BOX_DIR: boxDir, UNALLOWED_PORT: '54322' }, exit(value) { status = value; throw exit; } },
+            console: { log(value) { stdout += value; } }, setTimeout() {},
+          });
+        } catch (error) {
+          if (error !== exit) {
+            if (error.message !== 'synthetic') throw error;
+            status = 22;
+          }
+        }
+        return { status, stdout };
+      } });
+      const hint = '檢查 tools/review-launch.js 的預檢拒寫判準，重跑 node --test tests/review-launch.test.js';
+      assert.equal(executed, true, hint);
+      assert.equal(result.ok, mode === 'normal' && ['EPERM', 'EACCES'].includes(code), `${mode}/${code}: ${hint}`);
+    } finally { fs.rmSync(boxDir, { recursive: true, force: true }); }
+  }
+});
+
+test('Grok 隔離執行：E8 原生 JSON 串流解析、cancelled 拒絕、DLP 掃描前文、只讀 scan 預產差異', async (t) => {
+  const { runGrokExec, GROK_PINNED_ISSUER, GROK_PINNED_CLIENT_ID, stripGrokPreamble } = require('../tools/review-launch.js');
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ack-grok-exec-stream-test-')));
+  const r = repo();
+
+  try {
+    const authFile = path.join(tmp, 'auth.json');
+    const entryKey = `${GROK_PINNED_ISSUER}::${GROK_PINNED_CLIENT_ID}`;
+    const auth = {
+      [entryKey]: {
+        auth_mode: 'oidc',
+        user_id: '10000000-0000-4000-8000-000000000001',
+        create_time: '2026-10-19T00:00:00.000Z',
+        expires_at: '2026-10-19T00:10:00.000Z',
+        oidc_issuer: GROK_PINNED_ISSUER,
+        oidc_client_id: GROK_PINNED_CLIENT_ID,
+        key: 'VALID-KEY-111',
+        refresh_token: 'REFRESH-222',
+      },
+    };
+    fs.writeFileSync(authFile, JSON.stringify(auth, null, 2), { mode: 0o600 });
+    const authOpts = {
+      now: () => Date.parse('2026-10-19T00:01:00.000Z'),
+      earlySecs: 0,
+      fetchImpl: () => { throw new Error('NO REAL REFRESH') }
+    };
+
+    const untrimmedDiff = spawnSync('git', ['diff', '--no-ext-diff', '--no-textconv', `${r.base}...${r.head}`], { cwd: r.dir, env: gitEnv(), encoding: 'utf8' }).stdout;
+    assert.ok(untrimmedDiff.length > 0 && untrimmedDiff.endsWith('\n'), '預期 git diff 應含換行且未經 trim');
+
+    const promptFile = path.join(tmp, 'prompt.md');
+    const originalPrompt = `dummy prompt\nlook at diff: git diff ${r.base}...${r.head}\n`;
+    fs.writeFileSync(promptFile, originalPrompt);
+
+    let capturedArgs = null;
+    let capturedBoxDir = null;
+    let capturedBoxPromptContent = null;
+    let spawnCalled = false;
+    const runStream = async (stdoutLines, mode = 'review', expectCode = 0, checkOutFile = null, { workingDir = r.dir, metadataName = null, deleteMetadata = false, metadataRoot = r.dir, metadataBase = r.base, metadataHead = r.head, checkBox = null, stderr = '', status = 0, diagnostic, mutationSetup = null, cleanupFailure = false, cleanupCancel = false, upstreamFailure = false } = {}) => {
+      const runTmp = fs.mkdtempSync(path.join(tmp, 'run-'));
+      const outFile = path.join(runTmp, `out.md`);
+      const metaName = metadataName || (mode === 'scan' ? 'scan.json' : 'launch.json');
+      const metaPath = path.join(runTmp, metaName);
+      fs.writeFileSync(metaPath, JSON.stringify({ root: metadataRoot, base: metadataBase, head: metadataHead }));
+      if (deleteMetadata) fs.unlinkSync(metaPath);
+
+      const mutDir = path.join(runTmp, `mut`);
+      fs.mkdirSync(mutDir);
+      sh(r.dir, 'clone', '--quiet', r.dir, mutDir);
+      if (mutationSetup) mutationSetup(mutDir);
+
+      spawnCalled = false;
+      const args = [
+        '--mode', mode,
+        '--cwd', workingDir,
+        ...(mode === 'review' ? ['--mutation-copy', mutDir] : []),
+        '--model', 'grok-4.7',
+        '--reasoning-effort', 'xhigh',
+        '--prompt-file', promptFile,
+        '--out', outFile,
+      ];
+
+      const controller = new AbortController();
+      const signalCounts = ['SIGINT', 'SIGTERM'].map(name => process.listenerCount(name));
+      const res = await runGrokExec(args, {
+        signal: controller.signal,
+        authFile, authOpts, probeFn: () => ({ ok: true }),
+        requestImpl: () => { throw new Error('synthetic upstream failure'); },
+        removeBox: (box, opts) => {
+          assert.equal(fs.existsSync(outFile), false, '必要收尾完成前不可留下成功結果');
+          fs.rmSync(box, opts);
+          if (cleanupCancel === true) controller.abort();
+          else if (cleanupCancel) process.emit(cleanupCancel);
+          if (cleanupFailure) throw Object.assign(new Error('synthetic cleanup failure'), { code: 'EIO' });
+        },
+        spawnGrok: async ({ grokArgs, boxWorktree, boxPromptFile, relayPort, env }) => {
+          spawnCalled = true;
+          capturedArgs = grokArgs;
+          capturedBoxDir = boxWorktree;
+          if (boxPromptFile && fs.existsSync(boxPromptFile)) {
+            capturedBoxPromptContent = fs.readFileSync(boxPromptFile, 'utf8');
+          }
+          if (checkBox) await checkBox({ grokArgs, boxWorktree, boxPromptFile });
+          if (upstreamFailure) {
+            const syntheticBoxAuth = JSON.parse(fs.readFileSync(path.join(env.HOME, '.grok', 'auth.json'), 'utf8'));
+            const response = await fetch(`http://127.0.0.1:${relayPort}/v1/models`, {
+              headers: { authorization: `Bearer ${syntheticBoxAuth[entryKey].key}` },
+            });
+            assert.equal(response.status, 502);
+            await response.text();
+          }
+          const stdoutStr = Array.isArray(stdoutLines) ? stdoutLines.join('\n') + '\n' : stdoutLines;
+          return { status, stdout: stdoutStr, stderr, diagnostic };
+        },
+      });
+      assert.deepEqual(['SIGINT', 'SIGTERM'].map(name => process.listenerCount(name)), signalCounts, '取消監聽必須在收尾後釋放');
+      assert.equal(res.code, expectCode, `Code expected ${expectCode}, got ${res.code}. Lines: ${res.lines.join('\n')}`);
+      if (expectCode === 0) {
+        if (checkOutFile) assert.equal(fs.readFileSync(outFile, 'utf8'), checkOutFile);
+      } else {
+        assert.equal(fs.existsSync(outFile), false, '失敗時不可寫出 outFile');
+      }
+      return { res, capturedArgs, capturedBoxDir, capturedBoxPromptContent, spawnCalled, output: fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8') : null };
+    };
+
+    const sessId = "10000000-0000-4000-8000-000000000001";
+    const initEvent = {type:"system",subtype:"init",session_id:sessId,tools:["read_file","search_tool","use_tool"],permissionMode:"default"};
+
+    await t.test('1: 保存提示檔不被修改 且 注入完整未 trim 差異 (含 compact_boundary)', async () => {
+      const scanText = '🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n';
+      const successStream = [
+        JSON.stringify({ type: 'system', subtype: 'init', session_id: sessId }),
+        JSON.stringify({
+          type: 'system',
+          subtype: 'compact_boundary',
+          session_id: sessId,
+          uuid: '10000000-0000-4000-8000-000000000002',
+          compact_metadata: { trigger: 'auto', pre_tokens: 100 },
+        }),
+        JSON.stringify({ type: 'assistant', session_id: sessId, parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: scanText }] } }),
+        JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: sessId, result: scanText }),
+      ];
+      const exactRaw = successStream.join('\n') + '\n';
+      await runStream(successStream, 'scan', 0, exactRaw);
+      const cleanupRejected = await runStream(successStream, 'scan', 2, null, { cleanupFailure: true });
+      assert.match(cleanupRejected.res.lines.join('\n'), /收尾失敗/);
+      const cleanupCancelled = await runStream(successStream, 'scan', 2, null, { cleanupCancel: true });
+      assert.match(cleanupCancelled.res.lines.join('\n'), /取消/);
+      for (const signal of ['SIGINT', 'SIGTERM']) {
+        const signalled = await runStream(successStream, 'scan', 2, null, { cleanupCancel: signal });
+        assert.match(signalled.res.lines.join('\n'), /取消/);
+      }
+      const upstreamRejected = await runStream(successStream, 'scan', 2, null, { upstreamFailure: true });
+      assert.match(upstreamRejected.res.lines.join('\n'), /通道失效/);
+      assert.equal(fs.readFileSync(promptFile, 'utf8'), originalPrompt, '外部提示檔絕不可被修改');
+      assert.ok(capturedBoxPromptContent.includes(untrimmedDiff), '注入材料必須是未經 trim 的完整 stdout');
+
+      // 錯 session
+      const wrongSessionStream = [
+        successStream[0],
+        JSON.stringify({ ...JSON.parse(successStream[1]), session_id: 'WRONG' }),
+        successStream[2],
+        successStream[3],
+      ];
+      const resSession = await runStream(wrongSessionStream, 'scan', 2);
+      assert.match(resSession.res.lines.join('\n'), /錯 session/);
+
+      // 無效 metadata
+      const badMetaStream = [
+        successStream[0],
+        JSON.stringify({ ...JSON.parse(successStream[1]), compact_metadata: { trigger: 'manual' } }),
+        successStream[2],
+        successStream[3],
+      ];
+      const resMeta = await runStream(badMetaStream, 'scan', 2);
+      assert.match(resMeta.res.lines.join('\n'), /compact_metadata.trigger 必須為 auto/);
+    });
+
+    await t.test('R6：多 response 的真執行入口保留原包、只收有效末段且檢查全流機密', async (t) => {
+      const assistant = (text, message = {}, extra = {}) => ({
+        type: 'assistant', session_id: sessId, parent_tool_use_id: null,
+        message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text }], ...message }, ...extra,
+      });
+      const compact = { type: 'system', subtype: 'compact_boundary', session_id: sessId, uuid: 'r6-compact', compact_metadata: { trigger: 'auto', pre_tokens: 200 } };
+      for (const mode of ['review', 'scan']) {
+        const body = label => mode === 'review'
+          ? `🤖 Grok｜來源：Grok CLI｜審 \`${r.head.slice(0, 7)}\`｜r1｜結論：通過\n\n### 本輪實際用的設定\n- 合成 R6\n\n### 清單逐項結果\n- ${label}\n`
+          : `🔍 Grok｜來源：Grok CLI｜掃 \`${r.head.slice(0, 7)}\`\n\n- ${label}\n`;
+        const receive = raw => mode === 'review'
+          ? prepareVerdict(raw, { reviewer: 'Grok', source: 'Grok CLI', round: 1, head: r.head, usable: ['Grok'] })
+          : prepareScan(raw, { scanner: 'Grok', source: 'Grok CLI', head: r.head, usable: ['Grok'], forceGrok: true });
+        const cases = ['successive', 'compactBetween', 'compactAfter', 'toolRecovery', 'subagentRecovery', 'staleAfterAssistant', 'staleAfterUser', 'staleAfterSubagent', 'secretEarlier', 'escapedSecretEarlier'];
+        for (const name of cases) {
+          await t.test(`${mode} ${name}`, async () => {
+            const a = body(`${name}-A`), b = body(`${name}-B`);
+            let middle = [assistant(a), assistant(b)], expected = b, code = 0;
+            if (name === 'compactBetween') middle = [assistant(a), compact, assistant(b)];
+            if (name === 'compactAfter') { middle = [assistant(a), compact]; expected = a; }
+            if (name === 'toolRecovery') middle = [assistant(a), assistant(a, { stop_reason: 'tool_use' }), { type: 'user', session_id: sessId, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'r6-tool', content: a }] } }, compact, assistant(b)];
+            if (name === 'subagentRecovery') middle = [assistant(a), assistant(a, {}, { parent_tool_use_id: 'r6-subagent' }), compact, assistant(b)];
+            if (name.startsWith('staleAfter')) {
+              const stale = name === 'staleAfterUser'
+                ? { type: 'user', session_id: sessId, message: { role: 'user', content: [{ type: 'text', text: a }] } }
+                : assistant(a, name === 'staleAfterAssistant' ? { stop_reason: 'tool_use' } : {}, name === 'staleAfterSubagent' ? { parent_tool_use_id: 'r6-subagent' } : {});
+              middle = [assistant(a), stale, compact]; expected = a; code = 2;
+            }
+            if (name.endsWith('SecretEarlier') || name === 'secretEarlier') {
+              middle = [assistant('VALID-KEY-111'), compact, assistant(b)]; code = 2;
+            }
+            let raw = [initEvent, ...middle, { type: 'result', session_id: sessId, subtype: 'success', is_error: false, stop_reason: 'end_turn', result: expected }].map(JSON.stringify).join('\n') + '\n';
+            if (name === 'escapedSecretEarlier') {
+              assert.ok(raw.includes('VALID-KEY-111'));
+              raw = raw.replace('VALID-KEY-111', 'VALID\\u002dKEY-111');
+              assert.ok(!raw.includes('VALID-KEY-111'), '解碼反例不可由原字串比對代抓');
+            }
+            const got = await runStream(raw, mode, code, code === 0 ? raw : null);
+            assert.equal(got.spawnCalled, true, '須走到合成模型，不能以前置失敗充當協定測試');
+            if (code === 0) {
+              assert.equal(got.output, raw, '受測執行須保存本題完整原包，不能只保存最後正文');
+              assert.equal(receive(got.output).body, expected);
+            } else {
+              assert.equal(got.output, null);
+              const diagnostic = got.res.lines.join('\n');
+              assert.match(diagnostic, name.startsWith('staleAfter') ? /正文不一致/ : /DLP/);
+              if (name === 'escapedSecretEarlier') assert.match(diagnostic, /dlp_decoded/);
+              assert.ok(!diagnostic.includes('VALID-KEY-111'), '拒收診斷不得帶合成機密');
+            }
+          });
+        }
+      }
+    });
+
+    await t.test('2: 缺少 scan.json 時（即使有 launch.json）應拒絕且不啟動 Grok', async () => {
+      const scanText = '🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n';
+      const successStream = [
+        JSON.stringify({type:"system",subtype:"init",session_id:sessId}),
+        JSON.stringify({type:"assistant",session_id:sessId,parent_tool_use_id:null,message:{role:"assistant",stop_reason:"end_turn",content:[{type:"text",text:scanText}]}}),
+        JSON.stringify({type:"result",subtype:"success",is_error:false,stop_reason:"end_turn",session_id:sessId,result:scanText})
+      ];
+      const res = await runStream(successStream, 'scan', 2, null, { metadataName: 'launch.json' });
+      assert.match(res.res.lines[0], /缺少合法的 scan.json/);
+      assert.equal(res.spawnCalled, false, '缺少 scan.json 時不應呼叫 spawnGrok');
+    });
+
+    await t.test('4: DLP 鍵名與值遍歷校驗 (含 Unicode Escape)', async () => {
+      const passText = '🤖 Grok｜來源：Grok CLI｜審 `1234567`｜r1｜結論：通過\n### 本輪實際用的設定\n- ok\n### 清單逐項結果\n- 零發現\n未貼\n';
+      // 測試鍵名含 secret
+      const dlpKeyStream = [
+        JSON.stringify(initEvent),
+        JSON.stringify({type:"assistant",session_id:sessId,parent_tool_use_id:null,message:{role:"assistant",content:[{type:"tool_use",id:"t1",name:"read",input:{"VALID-KEY-111":"value"}}]}}),
+        JSON.stringify({type:"assistant",session_id:sessId,parent_tool_use_id:null,message:{role:"assistant",stop_reason:"end_turn",content:[{type:"text",text:passText}]}}),
+        JSON.stringify({type:"result",subtype:"success",is_error:false,stop_reason:"end_turn",session_id:sessId,result:passText})
+      ];
+      const res1 = await runStream(dlpKeyStream, 'review', 2);
+      assert.match(res1.res.lines.join('\n'), /DLP/);
+
+      // 測試 Unicode Escape 鍵名
+      const dlpEscapeStream = [
+        JSON.stringify(initEvent),
+        `{"type":"assistant","session_id":"${sessId}","parent_tool_use_id":null,"message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"read","input":{"VALID\\u002dKEY-111":"value"}}]}}`,
+        JSON.stringify({type:"assistant",session_id:sessId,parent_tool_use_id:null,message:{role:"assistant",stop_reason:"end_turn",content:[{type:"text",text:passText}]}}),
+        JSON.stringify({type:"result",subtype:"success",is_error:false,stop_reason:"end_turn",session_id:sessId,result:passText})
+      ];
+      const res2 = await runStream(dlpEscapeStream, 'review', 2);
+      assert.match(res2.res.lines.join('\n'), /DLP/);
+
+      // 測試值含 secret (原有檢查)
+      const dlpValueStream = [
+        JSON.stringify(initEvent),
+        JSON.stringify({type:"assistant",session_id:sessId,parent_tool_use_id:null,message:{role:"assistant",stop_reason:"tool_use",content:[{type:"text",text:"using VALID-KEY-111"}]}}),
+        JSON.stringify({type:"assistant",session_id:sessId,parent_tool_use_id:null,message:{role:"assistant",stop_reason:"end_turn",content:[{type:"text",text:passText}]}}),
+        JSON.stringify({type:"result",subtype:"success",is_error:false,stop_reason:"end_turn",session_id:sessId,result:passText})
+      ];
+      const res3 = await runStream(dlpValueStream, 'review', 2);
+      assert.match(res3.res.lines.join('\n'), /DLP/);
+    });
+
+    await t.test('原有協定與工具參數測試', async () => {
+      // 1. cancelled 或沒有 end_turn 應該失敗
+      const cancelStream = [
+        JSON.stringify(initEvent),
+        JSON.stringify({type:"assistant",session_id:sessId,parent_tool_use_id:null,message:{role:"assistant",stop_reason:"end_turn",content:[{type:"text",text:"cancel"}]}}),
+        JSON.stringify({type:"result",subtype:"success",is_error:false,stop_reason:"cancelled",session_id:sessId,result:"cancel"})
+      ];
+      await runStream(cancelStream, 'review', 2);
+      await runStream([JSON.stringify({type:"assistant",session_id:sessId,parent_tool_use_id:null,message:{id:"msg_0",role:"assistant",stop_reason:"tool_use",content:[{type:"text",text:"using tool..."}]}})], 'review', 2);
+      await runStream('{"error": "some network error"}', 'review', 2);
+      await runStream('', 'review', 2);
+      await runStream('just plain text, not json', 'review', 2);
+
+      const passText = '前言保留\n🤖 Grok｜來源：Grok CLI｜審 `1234567`｜r1｜結論：通過\n### 本輪實際用的設定\n- ok\n### 清單逐項結果\n- 零發現\n未貼\n';
+      const successStream = [
+        JSON.stringify(initEvent),
+        JSON.stringify({type:"assistant",session_id:sessId,parent_tool_use_id:null,message:{role:"assistant",stop_reason:"tool_use",content:[{type:"text",text:"thinking..."}]}}),
+        JSON.stringify({type:"assistant",session_id:sessId,parent_tool_use_id:null,message:{role:"assistant",stop_reason:"end_turn",content:[{type:"text",text:passText}]}}),
+        JSON.stringify({type:"result",subtype:"success",is_error:false,stop_reason:"end_turn",session_id:sessId,result:passText})
+      ];
+      const resReview = await runStream(successStream, 'review', 0, successStream.join('\n') + '\n');
+      assert.ok(resReview.capturedArgs.includes('--allow'), 'review 應有 --allow');
+      assert.ok(resReview.capturedArgs.includes('Bash(*)'), 'review 應允許 Bash');
+
+      const scanText = '🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n';
+      const scanStream = [
+        JSON.stringify({type:"system",subtype:"init",session_id:sessId,tools:["read_file"],permissionMode:"default"}),
+        JSON.stringify({type:"assistant",session_id:sessId,parent_tool_use_id:null,message:{role:"assistant",stop_reason:"tool_use",content:[{type:"text",text:"thinking..."}]}}),
+        JSON.stringify({type:"assistant",session_id:sessId,parent_tool_use_id:null,message:{role:"assistant",stop_reason:"end_turn",content:[{type:"text",text:scanText}]}}),
+        JSON.stringify({type:"result",subtype:"success",is_error:false,stop_reason:"end_turn",session_id:sessId,result:scanText})
+      ];
+      const resScan = await runStream(scanStream, 'scan', 0, scanStream.join('\n') + '\n');
+      assert.ok(resScan.capturedArgs.includes('--output-format'), '必須傳遞 output-format');
+      assert.ok(resScan.capturedArgs.includes('streaming-messages-json'), '必須使用 streaming-messages-json 格式');
+
+      // 檢查工具限制 (精確匹配)
+      const toolsIdx = resScan.capturedArgs.indexOf('--tools');
+      assert.equal(resScan.capturedArgs.filter(a => a === '--tools').length, 1, '--tools 應只出現 1 次');
+      assert.equal(resScan.capturedArgs[toolsIdx + 1], 'read_file,grep,list_dir', 'tools 值應精確相等');
+      const disallowedIdx = resScan.capturedArgs.indexOf('--disallowed-tools');
+      assert.equal(resScan.capturedArgs.filter(a => a === '--disallowed-tools').length, 1, '--disallowed-tools 應只出現 1 次');
+      assert.equal(resScan.capturedArgs[disallowedIdx + 1], 'search_tool,use_tool', 'disallowed-tools 值應精確相等');
+      assert.ok(!resScan.capturedArgs.includes('Bash(*)'), 'scan 不應有 Bash allow');
+      assert.ok(!resScan.capturedArgs.includes('Edit(*)'), 'scan 不應有 Edit allow');
+      assert.ok(!resScan.capturedArgs.includes('Write(*)'), 'scan 不應有 Write allow');
+    });
+
+    await t.test('DLP: 跨 chunk UTF8 與 ASCII 釘值不誤拒 (bounded carry 驗證)', async () => {
+      const entryKey = `${GROK_PINNED_ISSUER}::${GROK_PINNED_CLIENT_ID}`;
+      const originalAuth = JSON.parse(fs.readFileSync(authFile, 'utf8'));
+      const marker = '機密😀標記';
+      const newAuth = { ...originalAuth };
+      newAuth[entryKey] = { ...newAuth[entryKey], private_marker: marker };
+      fs.writeFileSync(authFile, JSON.stringify(newAuth));
+
+      try {
+        const getStream = (text) => [
+          JSON.stringify({ type: 'system', subtype: 'init', session_id: sessId }),
+          JSON.stringify({ type: 'assistant', session_id: sessId, parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: text }] } }),
+          JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: sessId, result: text }),
+        ];
+
+        // 1. UTF8 跨 64KiB (x.repeat(65534) + marker)
+        fs.writeFileSync(promptFile, 'x'.repeat(65534) + marker);
+        const markerText = `🔍 Grok｜結論：通過\n${marker}\n`;
+        await runStream(getStream(markerText), 'scan', 0);
+
+        // 2. ASCII 跨 64KiB (x.repeat(65532) + VALID-KEY-111)
+        fs.writeFileSync(promptFile, 'x'.repeat(65532) + 'VALID-KEY-111');
+        const keyText = `🔍 Grok｜結論：通過\nVALID-KEY-111\n`;
+        await runStream(getStream(keyText), 'scan', 0);
+      } finally {
+        fs.writeFileSync(authFile, JSON.stringify(originalAuth));
+        fs.writeFileSync(promptFile, originalPrompt);
+      }
+    });
+
+    await t.test('真正pipe跨UTF8完整流程子題 (原生收集缺陷重現)', async () => {
+      // 重用外部 sessId, authFile, authOpts, promptFile, r
+      const utf8Tmp = fs.mkdtempSync(path.join(tmp, 'native-utf8-'));
+      const scanJson = path.join(utf8Tmp, 'scan.json');
+      fs.writeFileSync(scanJson, JSON.stringify({ root: r.dir, base: r.base, head: r.head }));
+      const outFile = path.join(utf8Tmp, 'out.md');
+
+      const fakeGrok = path.join(utf8Tmp, 'fake-grok');
+      fs.writeFileSync(fakeGrok, '#!/bin/sh\nexit 73\n');
+      fs.chmodSync(fakeGrok, 0o755);
+
+      const syntheticSandbox = '/synthetic-utf8-sandbox-not-executable';
+      const resultText = '合成測試😀完成';
+      const stderrText = '合成錯誤😀訊息';
+
+      const stream = [
+        JSON.stringify({ type: 'system', subtype: 'init', session_id: sessId }),
+        JSON.stringify({ type: 'assistant', session_id: sessId, parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: resultText }] } }),
+        JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: sessId, result: resultText }),
+      ];
+      const fullNDJSON = stream.join('\n') + '\n';
+
+      const childScript = `
+        const b = Buffer.from(${JSON.stringify(fullNDJSON)});
+        const resText = ${JSON.stringify(resultText)};
+        const cut = b.lastIndexOf(Buffer.from(resText)) + 1;
+        process.stdout.write(b.slice(0, cut));
+        setTimeout(() => {
+          process.stdout.end(b.slice(cut));
+        }, 40);
+
+        const e = Buffer.from(${JSON.stringify(stderrText)});
+        process.stderr.write(e.slice(0, 1));
+        setTimeout(() => {
+          process.stderr.end(e.slice(1));
+        }, 80);
+      `;
+
+      let capturedStderr = '';
+      let spawnChildCalled = false;
+
+      const res = await runGrokExec(['--mode', 'scan', '--cwd', r.dir, '--prompt-file', promptFile, '--out', outFile, '--model', 'grok-4.7', '--reasoning-effort', 'xhigh'], {
+        authFile, authOpts, probeFn: () => ({ ok: true }),
+        grokBin: fakeGrok,
+        sandboxExec: syntheticSandbox,
+        spawnChild: (cmd, args, opts) => {
+          spawnChildCalled = true;
+          assert.equal(cmd, syntheticSandbox);
+          const limits = JSON.parse(fs.readFileSync(path.join(utf8Tmp, 'execution.json'), 'utf8'));
+          assert.equal(limits.wallMs, 3600000);
+          assert.equal(limits.cleanupMs, 10000);
+          assert.equal(limits.deadline - limits.startedAt, limits.wallMs);
+          assert.equal(limits.model, 'grok-4.7');
+          assert.equal(limits.effort, 'xhigh');
+          const child = spawn(process.execPath, ['-e', childScript], {
+            cwd: opts.cwd,
+            env: gitEnv(),
+            detached: opts.detached,
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          child.stderr.on('data', (d) => { capturedStderr += d; });
+          return child;
+        }
+      });
+
+      assert.ok(spawnChildCalled, 'spawnChild 應該被呼叫');
+      assert.equal(res.code, 0, '應成功執行');
+      const saved = fs.readFileSync(outFile);
+      assert.deepEqual(saved, Buffer.from(fullNDJSON), 'outFile 應該與原始 NDJSON 逐 byte 相等');
+      assert.equal(capturedStderr, stderrText, '觀察者應該能拿回合法的 stderr');
+      const executionBefore = fs.readFileSync(path.join(utf8Tmp, 'execution.json'));
+      const reused = await runGrokExec(['--mode', 'scan', '--cwd', r.dir, '--prompt-file', promptFile, '--out', path.join(utf8Tmp, 'retry.md'), '--model', 'grok-4.7', '--reasoning-effort', 'xhigh'], {
+        authFile, authOpts, probeFn: () => ({ ok: true }), grokBin: fakeGrok, sandboxExec: syntheticSandbox,
+        spawnChild: () => { assert.fail('已有發射證據不可啟動另一程序'); },
+      });
+      assert.equal(reused.code, 2);
+      assert.equal(fs.existsSync(path.join(utf8Tmp, 'retry.md')), false);
+      assert.deepEqual(fs.readFileSync(path.join(utf8Tmp, 'execution.json')), executionBefore);
+    });
+
+    await t.test('Git: refs/replace 與 info/grafts 隔離測試 (R4/Grok)', async () => {
+      const gDir = fs.mkdtempSync(path.join(tmp, 'review-launch-git-replace-'));
+      sh(gDir, 'init', '-q', '-b', 'main');
+      sh(gDir, 'config', 'user.name', 'Tester');
+      sh(gDir, 'config', 'user.email', 'tester@example.com');
+      fs.writeFileSync(path.join(gDir, 'f.txt'), 'A\n');
+      sh(gDir, 'add', 'f.txt'); sh(gDir, 'commit', '-qm', 'A');
+      const A = sh(gDir, 'rev-parse', 'HEAD');
+      fs.writeFileSync(path.join(gDir, 'f.txt'), 'M\n');
+      sh(gDir, 'add', 'f.txt'); sh(gDir, 'commit', '-qm', 'M');
+      const M = sh(gDir, 'rev-parse', 'HEAD');
+      fs.writeFileSync(path.join(gDir, 'f.txt'), 'H\n');
+      sh(gDir, 'add', 'f.txt'); sh(gDir, 'commit', '-qm', 'H');
+      const H = sh(gDir, 'rev-parse', 'HEAD');
+
+      // 計算 golden diff (A...H)
+      const goldenDiff = spawnSync('git', ['diff', `${A}...${H}`], { cwd: gDir, env: gitEnv(), encoding: 'utf8' }).stdout;
+
+      // 1. 設置 refs/replace (讓 H 看起來像 M)
+      sh(gDir, 'replace', H, M);
+      // 驗證 host 受污染
+      const pollutedDiff = spawnSync('git', ['diff', `${A}...${H}`], { cwd: gDir, env: gitEnv(), encoding: 'utf8' }).stdout;
+      assert.notEqual(pollutedDiff, goldenDiff, 'Host 應受 replace 污染');
+
+      const successStream = [
+        JSON.stringify({ type: 'system', subtype: 'init', session_id: sessId }),
+        JSON.stringify({ type: 'assistant', session_id: sessId, parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'DONE' }] } }),
+        JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: sessId, result: 'DONE' }),
+      ];
+
+      const resReplace = await runStream(successStream, 'scan', 2, null, {
+        workingDir: gDir,
+        metadataName: 'scan.json',
+        metadataRoot: gDir,
+        metadataBase: A,
+        metadataHead: H,
+      });
+      assert.equal(resReplace.spawnCalled, false, 'replace 來源不得啟動模型');
+      assert.match(resReplace.res.lines.join('\n'), /歷史替換/);
+
+      sh(gDir, 'replace', '-d', H);
+
+      const gDir2 = fs.mkdtempSync(path.join(tmp, 'review-launch-git-graft-'));
+      sh(gDir2, 'init', '-q', '-b', 'main');
+      sh(gDir2, 'config', 'user.name', 'Tester');
+      sh(gDir2, 'config', 'user.email', 'tester@example.com');
+      fs.writeFileSync(path.join(gDir2, 'f.txt'), 'A\n');
+      sh(gDir2, 'add', 'f.txt'); sh(gDir2, 'commit', '-qm', 'A');
+      const A2 = sh(gDir2, 'rev-parse', 'HEAD');
+      fs.writeFileSync(path.join(gDir2, 'f.txt'), 'H\n');
+      sh(gDir2, 'add', 'f.txt'); sh(gDir2, 'commit', '-qm', 'H');
+      const H2 = sh(gDir2, 'rev-parse', 'HEAD');
+
+      const graftsFile = path.join(gDir2, '.git', 'info', 'grafts');
+      fs.writeFileSync(graftsFile, `${H2}\n`);
+
+      const resGraft = await runStream(successStream, 'scan', 2, null, {
+        workingDir: gDir2,
+        metadataRoot: gDir2,
+        metadataBase: A2,
+        metadataHead: H2,
+        metadataName: 'scan.json',
+      });
+      assert.equal(resGraft.spawnCalled, false, 'grafts 來源不得啟動模型');
+      assert.match(resGraft.res.lines.join('\n'), /歷史替換/);
+
+      const gDir3 = fs.mkdtempSync(path.join(tmp, 'review-launch-git-broken-'));
+      sh(gDir3, 'init', '-q', '-b', 'main');
+      sh(gDir3, 'config', 'user.name', 'Tester');
+      sh(gDir3, 'config', 'user.email', 'tester@example.com');
+      fs.writeFileSync(path.join(gDir3, 'f.txt'), 'A\n');
+      sh(gDir3, 'add', 'f.txt'); sh(gDir3, 'commit', '-qm', 'A');
+      const A3 = sh(gDir3, 'rev-parse', 'HEAD');
+      fs.writeFileSync(path.join(gDir3, 'f.txt'), 'M\n');
+      sh(gDir3, 'add', 'f.txt'); sh(gDir3, 'commit', '-qm', 'M');
+      fs.writeFileSync(path.join(gDir3, 'f.txt'), 'H\n');
+      sh(gDir3, 'add', 'f.txt'); sh(gDir3, 'commit', '-qm', 'H');
+      const H3 = sh(gDir3, 'rev-parse', 'HEAD');
+      const graftsFile3 = path.join(gDir3, '.git', 'info', 'grafts');
+      fs.writeFileSync(graftsFile3, `${H3}\n`);
+
+      const res3 = await runStream(successStream, 'scan', 2, null, {
+        workingDir: gDir3,
+        metadataRoot: gDir3,
+        metadataBase: A3,
+        metadataHead: H3,
+        metadataName: 'scan.json'
+      });
+      assert.equal(res3.spawnCalled, false, '歷史斷開應安全拒收，不應執行工具，重跑 node --test tests/review-launch.test.js');
+      assert.match(res3.res.lines.join('\n'), /歷史替換/);
+    });
+
+    await t.test('分離來源、根來源與突變副本的歷史污染各自拒收', async () => {
+      const stream = [
+        JSON.stringify(initEvent),
+        JSON.stringify({ type: 'assistant', session_id: sessId, parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'DONE' }] } }),
+        JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: sessId, result: 'DONE' }),
+      ];
+      const hint = '檢查 tools/review-launch.js 的分離來源歷史核對，重跑 node --test tests/review-launch.test.js';
+      for (const source of ['working', 'root', 'mutation']) {
+        for (const pollution of ['replace', 'grafts']) {
+          const other = fs.mkdtempSync(path.join(tmp, 'separate-source-'));
+          sh(r.dir, 'clone', '--quiet', r.dir, other);
+          const contaminate = (dir) => {
+            if (pollution === 'replace') sh(dir, 'replace', r.head, r.base);
+            else fs.writeFileSync(path.join(dir, '.git', 'info', 'grafts'), '');
+          };
+          if (source !== 'mutation') contaminate(other);
+          const outcome = await runStream(stream, 'review', 2, null, {
+            workingDir: source === 'working' ? other : r.dir,
+            metadataRoot: source === 'root' ? other : r.dir,
+            mutationSetup: source === 'mutation' ? contaminate : null,
+          });
+          assert.equal(outcome.spawnCalled, false, hint);
+          assert.match(outcome.res.lines.join('\n'), /歷史替換/u, hint);
+          if (source !== 'mutation') {
+            if (pollution === 'replace') assert.equal(sh(other, 'for-each-ref', '--format=%(refname)', 'refs/replace/').length > 0, true, hint);
+            else assert.equal(fs.existsSync(path.join(other, '.git', 'info', 'grafts')), true, hint);
+          }
+        }
+      }
+      const originalLstat = fs.lstatSync;
+      const graftPath = path.join(r.dir, '.git', 'info', 'grafts');
+      let denied = false;
+      try {
+        fs.lstatSync = function (file, ...args) {
+          if (file === graftPath) {
+            denied = true;
+            throw Object.assign(new Error('synthetic'), { code: 'EACCES' });
+          }
+          return originalLstat.call(this, file, ...args);
+        };
+        const outcome = await runStream(stream, 'review', 2);
+        assert.equal(denied, true, hint);
+        assert.equal(outcome.spawnCalled, false, hint);
+        assert.match(outcome.res.lines.join('\n'), /無法核對/u, hint);
+      } finally { fs.lstatSync = originalLstat; }
+    });
+
+    await t.test('DLP: 內容含 diff 專有針 (不含於提示) 應拒絕 (R3/Grok)', async () => {
+      const needle = 'VALID-KEY-111';
+      try {
+        fs.writeFileSync(path.join(r.dir, 'a.txt'), `base\nLEAK-${needle}\n`);
+        sh(r.dir, 'add', 'a.txt'); sh(r.dir, 'commit', '-qm', 'needle');
+        const needleHead = sh(r.dir, 'rev-parse', 'HEAD');
+
+        const leakText = `🔍 Grok｜結論：通過\n發現了針：${needle}\n`;
+        const leakStream = [
+          JSON.stringify({ type: 'system', subtype: 'init', session_id: sessId }),
+          JSON.stringify({ type: 'assistant', session_id: sessId, parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: leakText }] } }),
+          JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: sessId, result: leakText }),
+        ];
+
+        const res1 = await runStream(leakStream, 'scan', 2, null, { workingDir: r.dir, metadataName: 'scan.json', metadataHead: needleHead });
+        assert.match(res1.res.lines.join('\n'), /DLP/, '針在 diff 且提示不含針應拒絕，重跑 node --test tests/review-launch.test.js');
+
+        const exemptPrompt = `prompt with ${needle}\n`;
+        const originalPromptSaved = fs.readFileSync(promptFile, 'utf8');
+        try {
+          fs.writeFileSync(promptFile, exemptPrompt);
+          await runStream(leakStream, 'scan', 0, null, { workingDir: r.dir, metadataName: 'scan.json', metadataHead: needleHead });
+        } finally {
+          fs.writeFileSync(promptFile, originalPromptSaved);
+        }
+      } finally {
+        sh(r.dir, 'reset', '--hard', r.head);
+      }
+    });
+
+    await t.test('DLP: 原提示在執行後改寫不能擴張例外，原有例外不放過其他針', async () => {
+      const savedPrompt = fs.readFileSync(promptFile, 'utf8');
+      const streamFor = (text) => [
+        JSON.stringify(initEvent),
+        JSON.stringify({ type: 'assistant', session_id: sessId, parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text }] } }),
+        JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: sessId, result: text }),
+      ];
+      try {
+        let changed = false;
+        const late = await runStream(streamFor('VALID-KEY-111'), 'review', 2, null, {
+          checkBox() {
+            fs.writeFileSync(promptFile, `${savedPrompt}\nVALID-KEY-111`);
+            changed = true;
+          },
+        });
+        assert.equal(changed, true, '受測執行確實改動原提示檔');
+        assert.match(late.res.lines.join('\n'), /DLP/);
+        fs.writeFileSync(promptFile, `${savedPrompt}\nVALID-KEY-111`);
+        const other = await runStream(streamFor('REFRESH-222'), 'review', 2);
+        assert.equal(other.spawnCalled, true);
+        assert.match(other.res.lines.join('\n'), /DLP/);
+      } finally {
+        fs.writeFileSync(promptFile, savedPrompt);
+      }
+    });
+
+    await t.test('DLP: runGrokExec 重複鍵較早 escaped value 含私針', async () => {
+      const passText = '🤖 Grok｜來源：Grok CLI｜審 `1234567`｜r1｜結論：通過\n### 本輪實際用的設定\n- ok\n### 清單逐項結果\n- 零發現\n未貼\n';
+      const escapedKeyStream = [
+        JSON.stringify(initEvent),
+        `{"type":"assistant","session_id":"${sessId}","parent_tool_use_id":null,"message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"read","input":{"k1":"VAL\\u0049D-KEY-111","k1":"safe"}}]}}`,
+        JSON.stringify({ type: 'assistant', session_id: sessId, parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: passText }] } }),
+        JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: sessId, result: passText }),
+      ];
+      const resF1 = await runStream(escapedKeyStream, 'review', 2);
+      const hintF = '檢查 tools/review-launch.js 的 DLP 或重複鍵偵測，重跑 node --test tests/review-launch.test.js';
+      assert.match(resF1.res.lines.join('\n'), /DLP|重複鍵/, hintF);
+    });
+
+    await t.test('DLP: plain 單 escaped value 也拒 DLP', async () => {
+      const passText = '🤖 Grok｜來源：Grok CLI｜審 `1234567`｜r1｜結論：通過\n### 本輪實際用的設定\n- ok\n### 清單逐項結果\n- 零發現\n未貼\n';
+      const plainEscapedStream = [
+        JSON.stringify(initEvent),
+        `{"type":"assistant","session_id":"${sessId}","parent_tool_use_id":null,"message":{"role":"assistant","content":[{"type":"text","text":"here is V\\u0041LID-KEY-111"}]}}`,
+        JSON.stringify({ type: 'assistant', session_id: sessId, parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: passText }] } }),
+        JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: sessId, result: passText }),
+      ];
+      const resF2 = await runStream(plainEscapedStream, 'review', 2);
+      const hintF = '檢查 tools/review-launch.js 的 DLP，重跑 node --test tests/review-launch.test.js';
+      assert.equal(plainEscapedStream.join('\n').includes('VALID-KEY-111'), false, hintF);
+      assert.equal(resF2.spawnCalled, true, hintF);
+      assert.equal(resF2.res.lines.join('\n').includes('VALID-KEY-111'), false, hintF);
+      assert.match(resF2.res.lines.join('\n'), /DLP/, hintF);
+    });
+
+    await t.test('DLP 拒收階段僅固定標記，原字串優先且解碼鍵值仍守門', async () => {
+      const text = '🤖 Grok｜來源：Grok CLI｜審 `1234567`｜r1｜結論：通過\n### 本輪實際用的設定\n- ok\n### 清單逐項結果\n- 零發現\n未貼\n';
+      const valid = [JSON.stringify(initEvent),
+        JSON.stringify({ type: 'assistant', session_id: sessId, parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text }] } }),
+        JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: sessId, result: text })];
+      const samples = [
+        ['raw', 'VALID-KEY-111', 'dlp_raw'],
+        ['both', '{"marker":"VALID-KEY-111"}', 'dlp_raw'],
+        ['value', '{"marker":"V\\u0041LID-KEY-111"}', 'dlp_decoded'],
+        ['key', '{"V\\u0041LID-KEY-111":"marker"}', 'dlp_decoded'],
+      ];
+      for (const [name, payload, stage] of samples) {
+        assert.equal(payload.includes('VALID-KEY-111'), stage === 'dlp_raw', name);
+        const outcome = await runStream([valid[0], payload, ...valid.slice(1)], 'review', 2);
+        assert.equal(outcome.spawnCalled, true, name);
+        assert.equal(outcome.output, null, name);
+        assert.deepEqual(outcome.res.lines, [
+          '送審產生器（Grok 隔離執行）：輸出疑似含真實憑證或私密欄位（DLP 攔截）——已拒絕寫出結果。',
+          `拒收階段：${stage}`,
+        ], name);
+        assert.equal(JSON.stringify(outcome.res).includes('VALID-KEY-111'), false, name);
+      }
+      const normal = await runStream(valid, 'review', 0, valid.join('\n') + '\n');
+      assert.equal(normal.spawnCalled, true);
+    });
+
+    await t.test('失敗診斷只投影白名單，不帶原始回覆與請求內容', async () => {
+      const secret = 'SYNTHETIC-DIAGNOSTIC-CONTENT';
+      const diagnostic = { trigger: 'deadline', vetoTrigger: 'cancelled', childExitCode: 0, childSignalled: false, groupState: 'unknown', pipesClosed: true, cleanupFailed: true, elapsedMs: 123,
+        stdout: secret, stderr: secret, url: `https://example.invalid/${secret}`, headers: { authorization: secret }, path: `/synthetic/${secret}`, error: new Error(secret) };
+      const outcome = await runStream(secret, 'review', 2, null, { status: 2, stderr: secret, diagnostic });
+      const line = outcome.res.lines.find(x => x.startsWith('執行觀測：'));
+      assert.ok(line, '檢查非零回覆的有限診斷接線，重跑本檔失敗診斷題');
+      assert.deepEqual(JSON.parse(line.slice('執行觀測：'.length)), {
+        trigger: 'deadline', vetoTrigger: 'cancelled', childExitCode: 0, childSignalled: false, groupState: 'unknown', pipesClosed: true, cleanupFailed: true, elapsedMs: 123,
+      });
+      assert.equal(JSON.stringify(outcome.res).includes(secret), false);
+      assert.equal(outcome.output, null);
+      const unknown = await runStream(secret, 'review', 2, null, { status: 2, diagnostic: { trigger: secret, vetoTrigger: secret, groupState: secret, childExitCode: secret, elapsedMs: secret } });
+      const safeLine = unknown.res.lines.find(x => x.startsWith('執行觀測：'));
+      assert.ok(safeLine);
+      assert.deepEqual(JSON.parse(safeLine.slice('執行觀測：'.length)), {
+        trigger: 'unknown', vetoTrigger: 'unknown', childExitCode: null, childSignalled: null, groupState: 'unknown', pipesClosed: null, cleanupFailed: null, elapsedMs: null,
+      });
+      assert.equal(JSON.stringify(unknown.res).includes(secret), false);
+    });
+
+    await t.test('合成 stderr 不進成功結果或失敗訊息', async () => {
+      const passText = '🤖 Grok｜來源：Grok CLI｜審 `1234567`｜r1｜結論：通過\n### 本輪實際用的設定\n- ok\n### 清單逐項結果\n- 零發現\n未貼\n';
+      const stream = [
+        JSON.stringify(initEvent),
+        JSON.stringify({ type: 'assistant', session_id: sessId, parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: passText }] } }),
+        JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: sessId, result: passText }),
+      ];
+      const stderr = 'SYNTHETIC-STDERR-ONLY-VALID-KEY-111';
+      const hint = '檢查 tools/review-launch.js 的 stderr 邊界，重跑 node --test tests/review-launch.test.js';
+      for (const status of [0, 1]) {
+        const result = await runStream(stream, 'review', status === 0 ? 0 : 2, null, { stderr, status });
+        assert.equal(result.spawnCalled, true, hint);
+        assert.equal(result.res.lines.join('\n').includes(stderr), false, hint);
+        assert.equal((result.output || '').includes(stderr), false, hint);
+        if (status === 0) assert.equal(result.output, stream.join('\n') + '\n', hint);
+        else assert.equal(result.output, null, hint);
+      }
+    });
+
+    await t.test('3: Root 前進但 CWD 固定舊版 應成功且材料不變', async () => {
+      const oldTree = path.join(tmp, 'old-tree');
+      const addRes = spawnSync('git', ['worktree', 'add', '--detach', oldTree, r.head], { cwd: r.dir, env: gitEnv() });
+      assert.equal(addRes.status, 0, 'git worktree add 應成功');
+
+      // Root HEAD 前進
+      fs.writeFileSync(path.join(r.dir, 'a.txt'), 'root-advanced\n');
+      sh(r.dir, 'add', 'a.txt');
+      sh(r.dir, 'commit', '-qm', 'advanced');
+      const advancedHead = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: r.dir, env: gitEnv(), encoding: 'utf8' }).stdout.trim();
+      assert.notEqual(advancedHead, r.head, 'Root HEAD 應已前進');
+      assert.equal(spawnSync('git', ['rev-parse', 'HEAD'], { cwd: oldTree, env: gitEnv(), encoding: 'utf8' }).stdout.trim(), r.head, 'CWD HEAD 應維持舊版');
+
+      const scanText = '🔍 Grok｜來源：Grok CLI｜掃 `1234567`\n- 零發現\n';
+      const scanStream = [
+        JSON.stringify({type:"system",subtype:"init",session_id:sessId,model:"grok-4.7"}),
+        JSON.stringify({type:"assistant",session_id:sessId,parent_tool_use_id:null,message:{role:"assistant",stop_reason:"end_turn",content:[{type:"text",text:scanText}]}}),
+        JSON.stringify({type:"result",subtype:"success",is_error:false,stop_reason:"end_turn",session_id:sessId,result:scanText})
+      ];
+      const res = await runStream(scanStream, 'scan', 0, null, { workingDir: oldTree });
+      assert.ok(res.capturedBoxPromptContent.includes(untrimmedDiff), '材料應維持為 scan.json 指定的 base...head');
+
+      assert.ok(!res.capturedBoxPromptContent.includes('root-advanced'), '不應包含 root 新前進的內容');
+    });
+
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    spawnSync('git', ['worktree', 'prune'], { cwd: r.dir, env: gitEnv() });
   }
 });
 
@@ -2286,9 +3828,13 @@ test('⑭一鍵執行（--run）與收樹清除容器（--purge）：複審與�
       },
       runPost() { selfPostCalls += 1; },
     });
-    assert.equal(selfPostedSummaryOut.code, 0, selfPostedSummaryOut.lines.join('\n'));
+    assert.equal(selfPostedSummaryOut.code, 2, selfPostedSummaryOut.lines.join('\n'));
     assert.equal(selfPostCalls, 0);
-    assert.ok(!fs.existsSync(reviewFolder), '自行貼文且輸出摘要時 --run --purge 亦正常收樹並清除容器');
+    assert.ok(fs.existsSync(reviewFolder), '只有摘要不能證明完整正文一致，須保留容器');
+    const summaryRecord = JSON.parse(fs.readFileSync(path.join(reviewFolder, 'launch.json'), 'utf8'));
+    assert.equal(summaryRecord.postedAt, undefined);
+    assert.equal(fs.readFileSync(summaryRecord.outFile, 'utf8'), '已貼：#7 r1（詳見 PR 留言）\n');
+    assert.equal(main(['--close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] }).code, 0);
 
     // 自行貼文但輸出檔寫了矛盾的 🤖 結論 → 退 2、不收樹、保留容器
     dynamicComments.length = 0;
@@ -2354,7 +3900,7 @@ test('⑭一鍵執行（--run）與收樹清除容器（--purge）：複審與�
           createdAt: '2026-10-20T00:05:00Z',
           body: `🤖 Beta｜來源：beta CLI｜審 \`${r.head.slice(0, 7)}\`｜r2｜結論：通過\n\n### 本輪實際用的設定\n- ok\n\n### 清單逐項結果\n- ok\n`,
         });
-        fs.writeFileSync(record.outFile, '已貼：#7 r2（詳見 PR 留言）\n');
+        fs.writeFileSync(record.outFile, dynamicComments.at(-1).body);
       },
       runPost() { selfPostCalls += 1; },
     });
@@ -2383,7 +3929,8 @@ test('⑭一鍵執行（--run）與收樹清除容器（--purge）：複審與�
     assert.match(unvoidedBadOut.lines.join('\n'), /未作廢的壞標頭 🤖 留言.*不自動收尾/u);
     assert.equal(main(['--close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] }).code, 0);
 
-    // CLI JSON 輸出包裹（如 Claude --output-format json）：自行貼文成功且 JSON result 含同一份完整結論或摘要時 --run --purge 正常收尾；矛盾或 is_error 則退 2（r3 R2）
+    // R4: CLI JSON 輸出包裹（如 Grok/Claude）自行貼文題
+    // (a) 成功 JSON 同完整正文
     dynamicComments.length = 0;
     const jsonSelfSameOut = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
       settings: s,
@@ -2392,15 +3939,38 @@ test('⑭一鍵執行（--run）與收樹清除容器（--purge）：複審與�
       template: TEMPLATE,
       leftoverRoots: [],
       runExec(_cmd, { record }) {
-        dynamicComments.push({ id: 'self-json-1', author: 'ai-acct', createdAt: '2026-10-20T00:10:00Z', body: validSelfVerdict });
+        dynamicComments.push({ id: 'r4-json-same', author: 'ai-acct', createdAt: '2026-10-20T00:10:00Z', body: validSelfVerdict });
         fs.writeFileSync(record.outFile, JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: validSelfVerdict }));
       },
       runPost() { selfPostCalls += 1; },
     });
-    assert.equal(jsonSelfSameOut.code, 0, jsonSelfSameOut.lines.join('\n'));
+    assert.equal(jsonSelfSameOut.code, 0, 'R4-a：成功 JSON 同完整正文');
     assert.equal(selfPostCalls, 0);
-    assert.ok(!fs.existsSync(reviewFolder), 'JSON 包裹同正文自貼成功後 --run --purge 已正常收樹並清除容器');
+    assert.ok(!fs.existsSync(reviewFolder), 'R4-a：收樹清除');
 
+    // (b) 成功 JSON 僅自貼摘要
+    dynamicComments.length = 0;
+    const jsonSelfSummaryOut = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+      settings: s,
+      platform: fakePlatform(selfPostAns),
+      cwd: r.dir,
+      template: TEMPLATE,
+      leftoverRoots: [],
+      runExec(_cmd, { record }) {
+        dynamicComments.push({ id: 'r4-json-summary', author: 'ai-acct', createdAt: '2026-10-20T00:10:00Z', body: validSelfVerdict });
+        fs.writeFileSync(record.outFile, JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '已完成：詳見 PR 留言' }));
+      },
+      runPost() { selfPostCalls += 1; },
+    });
+    assert.equal(jsonSelfSummaryOut.code, 2, '成功 JSON 不代替完整合法正文');
+    assert.equal(selfPostCalls, 0);
+    assert.ok(fs.existsSync(reviewFolder));
+    const jsonSummaryRecord = JSON.parse(fs.readFileSync(path.join(reviewFolder, 'launch.json'), 'utf8'));
+    assert.equal(jsonSummaryRecord.postedAt, undefined);
+    assert.ok(fs.existsSync(jsonSummaryRecord.outFile));
+    assert.equal(main(['--close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] }).code, 0);
+
+    // (c) 壞例：成功 JSON 但 result 有矛盾機器人結論
     dynamicComments.length = 0;
     const jsonSelfConflictOut = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
       settings: s,
@@ -2409,16 +3979,63 @@ test('⑭一鍵執行（--run）與收樹清除容器（--purge）：複審與�
       template: TEMPLATE,
       leftoverRoots: [],
       runExec(_cmd, { record }) {
-        dynamicComments.push({ id: 'self-json-conflict', author: 'ai-acct', createdAt: '2026-10-20T00:10:00Z', body: validSelfVerdict });
-        fs.writeFileSync(
-          record.outFile,
-          JSON.stringify([{ type: 'system' }, { type: 'result', subtype: 'success', is_error: false, result: `🤖 Beta｜來源：beta CLI｜審 \`${r.head.slice(0, 7)}\`｜r1｜結論：需修改後再審\n\n- R1\n` }]),
-        );
+        dynamicComments.push({ id: 'r4-json-conflict', author: 'ai-acct', createdAt: '2026-10-20T00:10:00Z', body: validSelfVerdict });
+        const conflictVerdict = `🤖 Beta｜來源：beta CLI｜審 \`${r.head.slice(0, 7)}\`｜r1｜結論：需修改後再審\n\n- Conflict\n`;
+        fs.writeFileSync(record.outFile, JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: conflictVerdict }));
       },
       runPost() { selfPostCalls += 1; },
     });
-    assert.equal(jsonSelfConflictOut.code, 2);
+    assert.equal(jsonSelfConflictOut.code, 2, 'R4-c：矛盾結論');
     assert.match(jsonSelfConflictOut.lines.join('\n'), /輸出檔的 r1 結論與平台上已貼出的結論內容不一致/u);
+    assert.ok(fs.existsSync(reviewFolder));
+    assert.equal(main(['--close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] }).code, 0);
+
+    // (d) 新增壞例：平台 validSelfVerdict；rawJSON 沒有 robot 且標示錯誤
+    dynamicComments.length = 0;
+    const jsonPlatformRobotCliError = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+      settings: s,
+      platform: fakePlatform(selfPostAns),
+      cwd: r.dir,
+      template: TEMPLATE,
+      leftoverRoots: [],
+      runExec(_cmd, { record }) {
+        dynamicComments.push({ id: 'r4-json-platform-robot', author: 'ai-acct', createdAt: '2026-10-20T00:10:00Z', body: validSelfVerdict });
+        fs.writeFileSync(record.outFile, JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: 'Execution failed' }));
+      },
+      runPost() { selfPostCalls += 1; },
+    });
+    assert.equal(jsonPlatformRobotCliError.code, 2, 'R4-d：平台有機器人但 CLI 報錯且無結論');
+    assert.ok(fs.existsSync(reviewFolder), '應保留容器供檢查');
+    const launchRecD = JSON.parse(fs.readFileSync(path.join(reviewFolder, 'launch.json'), 'utf8'));
+    assert.equal(launchRecD.postedAt, undefined, '不應記 postedAt');
+    assert.ok(fs.existsSync(launchRecD.outFile), 'outFile 應存在');
+    assert.equal(selfPostCalls, 0, 'runPost 仍 0');
+    assert.equal(main(['--close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] }).code, 0);
+
+    // (e) 新增壞例：🤖 在 raw 使用完整的 Unicode surrogate escape pair (\\ud83e\\udd16)
+    dynamicComments.length = 0;
+    const jsonSurrogatePairOut = main(['7', '--reviewer', 'Beta', '--run', '--purge', '--dir', dir], {
+      settings: s,
+      platform: fakePlatform(selfPostAns),
+      cwd: r.dir,
+      template: TEMPLATE,
+      leftoverRoots: [],
+      runExec(_cmd, { record }) {
+        dynamicComments.push({ id: 'r4-json-surrogate', author: 'ai-acct', createdAt: '2026-10-20T00:10:00Z', body: validSelfVerdict });
+        const badResult = 'Preamble\n' + validSelfVerdict.replace('通過', '需修改後再審');
+        const raw = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: badResult }).replaceAll('🤖', '\\ud83e\\udd16');
+        assert.ok(!raw.includes('🤖'), 'raw 不含實際 🤖');
+        assert.ok(JSON.parse(raw).result.includes('🤖'), 'JSON.parse(raw) 應含完整 🤖');
+        fs.writeFileSync(record.outFile, raw);
+      },
+      runPost() { selfPostCalls += 1; },
+    });
+    assert.equal(jsonSurrogatePairOut.code, 2, 'R4-e：不合規標頭/不自動收尾');
+    assert.ok(fs.existsSync(reviewFolder));
+    const launchRecE = JSON.parse(fs.readFileSync(path.join(reviewFolder, 'launch.json'), 'utf8'));
+    assert.ok(!launchRecE.postedAt, '未 postedAt');
+    assert.ok(fs.existsSync(launchRecE.outFile), 'outFile 應存在');
+    assert.equal(selfPostCalls, 0, 'runPost 0');
     assert.equal(main(['--close', '7', '--purge', '--dir', dir], { settings: s, leftoverRoots: [] }).code, 0);
 
     // r3 R1：r1 的 --run --purge 在代貼期間（r1 結論已在平台可見），另一程序正式開出 r2 並寫入唯一輸出；r1 收尾只關 r1，r2 的樹、Git 登記與唯一輸出逐字保留
@@ -3950,7 +5567,7 @@ test('⑭一鍵執行（--run）與收樹清除容器（--purge）：複審與�
         JSON.stringify({
           [r4EntryKey]: {
             auth_mode: 'oidc',
-            user_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+            user_id: '10000000-0000-4000-8000-000000000001',
             create_time: '2026-10-19T00:00:00.000Z',
             expires_at: '2026-10-19T02:00:00.000Z',
             oidc_issuer: GROK_PINNED_ISSUER,
@@ -4333,3 +5950,169 @@ test('⑭一鍵執行（--run）與收樹清除容器（--purge）：複審與�
   }
 });
 
+test('⑬ runGrokExec 資源限制回歸 (R2)：1MiB 緩衝區與 OS argv 容量上限', async (t) => {
+  const { runGrokExec, GROK_PINNED_ISSUER, GROK_PINNED_CLIENT_ID } = require('../tools/review-launch.js');
+  const created = [];
+  const tmp = (prefix) => {
+    const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+    created.push(d);
+    return d;
+  };
+  const r = repo();
+
+  try {
+    const rootTmp = tmp('ack-grok-r2-');
+    const authFile = path.join(rootTmp, 'auth.json');
+    const entryKey = `${GROK_PINNED_ISSUER}::${GROK_PINNED_CLIENT_ID}`;
+    const auth = {
+      [entryKey]: {
+        auth_mode: 'oidc',
+        user_id: '10000000-0000-4000-8000-000000000001',
+        create_time: '2026-10-19T00:00:00.000Z',
+        expires_at: '2026-10-19T00:10:00.000Z',
+        oidc_issuer: GROK_PINNED_ISSUER,
+        oidc_client_id: GROK_PINNED_CLIENT_ID,
+        key: 'VALID-KEY-111',
+        refresh_token: 'REFRESH-222',
+      },
+    };
+    fs.writeFileSync(authFile, JSON.stringify(auth), { mode: 0o600 });
+    const authOpts = {
+      now: () => new Date('2026-10-19T00:01:00Z').getTime(),
+      earlySecs: 0,
+      fetchImpl: () => { throw 'NO REAL REFRESH'; },
+    };
+    const sessId = 's-r2';
+    const initEvent = { type: 'system', subtype: 'init', session_id: sessId };
+
+    await t.test('1: diff > 1MiB 應成功執行 (R2 已解除 1MiB 限制)', async () => {
+      const subRepoDir = path.join(tmp('r2-repo-large-'), 'repo');
+      fs.mkdirSync(subRepoDir, { recursive: true });
+      sh(subRepoDir, 'init', '-q');
+      sh(subRepoDir, 'config', 'user.name', 'test');
+      sh(subRepoDir, 'config', 'user.email', 'test@example.com');
+      fs.writeFileSync(path.join(subRepoDir, 'f.txt'), 'base');
+      sh(subRepoDir, 'add', 'f.txt');
+      sh(subRepoDir, 'commit', '-qm', 'base');
+      const base = sh(subRepoDir, 'rev-parse', 'HEAD');
+
+      // 產生超過 1MiB 的差異
+      const largeContent = 'x'.repeat(1024 * 1024 + 1024);
+      fs.writeFileSync(path.join(subRepoDir, 'f.txt'), largeContent);
+      sh(subRepoDir, 'add', 'f.txt');
+      sh(subRepoDir, 'commit', '-qm', 'large');
+      const head = sh(subRepoDir, 'rev-parse', 'HEAD');
+
+      const metaDir = tmp('r2-meta-large-');
+      const scanJson = path.join(metaDir, 'scan.json');
+      fs.writeFileSync(scanJson, JSON.stringify({ root: subRepoDir, base, head }));
+
+      const promptFile = path.join(metaDir, 'prompt.md');
+      const rawPrompt = 'scan this';
+      fs.writeFileSync(promptFile, rawPrompt);
+      const outFile = path.join(metaDir, 'out.md');
+
+      const args = ['--mode', 'scan', '--cwd', subRepoDir, '--prompt-file', promptFile, '--out', outFile, '--model', 'grok-4.7', '--reasoning-effort', 'xhigh'];
+
+      const scanText = '🔍 Grok｜R2 LARGE DIFF OK';
+      const successStream = [
+        JSON.stringify(initEvent),
+        JSON.stringify({ type: 'assistant', session_id: sessId, parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: scanText }] } }),
+        JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: sessId, result: scanText }),
+      ];
+
+      let spawnCalled = false;
+      const res = await runGrokExec(args, {
+        authFile,
+        authOpts,
+        probeFn: () => ({ ok: true }),
+        spawnGrok: async ({ boxPromptFile, grokArgs }) => {
+          spawnCalled = true;
+          const prompt = fs.readFileSync(boxPromptFile);
+          // 使用 8MiB buffer 取得預期差異
+          const expectedDiff = spawnSync('git', ['diff', '--no-ext-diff', '--no-textconv', `${base}...${head}`], { cwd: subRepoDir, env: gitEnv(), maxBuffer: 8 * 1024 * 1024 }).stdout;
+          assert.deepEqual(prompt.slice(-expectedDiff.length), expectedDiff, '隔離提示檔應包含完整大差異位元組');
+          assert.ok(prompt.includes(Buffer.from(rawPrompt)), '應包含原 prompt');
+
+          assert.ok(grokArgs.at(-1).includes(boxPromptFile), '最後一個參數應為提示檔路徑');
+          assert.ok(grokArgs.join(' ').length < 4096, '指令長度應受控 (R2)');
+
+          const actualOSspawn = spawnSync(process.execPath, ['-e', 'process.exit(0)', '--', ...grokArgs], { env: gitEnv() });
+          assert.equal(actualOSspawn.status, 0);
+          return { status: 0, stdout: successStream.join('\n') + '\n', stderr: '' };
+        },
+      });
+      assert.equal(res.code, 0, '應成功執行 (舊碼因 1MiB 限制會退 2)');
+      assert.ok(spawnCalled, 'spawnGrok 應被呼叫');
+    });
+
+    await t.test('2: 超大 prompt/diff 導致 argv 接近 OS 上限 (R2 應正常執行)', async () => {
+      const subRepoDir = path.join(tmp('r2-repo-e2big-'), 'repo');
+      fs.mkdirSync(subRepoDir, { recursive: true });
+      sh(subRepoDir, 'init', '-q');
+      sh(subRepoDir, 'config', 'user.name', 'test');
+      sh(subRepoDir, 'config', 'user.email', 'test@example.com');
+      fs.writeFileSync(path.join(subRepoDir, 'f.txt'), 'base');
+      sh(subRepoDir, 'add', 'f.txt');
+      sh(subRepoDir, 'commit', '-qm', 'base');
+      const base = sh(subRepoDir, 'rev-parse', 'HEAD');
+
+      // 約 1MB 的 diff
+      const largeContent = 'y'.repeat(1040000);
+      fs.writeFileSync(path.join(subRepoDir, 'f.txt'), largeContent);
+      sh(subRepoDir, 'add', 'f.txt');
+      sh(subRepoDir, 'commit', '-qm', 'large');
+      const head = sh(subRepoDir, 'rev-parse', 'HEAD');
+
+      const metaDir = tmp('r2-meta-e2big-');
+      const scanJson = path.join(metaDir, 'scan.json');
+      fs.writeFileSync(scanJson, JSON.stringify({ root: subRepoDir, base, head }));
+
+      // 約 10KB 的 prompt
+      const promptFile = path.join(metaDir, 'prompt.md');
+      const rawPrompt = 'z'.repeat(10000);
+      fs.writeFileSync(promptFile, rawPrompt);
+      const outFile = path.join(metaDir, 'out.md');
+
+      const args = ['--mode', 'scan', '--cwd', subRepoDir, '--prompt-file', promptFile, '--out', outFile, '--model', 'grok-4.7', '--reasoning-effort', 'xhigh'];
+
+      const scanText = '🔍 Grok｜R2 E2BIG OK';
+      const successStream = [
+        JSON.stringify(initEvent),
+        JSON.stringify({ type: 'assistant', session_id: sessId, parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: scanText }] } }),
+        JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: sessId, result: scanText }),
+      ];
+
+      let spawnCalled = false;
+      const res = await runGrokExec(args, {
+        authFile,
+        authOpts,
+        probeFn: () => ({ ok: true }),
+        spawnGrok: async ({ boxPromptFile, grokArgs }) => {
+          spawnCalled = true;
+          const prompt = fs.readFileSync(boxPromptFile);
+          const expectedDiff = spawnSync('git', ['diff', '--no-ext-diff', '--no-textconv', `${base}...${head}`], { cwd: subRepoDir, env: gitEnv(), maxBuffer: 8 * 1024 * 1024 }).stdout;
+          assert.deepEqual(prompt.slice(-expectedDiff.length), expectedDiff, '隔離提示檔應包含完整大差異位元組');
+          assert.ok(prompt.includes(Buffer.from(rawPrompt)), '應包含原 prompt');
+
+          assert.ok(grokArgs.at(-1).includes(boxPromptFile), '最後一個參數應為提示檔路徑');
+          assert.ok(grokArgs.join(' ').length < 4096, '指令長度應受控 (R2)');
+
+          // 實際執行 spawnSync 驗證 OS argv 限制
+          const actualOSspawn = spawnSync(process.execPath, ['-e', 'process.exit(0)', '--', ...grokArgs], { env: gitEnv() });
+          if (actualOSspawn.error && actualOSspawn.error.code === 'E2BIG') throw actualOSspawn.error;
+          assert.equal(actualOSspawn.status, 0);
+
+          return { status: 0, stdout: successStream.join('\n') + '\n', stderr: '' };
+        },
+      });
+      assert.equal(res.code, 0, '應成功執行 (舊碼因 argv 太長可能觸發 E2BIG 退 2)');
+      assert.ok(spawnCalled, 'spawnGrok 應被呼叫');
+    });
+  } finally {
+    for (const d of created) {
+      try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) {}
+    }
+    try { fs.rmSync(r.dir, { recursive: true, force: true }); } catch (e) {}
+  }
+});

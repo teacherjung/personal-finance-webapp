@@ -18,7 +18,7 @@
 
 官方同步的差異：`MACHINES.md`、`templates/scan-record.md`、`tests/grok-strict-regression.test.js`、`tests/manifest.json`、`tests/review-launch.test.js`、`tests/run-checks.test.js`、`tools/review-launch.js`，以及官方產生的 `kit-lock.json`。
 
-專案自有路徑的待裁修補面：`scripts/grok-final-reply.js`、`test/grok-final-reply.test.js`、`test/helpers/grok-scan-flow-fixtures.js`、`test/grok-scan-flow-review.test.js`、`test/grok-review.test.js`。必要時更新 `docs/project-collaboration.md` 與本計畫的操作指路／實際證據。若須動 `scripts/grok-review.js` 或 `scripts/grok-scan.js` 的正式接線，先以具體差異補公開範圍與裁示，不將列名當作預先授權改安全邊界。
+專案自有路徑的修補面：`scripts/grok-final-reply.js`、`test/grok-final-reply.test.js`、`test/helpers/grok-scan-flow-fixtures.js`、`test/grok-scan-flow-review.test.js`、`test/grok-review.test.js`。必要說明限本計畫與公開證據；`docs/project-collaboration.md` 與暫停的 #737 宣告範圍交集，本支排除該文件。若須動 `scripts/grok-review.js` 或 `scripts/grok-scan.js` 的正式接線，先以具體差異補公開範圍與裁示，不將列名當作預先授權改安全邊界。
 
 以上完整路徑已查領域路由；沒有專屬契約命中，仍適用共用底層契約。共用檔歸套件；專案自有檔必須另核 D5，不能把套件修法抄進共用路徑。
 
@@ -27,6 +27,8 @@
 理財 `scripts/grok-final-reply.js` 的末列守門只收精確五鍵。#747 舊正式嘗試在模型完成後被 `FINAL_KEYS` 拒收，沒有有效正式結論。只同步套件並不改變專案自有選取器；也不能僅憑錯誤碼推定應放行哪些新鍵。
 
 先比對已固定版本的公開 CLI 程式、合成正常／異常形狀與套件完成證據，交實際 Sol 決定最小相容範圍。不得讀被隱私檢查攔截的原文、不得改舊結果或回溯冒稱通過；不得刪除精確末列、來源、雜湊、模型、DLP、程序清理與正式結論檢查。
+
+[Sol 範圍裁示](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6498273082)准先官方同步，收件相容必須等待固定版本合法證據。未取得與固定執行檔連結的公開來源時，允許以該執行檔、全合成材料、假認證及沒有轉送能力的 loopback 假服務，沿用 OS 隔離做原生持久化取證；不能啟真模型、讀私人設定或歷史 session。先公開對帳實際形狀與完成條件，再改封閉接受契約；探針失敗或語意不明維持拒收。此裁示不代替正式複審。
 
 ## 驗證與停線條件
 
@@ -38,6 +40,14 @@
 6. 官方備審、主代理全文核提示、真正 Grok 完整正文與原生證據、官方代貼、Codex 獨立對帳、全部正式合併關卡、合併後分級與工具驗收逐步完成。輸出零不等於正式通過。
 
 ## 回復與續辦
+
+### 前次同步的本機保存點（2026-10-30）
+
+前次官方同步至 `ec3817253faf77d2ed615ca8c7385c6c9c37fc3b` 的成果尚未通過驗證：完整三關止於 lint 的五處錯誤，型別檢查成功不代表整輪成功。原始失敗、官方同步輸出、七份共用成果、同步鎖與計畫全文均在樹外保留；本機保存點只保存這些既有成果，**已知 lint 失敗、未驗證通過**，不得單獨推送、發審或合併。
+
+依 [Sol 技術接續裁示](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6512766824)，先核全部共用項目的原始位元組、模式及來源清單，另道指令建立本機保存點；再以已合併套件 `1a1e3954fe606b3da178b1d4bd8fe07073e1e008` 的官方工具預演及整批同步。來源為 [#130 合併後工具核對](https://github.com/teacherjung/ai-collab-kit/pull/130#issuecomment-6511979875)，不以套件通過替代理財新版驗證。預演非零就停；不得手改共用檔、同步鎖、忽略名單或檢查判準。
+
+兩份來源未明的重複副本依 [本人答覆](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6512636403) 完整備份後移到工作樹外保留，未刪除、未提交，不歸因其他工作線。所有新驗證與失敗另列，不改寫舊結果；只有新版完整驗證成功後才正常提交推送，取得新 CI 與 Grok 正式複審。
 
 未合併時保留分支、提交與逐字證據，不重設或覆蓋任何他線內容。官方同步若中途失敗，依工具印出的精確回復方式處理，先核原因，不手工拼成套件不存在的版本。合併後如驗收失敗，依正式程序處理回復，不直接改主網站。
 

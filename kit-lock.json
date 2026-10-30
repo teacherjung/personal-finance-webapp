@@ -1,7 +1,7 @@
 {
   "repo": "teacherjung/ai-collab-kit",
-  "version": "c7125618592b757e29c6b76160dd517665987edf",
-  "syncedAt": "2026-10-22",
+  "version": "ec3817253faf77d2ed615ca8c7385c6c9c37fc3b",
+  "syncedAt": "2026-10-29",
   "entries": [
     {
       "mode": "100644",
@@ -10,7 +10,7 @@
     },
     {
       "mode": "100644",
-      "blob": "9b6b898b1e4060e19400cd52d5bc6d4a282d57da",
+      "blob": "1374c15891028c843f4fb7f0b71b88c9ff357481",
       "path": "MACHINES.md"
     },
     {
@@ -120,7 +120,7 @@
     },
     {
       "mode": "100644",
-      "blob": "832229474e61fcc6c868508df1bf3d5d983a29db",
+      "blob": "7ee438b5a4b0e7a34364ddc50e6f5a7f8403eaa7",
       "path": "templates/scan-record.md"
     },
     {
@@ -240,6 +240,11 @@
     },
     {
       "mode": "100644",
+      "blob": "2ed34d2cee3dc8f3dea9e7ae6486c6db0c56d24f",
+      "path": "tests/grok-strict-regression.test.js"
+    },
+    {
+      "mode": "100644",
       "blob": "758b914dd4185cf155f7458cd0fb1d8ece35f38a",
       "path": "tests/guard-copy-claude.test.js"
     },
@@ -280,7 +285,7 @@
     },
     {
       "mode": "100644",
-      "blob": "4b71de4e509058cb678aa9fabd3858587022418a",
+      "blob": "907115a1e208c9950f5f2a79e376af72095c8863",
       "path": "tests/manifest.json"
     },
     {
@@ -325,7 +330,7 @@
     },
     {
       "mode": "100644",
-      "blob": "cbf2ab16c89937dc667816d9c2bb56869a3ef46f",
+      "blob": "55f133fbb62620f8bce0884d540c504f3c2fda5a",
       "path": "tests/review-launch.test.js"
     },
     {
@@ -345,7 +350,7 @@
     },
     {
       "mode": "100644",
-      "blob": "55b8895ff7587ce3347dd5e4a308cb55454960a4",
+      "blob": "4c59edd1d1eaa1b404c85a21c2b596820eed0535",
       "path": "tests/run-checks.test.js"
     },
     {
@@ -505,7 +510,7 @@
     },
     {
       "mode": "100644",
-      "blob": "8f049e3a0d18794500366bdf5c8649bc33140ba5",
+      "blob": "16249cf42c0cd473b0a85576e9a8d954aa1fa294",
       "path": "tools/review-launch.js"
     },
     {

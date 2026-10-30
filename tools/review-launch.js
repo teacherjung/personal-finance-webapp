@@ -35,7 +35,7 @@ const { gitEnv } = require('./git-env.js');
 const { parseInstant } = require('./time-point.js');
 const { fieldValue, canonicalRole, rolesOf } = require('./gates/check-collab-fields.js');
 const { headerOf, missingHeadings, PASS_HEADINGS, evaluate: evaluateVerdicts } = require('./gates/check-review-verdicts.js');
-const { evaluate: evaluateRulings, deciderOf, rulingLink } = require('./pending-rulings.js');
+const { evaluate: evaluateRulings, deciderOf, rulingLink, readPart } = require('./pending-rulings.js');
 const { run: riskRun, gitIn } = require('./risk-tier.js');
 
 const UNSET = '未設定';
@@ -43,6 +43,7 @@ const TEMPLATE = path.join(__dirname, '..', 'templates', 'review-request.md');
 const SCAN_TEMPLATE = path.join(__dirname, '..', 'templates', 'scan-record.md');
 const FILE_SLOT = '<你寫好的結論檔>';
 const USAGE = `用法：node tools/review-launch.js <變更編號> --reviewer <複審者識別值> [--run] [--purge] [--dir <放樹的資料夾>]
+      獨立續審另加：--continue-blocker <原阻擋網址> --owner-question <本人原題網址> --owner-approval <本人批准網址>
       node tools/review-launch.js --post <變更編號> [--round <輪次>] [--expect-head <版本碼>] [--expect-started-at <ISO時間>] [--file <結論檔>] [--dir <放樹的資料夾>]
       node tools/review-launch.js --close <變更編號> [--round <輪次>] [--expect-head <版本碼>] [--expect-started-at <ISO時間>] [--purge] [--dir <放樹的資料夾>]
       node tools/review-launch.js --scan <變更編號> [--scanner <掃描者識別值>] [--tier <高|中|低>] [--run] [--purge] [--dir <放樹的資料夾>]
@@ -174,6 +175,111 @@ function twoMissesInARow(comments, reviewer, source, roles) {
   return [...rounds.keys()].some((k) => rounds.has(k + 1) && !passedIn(k) && !passedIn(k + 1));
 }
 
+const sourceKey = (source) => String(source).trim().replace(/\s+/gu, ' ');
+const bodyHash = (body) => crypto.createHash('sha256').update(body, 'utf8').digest('hex');
+const CONTINUATION_PURPOSE = 'independent-blocker-continuation-v1';
+
+/**
+ * 本人逐字批准只解鎖原身分的歷史續審用途，不把第二個審查者升成主審。
+ * 同帳號不能證明人類授權語意或另一場次的獨立性；發審者仍須讀原題及原話、核全新原生場次。
+ */
+function continuationBinding(change, comments, reviewer, refs, settings) {
+  if (!refs || Object.keys(refs).sort().join() !== 'approval,blocker,question'
+      || Object.values(refs).some((v) => typeof v !== 'string' || !v)) {
+    throw new LaunchError('獨立續審須明確給本人原題、本人批准及原阻擋網址');
+  }
+  const { usable } = rolesOf(settings);
+  const primary = canonicalRole(fieldValue(change.body, '複審者'), usable);
+  const implementer = canonicalRole(fieldValue(change.body, '實作者'), usable);
+  const entry = settings.reviewers.find((r) => r.participant === reviewer);
+  const primaryEntry = settings.reviewers.find((r) => r.participant === primary);
+  if (!primary || !implementer || primary === reviewer || primary === implementer || !entry || !primaryEntry
+      || !/^[0-9a-f]{40}$/u.test(change.headSha) || change.state !== 'OPEN') {
+    throw new LaunchError('獨立續審須保留另一位指定主審、實作者及開啟中 PR 的完整 HEAD');
+  }
+  const project = settings.platform.project;
+  const commentUrl = (id) => substitute(settings.reviewLaunch.commentLink,
+    { project, change: change.id, comment: id }, '留言網址樣板').text;
+  const original = (url) => {
+    const found = comments.filter((c) => commentUrl(c.id) === url);
+    if (found.length !== 1) throw new LaunchError('獨立續審原件不是同倉庫同 PR 的唯一留言');
+    return found[0];
+  };
+  const question = original(refs.question);
+  const approval = original(refs.approval);
+  const blocker = original(refs.blocker);
+  const ruled = evaluateRulings(comments.map((c) => ({ ...c, change: change.id })), deciderOf(settings), settings);
+  const pair = ruled.ruled.find((r) => String(r.ask.id) === String(question.id) && String(r.by.id) === String(approval.id));
+  const approvalPart = readPart(approval.body);
+  // D1 的配對只認錨點；這裡另核第一個網址的整串，不能借別倉庫的同名編號。
+  const firstUrl = /https?:\/\/[^\s)>，,、；;。｜|）\]`'"]+/iu.exec(approvalPart);
+  const quotes = approvalPart.split('\n').filter((line) => line.startsWith('原話（對話中，'));
+  const quote = quotes.length === 1 && /^原話（對話中，([^\s，（）]+) 轉述）：\*\*「(.+)」\*\*[ \t]*$/u.exec(quotes[0]);
+  if (ruled.unsure || !pair || !pair.by.ownerRuling || !firstUrl || firstUrl[0] !== refs.question
+      || !quote || !usable.includes(quote[1]) || quote[2] !== `同意追加獨立 ${reviewer} 續審（建議）`
+      || !readPart(question.body).includes(`保留 ${primary} 主審`)
+      || !readPart(question.body).includes(`獨立 ${reviewer} 續審`)) {
+    throw new LaunchError('獨立續審本人原題／逐字批准／指定主審不配對；不可借其他裁示解鎖');
+  }
+  const header = headerOf(blocker.body, usable);
+  const source = sourceKey(entry.source);
+  if (!header || !header.blocking || header.role !== reviewer || header.source !== source) {
+    throw new LaunchError('獨立續審原阻擋的角色或來源與正式登記不符');
+  }
+  const verdicts = evaluateVerdicts(comments, change.headSha, primary, usable,
+    { ownerRole: canonicalRole(settings.owner, usable) });
+  // 不重寫 F7 事件消解規則。只採原閘逐事件指出的未解阻擋；訊息契約漂移時拒絕，不猜。
+  const unresolvedPrefix = `${reviewer}（${source}） 在 r${header.round}（審 ${header.sha}，留言 ${blocker.id}）的結論是「`;
+  if (verdicts.unsure || !verdicts.problems.some((p) => p.startsWith(unresolvedPrefix))) {
+    throw new LaunchError('指定原阻擋未被原結論閘列為仍未解除；不開放獨立續審');
+  }
+  const primaryState = verdicts.reviewers[`${primary}（${sourceKey(primaryEntry.source)}）`];
+  if (!primaryState || primaryState.blocking || !change.headSha.startsWith(primaryState.sha)) {
+    throw new LaunchError('獨立續審須先取得指定主審對當版的正式通過');
+  }
+  const snapshot = (c) => ({ id: String(c.id), author: c.author, createdAt: c.createdAt, bodySha256: bodyHash(c.body) });
+  return {
+    purpose: CONTINUATION_PURPOSE, project, change: String(change.id), refs,
+    primary, implementer, reviewer, source, model: entry.strongest, effort: entry.maxEffort, command: entry.command,
+    head: change.headSha, baseBranch: change.baseBranch, round: roundsOf(comments, reviewer, entry.source, usable).round,
+    question: snapshot(question), approval: snapshot(approval), blocker: { ...snapshot(blocker), ...header },
+  };
+}
+
+/** 收件時排除的只能是本場完整自貼候選，否則新通過本身會把原阻擋消掉而無法核原用途。 */
+function recheckContinuation(rec, change, comments, prepared, allowAlreadyPosted, settings, requireCandidate = false) {
+  const binding = rec.continuation;
+  if (!binding || binding.purpose !== CONTINUATION_PURPOSE) throw new LaunchError('獨立續審用途紀錄缺失或不明');
+  const session = continuationSession(rec);
+  if (parseInstant(rec.startedAt) === null || JSON.stringify(session) !== JSON.stringify(binding.session)) {
+    throw new LaunchError('獨立續審基底、場次時間或路徑綁定已變；不收件');
+  }
+  const { usable } = rolesOf(settings);
+  const candidates = comments.filter((c) => {
+    const h = headerOf(c.body, usable);
+    return h && h.role === rec.reviewer && h.source === binding.source && h.round === rec.round;
+  });
+  if (requireCandidate && candidates.length !== 1) throw new LaunchError('獨立續審貼後尚無唯一完整平台結論；保留現場，不記收據');
+  let history = comments;
+  if (candidates.length) {
+    if (!allowAlreadyPosted || candidates.length !== 1 || !prepared
+        || candidates[0].body !== prepared.body
+        || !(parseInstant(candidates[0].createdAt) > parseInstant(rec.startedAt))) {
+      throw new LaunchError('獨立續審自貼不是本場唯一、啟動後且完整正文一致的候選');
+    }
+    history = comments.filter((c) => c !== candidates[0]);
+  }
+  const actual = continuationBinding(change, history, rec.reviewer, binding.refs, settings);
+  const { session: _session, ...facts } = binding;
+  if (JSON.stringify(actual) !== JSON.stringify(facts) || actual.round !== rec.round || actual.head !== rec.head) {
+    throw new LaunchError('獨立續審原件、身分、來源、設定、HEAD 或輪次已變；不收件');
+  }
+}
+
+function continuationSession(rec) {
+  return Object.fromEntries(['base', 'root', 'tree', 'mutation', 'promptFile', 'outFile', 'startedAt'].map((k) => [k, rec[k]]));
+}
+
 function git(cwd, args) {
   const r = spawnSync('git', args, { cwd, env: gitEnv(), encoding: 'utf8' });
   if (r.error) throw new LaunchError(`git 起不來：${r.error.message}`);
@@ -246,7 +352,7 @@ function templateProblems(settings) {
 }
 
 /** 產生：所有平台與設定的事先問完、核完，才動 git 與磁碟（中途失敗不留半套樹）。 */
-function launch(changeArg, reviewerArg, { settings = readSettings(), platform = { ask }, cwd = process.cwd(), dir: dirArg = os.tmpdir(), template = null, now = () => new Date() } = {}) {
+function launch(changeArg, reviewerArg, { settings = readSettings(), platform = { ask }, cwd = process.cwd(), dir: dirArg = os.tmpdir(), template = null, now = () => new Date(), continuation = null } = {}) {
   const dir = realDir(dirArg);
   const { usable } = rolesOf(settings);
   const reviewer = canonicalRole(reviewerArg, usable);
@@ -272,11 +378,12 @@ function launch(changeArg, reviewerArg, { settings = readSettings(), platform = 
   const id = change.id;
   const head = change.headSha;
   const named = canonicalRole(fieldValue(change.body, '複審者'), usable);
-  if (named !== reviewer) throw new LaunchError(`PR說明的「複審者」欄是「${named || '讀不出'}」，不是 ${reviewer}：這一輪的通過不會算數（F5 只認說明裡指定的那一位）`);
+  if (named !== reviewer && continuation === null) throw new LaunchError(`PR說明的「複審者」欄是「${named || '讀不出'}」，不是 ${reviewer}：這一輪的通過不會算數（F5 只認說明裡指定的那一位）`);
   const implementer = canonicalRole(fieldValue(change.body, '實作者'), usable);
   if (!implementer) throw new LaunchError('PR說明的「實作者」欄讀不出一位登記過的參與者');
   const base = askPlatform(platform, settings, 'branchSha', { branch: change.baseBranch }).sha;
   const comments = askPlatform(platform, settings, 'comments', { change: id });
+  const binding = continuation === null ? null : continuationBinding(change, comments, reviewer, continuation, settings);
   const all = askPlatform(platform, settings, 'allComments', {});
   const rulings = evaluateRulings(all, decider, settings);
   if (rulings.unsure) throw new LaunchError(`相關裁示算不出來（${rulings.unsure}）`);
@@ -298,14 +405,15 @@ function launch(changeArg, reviewerArg, { settings = readSettings(), platform = 
   // 快速通道（AI）（F12）：第 1 輪起只核差異；這一位連兩輪沒「通過」，這一輪起照這一級走一般流程
   const lane = risk.result.fastLaneAI === true;
   const exhausted = lane && twoMissesInARow(comments, reviewer, entry.source, usable);
-  const scope = lane && !exhausted ? '只核差異' : scopeOf((settings.reviewTiers || {})[tier], round, passed);
+  const scope = binding ? '全審' : lane && !exhausted ? '只核差異' : scopeOf((settings.reviewTiers || {})[tier], round, passed);
   if (!scope) throw new LaunchError(`複審與掃描分級表「${tier}」那一列讀不出第 ${round} 輪該全審還是只核差異`);
-  const tierWhy = !lane ? '照表算的'
+  const tierWhy = binding ? '照表算的；本人批准的獨立歷史阻擋續審強制全審' : !lane ? '照表算的'
     : exhausted ? '照表算的；這一支原本走快速通道（AI），這一位已經連兩輪沒「通過」，這一輪起照這一級走一般流程（F12）'
       : '照表算的；分級腳本判這一支走快速通道（AI）：第 1 輪起只核差異、不掃描（F12）';
   const commentLink = (changeId, comment) => substitute(rl.commentLink, { project, change: changeId, comment }, '留言網址樣板').text;
   const related = rulings.ruled.filter((x) => String(x.ask.change) === String(id)).map((x) =>
     rulingLink(x.by, commentLink(x.by.change, x.by.id)));
+  if (binding) related.push(`本人原題 ${binding.refs.question}；本人批准 ${binding.refs.approval}；原阻擋 ${binding.refs.blocker}；保留 ${binding.primary} 主審，${reviewer} 獨立續審（人工核原話語意及全新場次）`);
 
   for (const [what, sha] of [['受審版本', head], ['基底', base]]) {
     if (!gitOk(root, ['cat-file', '-e', `${sha}^{commit}`])) throw new LaunchError(`本機倉庫沒有${what} ${sha}${fetched ? '' : '（git fetch 也沒成功）'}：開不了樹`);
@@ -334,6 +442,7 @@ function launch(changeArg, reviewerArg, { settings = readSettings(), platform = 
   if (fs.existsSync(folder)) throw new LaunchError(`${folder} 已經在了：上一次的樹還沒收（先跑 --close ${id}），或這一輪已經送過`);
 
   const record = { change: id, reviewer, round, head, base, root, tree, mutation, promptFile, outFile, startedAt: now().toISOString() };
+  if (binding) record.continuation = { ...binding, session: continuationSession(record) };
   const before = new Set(lockedTrees(root).keys());
   // 排他地建（不帶 recursive：已經在就丟 EEXIST）：上面那一次檢查跟這裡之間，另一個送審可能剛好建好同一輪的資料夾；
   // 帶 recursive 會接受別人的資料夾，下面開樹失敗時再把它整個刪掉（理財 #672 r4 第 1 條）。建成的才是自己的，失敗才收。
@@ -374,10 +483,10 @@ function launch(changeArg, reviewerArg, { settings = readSettings(), platform = 
   }
   const lines = [
     `送審產生器｜變更 ${id}｜複審者 ${reviewer}（來源 ${entry.source}）｜r${round}｜受審 ${head.slice(0, 7)}｜基底 ${change.baseBranch} 的 ${base.slice(0, 7)}`,
-    `  風險級別：${tier}（${lane && !exhausted
+    `  風險級別：${tier}（${!binding && lane && !exhausted
       ? '照表算的；這一支走快速通道（AI）：本輪範圍照 F12 只核差異、不照分級表，往重調或裁示者改級只改風險級別那一格'
       : '照表算的；要往重調或裁示者改級，提示的風險級別與本輪範圍兩格要一起照分級表改'}）；本輪範圍：${scope}`,
-    lane ? `  快速通道（AI）：${exhausted ? '這一位已經連兩輪沒「通過」，這一輪起照這一級走一般流程（要掃的照 G1 掃）' : '分級腳本判可以，這一輪只核差異、不掃描'}（F12）` : null,
+    binding ? `  用途：獨立歷史阻擋續審；保留 ${binding.primary} 主審，本輪強制全審。人工須核原話語意、獨立性及原生模型證據。` : lane ? `  快速通道（AI）：${exhausted ? '這一位已經連兩輪沒「通過」，這一輪起照這一級走一般流程（要掃的照 G1 掃）' : '分級腳本判可以，這一輪只核差異、不掃描'}（F12）` : null,
     `  上一輪的結論：${values.previous}；相關裁示：${values.rulings}`,
     `  審查樹：${tree}（HEAD ${head.slice(0, 7)}）`,
     `  突變副本：${mutation}（HEAD ${head.slice(0, 7)}）`,
@@ -1304,25 +1413,179 @@ function freshEntries(roots, folder, since, re) {
   return { fresh, groups, unreadable };
 }
 
-function unwrapScanOutput(raw, kindLabel = '掃描回覆') {
+class DuplicateJsonKeyError extends Error {}
+
+function parseUniqueJson(text) {
+  // JSON.parse 會丟掉較早的同名欄位；先按物件範圍核對解碼後的鍵，再驗完整語法。
+  const stack = [];
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    const frame = stack.at(-1);
+    if (ch === '"') {
+      const start = i;
+      for (i += 1; i < text.length; i += 1) {
+        if (text[i] === '\\') i += 1;
+        else if (text[i] === '"') break;
+      }
+      const value = JSON.parse(text.slice(start, i + 1));
+      if (frame?.keys && frame.expectKey) {
+        if (frame.keys.has(value)) throw new DuplicateJsonKeyError();
+        frame.keys.add(value);
+        frame.expectKey = false;
+      }
+    } else if (ch === '{') {
+      stack.push({ keys: new Set(), expectKey: true });
+    } else if (ch === '[') {
+      stack.push({ keys: null });
+    } else if (ch === '}' || ch === ']') {
+      stack.pop();
+    } else if (ch === ',' && frame?.keys) {
+      frame.expectKey = true;
+    }
+  }
+  return JSON.parse(text);
+}
+
+function parseGrokStrictNDJSON(text, kindLabel) {
+  const lines = text.split(/\r?\n/u).map((l) => l.trim()).filter(Boolean);
+  let sessionId = null;
+  let finalResult = null;
+  let lastEndTurnText = null;
+  let foundResult = false;
+  let initFound = false;
+
+  for (const line of lines) {
+    let event;
+    try {
+      event = parseUniqueJson(line);
+      if (event === null || Array.isArray(event) || typeof event !== 'object') throw new Error();
+    } catch (error) {
+      if (error instanceof DuplicateJsonKeyError) return { error: `${kindLabel}重複鍵` };
+      return { error: `${kindLabel}格式壞` };
+    }
+
+    if (foundResult) return { error: `${kindLabel}多 result 或尾隨事件` };
+
+    if (event.type === 'system') {
+      if (event.subtype === 'init') {
+        if (initFound) return { error: `${kindLabel}多 system.init` };
+        const sid = typeof event.session_id === 'string' ? event.session_id.trim() : '';
+        if (!sid) return { error: `${kindLabel}缺 session_id` };
+        sessionId = sid;
+        initFound = true;
+        continue;
+      }
+      if (event.subtype === 'compact_boundary') {
+        if (!initFound) return { error: `${kindLabel}尚未初始化` };
+        if (event.session_id !== sessionId) return { error: `${kindLabel}錯 session` };
+        if (typeof event.uuid !== 'string' || !event.uuid) return { error: `${kindLabel}compact_boundary 缺 uuid` };
+        const cm = event.compact_metadata;
+        if (!cm || Array.isArray(cm) || typeof cm !== 'object') return { error: `${kindLabel}compact_boundary 缺 compact_metadata` };
+        if (cm.trigger !== 'auto') return { error: `${kindLabel}compact_metadata.trigger 必須為 auto` };
+        if (typeof cm.pre_tokens !== 'number' || !Number.isInteger(cm.pre_tokens) || cm.pre_tokens < 0) {
+          return { error: `${kindLabel}compact_metadata.pre_tokens 必須為數字 (u64)` };
+        }
+        continue;
+      }
+      return { error: `${kindLabel}應拒絕未知的 system subtype` };
+    }
+
+    if (!initFound) return { error: `${kindLabel}缺 system.init` };
+    if (event.session_id !== sessionId) return { error: `${kindLabel}錯 session` };
+
+    if (event.type === 'assistant') {
+      // 新對話活動使先前完成資格失效，避免未完成或子代理回覆借用舊正文。
+      lastEndTurnText = null;
+      if (event.parent_tool_use_id === null) {
+        if (event.message && typeof event.message === 'object' && event.message.role === 'assistant' && event.message.stop_reason === 'end_turn') {
+          let t = '';
+          if (Array.isArray(event.message.content)) {
+            for (const c of event.message.content) {
+              if (c && c.type === 'text') {
+                if (typeof c.text !== 'string') return { error: `${kindLabel}正文內容非字串` };
+                t += c.text;
+              }
+            }
+          }
+          lastEndTurnText = t;
+        }
+      }
+    } else if (event.type === 'user') {
+      lastEndTurnText = null;
+    } else if (event.type === 'result') {
+      foundResult = true;
+      finalResult = event;
+    } else {
+      return { error: `${kindLabel}end_turn 前後出現未知事件 ${event.type || '未知'}` };
+    }
+  }
+
+  if (!foundResult) return { error: `${kindLabel}缺 result` };
+
+  if (finalResult.subtype !== 'success' || finalResult.is_error !== false || finalResult.stop_reason !== 'end_turn') {
+    if (finalResult.stop_reason === 'cancelled') return { error: `${kindLabel}cancelled` };
+    return { error: `${kindLabel}截短/未知/缺result/執行失敗` };
+  }
+
+  const resText = typeof finalResult.result === 'string' ? finalResult.result.trim() : '';
+  if (!resText) {
+    return { error: `${kindLabel}最終正文為空` };
+  }
+
+  if (lastEndTurnText === null) {
+    return { error: `${kindLabel}正文不一致（缺 assistant end_turn）` };
+  } else if (lastEndTurnText !== finalResult.result) {
+    return { error: `${kindLabel}最終正文不一致` };
+  }
+
+  return { success: true, text: finalResult.result };
+}
+
+function unwrapScanOutput(raw, kindLabel = '掃描回覆', forceGrok = false) {
   const text = String(raw ?? '');
   const trimmed = text.trim();
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return text;
-  let parsed;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    const ndLines = trimmed.split(/\r?\n/u).map((l) => l.trim()).filter(Boolean);
-    if (ndLines.length > 1 && ndLines.every((l) => l.startsWith('{') && l.endsWith('}'))) {
-      try {
-        parsed = ndLines.map((l) => JSON.parse(l));
-      } catch {
-        return text;
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return text;
+  }
+
+  let parsed = null;
+  const ndLines = trimmed.split(/\r?\n/u).map((l) => l.trim()).filter(Boolean);
+  if (ndLines.length > 0) {
+    try {
+      const frames = ndLines.map((l) => JSON.parse(l));
+      const first = frames[0];
+      const isGrok = forceGrok || (first && first.type === 'system' && first.subtype === 'init' && String(first.model || '').startsWith('grok-'));
+
+      if (isGrok) {
+        const strictParsed = parseGrokStrictNDJSON(trimmed, kindLabel);
+        if (strictParsed.error) throw new LaunchError(strictParsed.error);
+        return strictParsed.text;
       }
-    } else {
+      parsed = frames.length === 1 ? frames[0] : frames;
+    } catch (e) {
+      if (e instanceof LaunchError) throw e;
+      if (forceGrok) throw new LaunchError(`${kindLabel}格式壞或非合規 NDJSON`);
+      // 降級
+    }
+  }
+
+  if (parsed === null) {
+    try {
+      parsed = JSON.parse(trimmed);
+      if (forceGrok) {
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && (parsed.type === 'result' || Object.hasOwn(parsed, 'stop_reason'))) {
+          const strictParsed = parseGrokStrictNDJSON(trimmed, kindLabel);
+          if (strictParsed.error) throw new LaunchError(strictParsed.error);
+          return strictParsed.text;
+        }
+        throw new LaunchError(`${kindLabel}非合規 NDJSON 格式`);
+      }
+    } catch (e) {
+      if (e instanceof LaunchError) throw e;
       return text;
     }
   }
+
   const pickResult = (obj) => {
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
     if (obj.is_error === true || (obj.subtype !== undefined && obj.subtype !== 'success')) {
@@ -1345,12 +1608,11 @@ function unwrapScanOutput(raw, kindLabel = '掃描回覆') {
 }
 
 /**
- * 核對純文字結論（若為 CLI 結構化 JSON 成功包裹如 Claude `--output-format json` 則先解開 `result`）：
- * 去除首尾空行，若最後一行單獨是「未貼」（templates/review-request.md）就剝掉；
+ * 只核已解包正文，不核CLI執行狀態；不再解析正文內的JSON：
+ * 去除首尾空行，若最後一行單獨是「未貼」就剝掉；
  * 核第一行標頭（角色、來源、輪次、受審版本短碼）與「通過」的兩行固定小標（F4、F5、F7；擁有者照 F12 豁免小標）。
  */
-function prepareVerdict(raw, { reviewer, source, round, head, usable, ownerRole = null }) {
-  const unwrapped = unwrapScanOutput(raw, '複審結論');
+function prepareVerdictBody(unwrapped, { reviewer, source, round, head, usable, ownerRole = null }) {
   const lines = String(unwrapped ?? '').replace(/\r\n?/g, '\n').split('\n');
   while (lines.length && lines[0].trim() === '') lines.shift();
   while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
@@ -1379,6 +1641,14 @@ function prepareVerdict(raw, { reviewer, source, round, head, usable, ownerRole 
     if (miss.length) throw new LaunchError(`結論是「通過」但少了固定小標：${miss.join('、')}（F7：${PASS_HEADINGS.join('、')} 都要有）`);
   }
   return { body, header: h, strippedUnposted };
+}
+
+/**
+ * 先核CLI封包再核正文的理由：避免自貼摘要例外吞掉執行失敗；正文不再解包，避免模型自寫JSON升格。
+ */
+function prepareVerdict(raw, opts) {
+  const unwrapped = unwrapScanOutput(raw, '複審結論', opts.forceGrok || String(opts.source).includes('Grok'));
+  return prepareVerdictBody(unwrapped, opts);
 }
 
 /**
@@ -1699,14 +1969,16 @@ function post(changeArg, { settings = readSettings(), platform = { ask }, dir: d
       }
     }
     const raw = fs.readFileSync(realSrc, 'utf8');
-    const unwrappedRaw = unwrapScanOutput(raw, '複審結論');
+    // 先核執行封包，避免自貼摘要例外吞掉執行失敗；正文不再解包，避免模型自寫JSON升格。
+    const unwrappedRaw = unwrapScanOutput(raw, '複審結論', String(entry.source).includes('Grok'));
+    const vOpts = { reviewer: rec.reviewer, source: entry.source, round: rec.round, head: rec.head, usable, ownerRole };
     let prepared = null;
     let prepareErr = null;
     if (!allowAlreadyPosted) {
-      prepared = prepareVerdict(unwrappedRaw, { reviewer: rec.reviewer, source: entry.source, round: rec.round, head: rec.head, usable, ownerRole });
+      prepared = prepareVerdictBody(unwrappedRaw, vOpts);
     } else {
       try {
-        prepared = prepareVerdict(unwrappedRaw, { reviewer: rec.reviewer, source: entry.source, round: rec.round, head: rec.head, usable, ownerRole });
+        prepared = prepareVerdictBody(unwrappedRaw, vOpts);
       } catch (e) {
         if (e instanceof LaunchError) prepareErr = e;
         else throw e;
@@ -1725,10 +1997,20 @@ function post(changeArg, { settings = readSettings(), platform = { ask }, dir: d
       throw new LaunchError(`平台目前受審版本是 ${String(change.headSha).slice(0, 7)}，不是開樹時的 ${String(rec.head).slice(0, 7)}：版本已變，不代貼舊版結論`);
     }
     const named = canonicalRole(fieldValue(change.body, '複審者'), usable);
-    if (named !== rec.reviewer) {
+    if (named !== rec.reviewer && !Object.hasOwn(rec, 'continuation')) {
       throw new LaunchError(`PR說明的「複審者」欄目前是「${named || '讀不出'}」，不是開樹時的 ${rec.reviewer}：不代貼`);
     }
     const comments = askPlatform(platform, settings, 'comments', { change: rec.change });
+    const continuationRecord = Object.hasOwn(rec, 'continuation') ? JSON.stringify(rec) : null;
+    if (continuationRecord) recheckContinuation(rec, change, comments, prepared, allowAlreadyPosted, settings);
+    const recheckBeforeReceipt = (allowCandidate, requireCandidate = false) => {
+      if (!continuationRecord) return;
+      const latest = JSON.parse(fs.readFileSync(recFile, 'utf8'));
+      if (JSON.stringify(latest) !== continuationRecord) throw new LaunchError('獨立續審場次紀錄在收件期間已變；不覆寫');
+      recheckContinuation(rec,
+        askPlatform(platform, settings, 'change', { change: String(rec.change) }),
+        askPlatform(platform, settings, 'comments', { change: rec.change }), prepared, allowCandidate, settings, requireCandidate);
+    };
     const wantSource = String(entry.source).trim().replace(/\s+/gu, ' ');
     const roundComments = comments.filter((c) => {
       const h = headerOf(c.body, usable);
@@ -1772,6 +2054,10 @@ function post(changeArg, { settings = readSettings(), platform = { ask }, dir: d
       if (!prepared && /🤖/u.test(unwrappedRaw)) {
         throw new LaunchError(`平台上已有 r${rec.round} 結論留言，但輸出檔另有不合規的 🤖 標頭內容（${prepareErr ? prepareErr.message : '格式不符'}）：不自動收尾`);
       }
+      if (!prepared) {
+        throw new LaunchError('輸出檔缺少完整合法結論，不能與平台正文核對：不自動收尾');
+      }
+      recheckBeforeReceipt(true, true);
       const latestRec = JSON.parse(fs.readFileSync(recFile, 'utf8'));
       if (latestRec.head !== rec.head || latestRec.startedAt !== rec.startedAt || latestRec.closedAt) {
         throw new LaunchError('代貼期間容器紀錄已變更或已收樹，拒絕覆寫新紀錄');
@@ -1797,7 +2083,16 @@ function post(changeArg, { settings = readSettings(), platform = { ask }, dir: d
     fs.writeFileSync(verdictFile, prepared.body, { flag: 'wx' });
     const argv = parts.map((p) => (p === FILE_SLOT ? verdictFile : p));
     const clearEnv = Array.isArray(settings.platform && settings.platform.clearEnv) ? settings.platform.clearEnv : [];
-    runPost(argv[0], argv.slice(1), { clearEnv });
+    recheckBeforeReceipt(false);
+    if (continuationRecord) {
+      try {
+        runPost(argv[0], argv.slice(1), { clearEnv });
+        recheckBeforeReceipt(true, true);
+      } catch (e) {
+        if (!(e instanceof LaunchError)) throw e;
+        return { code: 2, lines: [`獨立續審貼文已送出或結果不明：${e.message}。未記 postedAt、未收樹；先讀回平台核對，勿盲重貼。`] };
+      }
+    } else runPost(argv[0], argv.slice(1), { clearEnv });
     const latestRec = JSON.parse(fs.readFileSync(recFile, 'utf8'));
     if (latestRec.head !== rec.head || latestRec.startedAt !== rec.startedAt || latestRec.closedAt) {
       throw new LaunchError('代貼期間容器紀錄已變更或已收樹，拒絕覆寫新紀錄');
@@ -2229,15 +2524,12 @@ function scanLaunch(changeArg, { scanner: scannerArg = null, tier: tierArg = nul
 /**
  * 核對掃描回覆：若為 CLI 結構化 JSON 成功包裹（如 Claude `--output-format json` 的 `result` 欄位）先解開純文字；
  * 去除首尾空行，若最後一行單獨是「未貼」就剝掉；
- * 擋下任何含複審結論記號 🤖 的內容（以免觸發結論聯集閘壞標頭擋下）；
+ * 擋下最後正文全文含複審結論記號 🤖 的內容（以免觸發結論聯集閘壞標頭擋下）；
  * 擋下回覆自帶的「掃描時序」行（時序證據一律由 --scan-post 外殼依實際紀錄產生）；
  * 核第一行 🔍 標頭（角色、來源、掃描版本短碼）與後續內容非空，並在第二行補上 `> 掃描時序：...` 引用行。
  */
-function prepareScan(raw, { scanner, source, head, usable, passCommentLink = null, startedAt = null, postedAt = null, base = null }) {
-  if (/🤖/u.test(String(raw ?? ''))) {
-    throw new LaunchError('掃描回覆含有複審結論記號 🤖：結論聯集閘會把含 🤖 的非結論留言當成壞標頭擋下（F4、G1），請移除後再代貼');
-  }
-  const unwrapped = unwrapScanOutput(raw);
+function prepareScan(raw, { scanner, source, head, usable, passCommentLink = null, startedAt = null, postedAt = null, base = null, forceGrok = false }) {
+  const unwrapped = unwrapScanOutput(raw, '掃描回覆', forceGrok);
   const lines = String(unwrapped ?? '').replace(/\r\n?/g, '\n').split('\n');
   while (lines.length && lines[0].trim() === '') lines.shift();
   while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
@@ -2350,9 +2642,11 @@ function scanPost(changeArg, { settings = readSettings(), platform = { ask }, di
     }
     const raw = fs.readFileSync(realSrc, 'utf8');
     const nowIso = now().toISOString();
+    const isGrok = String(rec.source).includes('Grok');
     const prepared = prepareScan(raw, {
       scanner: rec.scanner, source: rec.source, head: rec.head, usable,
       passCommentLink: rec.passCommentLink, startedAt: rec.startedAt, postedAt: nowIso, base: rec.base,
+      forceGrok: isGrok
     });
 
     const sub = substitute(rl.postComment, { project, change: rec.change }, '貼留言的指令');
@@ -2595,6 +2889,11 @@ const GROK_SEATBELT_PROFILE = [
   '(allow network-bind (local tcp "localhost:*"))',
   '(allow network-inbound (local tcp "localhost:*"))',
   '(allow system-socket)',
+  '(deny process-exec* (literal "/usr/bin/security"))',
+  '(deny process-exec* (literal "/usr/bin/open"))',
+  '(deny process-exec* (literal "/usr/bin/osascript"))',
+  '(deny network-outbound (remote unix-socket))',
+  '(deny mach-lookup (global-name-prefix ""))',
   '(deny file-read* process-exec* (subpath "/usr/local"))',
 ].join('\n');
 
@@ -2626,6 +2925,18 @@ function verifyGrokSeatbeltProfile(profile = GROK_SEATBELT_PROFILE) {
   if (!profile.trimEnd().endsWith('(deny file-read* process-exec* (subpath "/usr/local"))')) {
     return { ok: false, reason: 'Seatbelt 規則檔尾必須明確拒絕 /usr/local 讀寫與執行' };
   }
+  const policyLines = profile.split('\n').map(line => line.trim());
+  for (const rule of [
+    '(deny process-exec* (literal "/usr/bin/security"))',
+    '(deny process-exec* (literal "/usr/bin/open"))',
+    '(deny process-exec* (literal "/usr/bin/osascript"))',
+    '(deny network-outbound (remote unix-socket))',
+    '(deny mach-lookup (global-name-prefix ""))',
+  ]) {
+    if (!policyLines.includes(rule)) {
+      return { ok: false, reason: 'Seatbelt 規則缺少直接執行、Mach 或檔案型 socket 拒絕限制' };
+    }
+  }
   return { ok: true };
 }
 
@@ -2650,6 +2961,9 @@ function runGrokSeatbeltProbe({ boxDir, relayPort, authFile = '', unallowedPort 
   const probeTmpDir = path.join(boxDir, 'tmp');
   const probeWorktreeDir = path.join(boxDir, 'worktree');
   const probeMutGitDir = path.join(boxDir, 'mutation', '.git');
+  const probeNearDir = path.join(boxDir, 'mutation', '.github');
+  const probePrompt = path.join(boxDir, 'prompt.md');
+  let promptCreated = false;
   const probeFile = path.join(probeTmpDir, '.probe-ok');
   const script = [
     'const fs = require("node:fs");',
@@ -2657,10 +2971,21 @@ function runGrokSeatbeltProbe({ boxDir, relayPort, authFile = '', unallowedPort 
     'const path = require("node:path");',
     'if (fs.readFileSync(path.join(process.env.BOX_DIR, "tmp", ".probe-ok"), "utf8") !== "ok") process.exit(11);',
     'fs.writeFileSync(path.join(process.env.BOX_DIR, "tmp", ".probe-write"), "ok");',
-    'for (const ro of [path.join(process.env.BOX_DIR, "worktree", ".probe-ro"), path.join(process.env.BOX_DIR, "mutation", ".git", ".probe-ro"), path.join(process.env.BOX_DIR, "prompt.md")]) {',
+    'const gitDir = path.join(process.env.BOX_DIR, "mutation", ".git");',
+    'const original = fs.lstatSync(gitDir);',
+    'if (!original.isDirectory() || original.isSymbolicLink()) process.exit(19);',
+    'const aliases = [".git", ".GIT", ".gIt"].map(name => path.join(process.env.BOX_DIR, "mutation", name));',
+    'for (const alias of aliases) {',
+    '  const stat = fs.lstatSync(alias);',
+    '  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.dev !== original.dev || stat.ino !== original.ino) process.exit(19);',
+    '}',
+    'for (const relative of ["mutation/.probe-write", "mutation/.github/.probe-write"]) fs.writeFileSync(path.join(process.env.BOX_DIR, relative), "ok");',
+    'for (const ro of [path.join(process.env.BOX_DIR, "worktree", ".probe-ro"), ...aliases.map(dir => path.join(dir, ".probe-ro")), path.join(process.env.BOX_DIR, "prompt.md")]) {',
+    '  if (fs.readFileSync(ro, "utf8") !== "probe-original") process.exit(20);',
     '  let blocked = false;',
-    '  try { fs.writeFileSync(ro, "x"); } catch { blocked = true; }',
+    '  try { fs.writeFileSync(ro, "x"); } catch (error) { blocked = error.code === "EPERM" || error.code === "EACCES"; }',
     '  if (!blocked) process.exit(17);',
+    '  if (fs.readFileSync(ro, "utf8") !== "probe-original") process.exit(20);',
     '}',
     'if (process.env.AUTH_FILE) {',
     '  let blocked = false;',
@@ -2689,7 +3014,12 @@ function runGrokSeatbeltProbe({ boxDir, relayPort, authFile = '', unallowedPort 
     fs.mkdirSync(probeTmpDir, { recursive: true });
     fs.mkdirSync(probeWorktreeDir, { recursive: true });
     fs.mkdirSync(probeMutGitDir, { recursive: true });
+    fs.mkdirSync(probeNearDir, { recursive: true });
     fs.writeFileSync(probeFile, 'ok');
+    fs.writeFileSync(path.join(probeWorktreeDir, '.probe-ro'), 'probe-original', { flag: 'wx' });
+    fs.writeFileSync(path.join(probeMutGitDir, '.probe-ro'), 'probe-original', { flag: 'wx' });
+    fs.writeFileSync(probePrompt, 'probe-original', { flag: 'wx' });
+    promptCreated = true;
     const nodeExec = fs.realpathSync(process.execPath);
     const r = spawnSyncImpl(sandboxExec, [
       '-p', profile,
@@ -2715,6 +3045,7 @@ function runGrokSeatbeltProbe({ boxDir, relayPort, authFile = '', unallowedPort 
     }
     return { ok: true };
   } finally {
+    if (promptCreated) fs.unlinkSync(probePrompt);
     for (const p of [probeTmpDir, probeWorktreeDir, path.join(boxDir, 'mutation')]) {
       try { fs.rmSync(p, { recursive: true, force: true }); } catch { /* ignore */ }
     }
@@ -2841,6 +3172,13 @@ async function startGrokRelay({ realBearer, dummyBearer, upstreamHost = GROK_UPS
   const blockingRefusals = [];
   const toleratedRefusals = [];
   const forwarded = [];
+  const sockets = new Set();
+  const upReqs = new Set();
+  const upResps = new Set();
+  let isClosed = false;
+  let failed = false;
+  let closePromise;
+
   const server = http.createServer((req, res) => {
     if (req.method === 'CONNECT') {
       blockingRefusals.push('connect CONNECT');
@@ -2868,7 +3206,8 @@ async function startGrokRelay({ realBearer, dummyBearer, upstreamHost = GROK_UPS
     headers.authorization = `Bearer ${realBearer}`;
     const pathname = String(req.url || '').split('?')[0];
     forwarded.push(`${String(req.method || '').toUpperCase()} ${pathname}`);
-    const up = requestImpl({
+    let up;
+    try { up = requestImpl({
       host: upstreamHost,
       port: 443,
       method: req.method,
@@ -2876,19 +3215,41 @@ async function startGrokRelay({ realBearer, dummyBearer, upstreamHost = GROK_UPS
       headers,
       timeout: 300000,
     }, (upRes) => {
+      upResps.add(upRes);
+      upRes.once('aborted', () => { if (!isClosed) failed = true; });
+      upRes.once('error', () => { if (!isClosed) failed = true; });
+      upRes.once('close', () => upResps.delete(upRes));
       const out = {};
       for (const [k, v] of Object.entries(upRes.headers || {})) {
         if (!GROK_HOP_HEADERS.has(k.toLowerCase()) && v !== undefined) out[k] = v;
       }
       res.writeHead(upRes.statusCode || 502, out);
       upRes.pipe(res);
-    });
+    }); } catch {
+      failed = true;
+      res.writeHead(502, { 'content-type': 'text/plain' });
+      res.end('relay: upstream unreachable');
+      req.resume();
+      return;
+    }
+    upReqs.add(up);
+    up.once('close', () => upReqs.delete(up));
     up.on('error', () => {
+      if (!isClosed) failed = true;
       if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' });
       res.end('relay: upstream unreachable');
     });
+    up.once('timeout', () => { failed = true; up.destroy(); });
     req.pipe(up);
   });
+
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+  });
+  server.on('error', () => { failed = true; });
+  server.on('close', () => { if (!isClosed) failed = true; });
+
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);
@@ -2901,7 +3262,30 @@ async function startGrokRelay({ realBearer, dummyBearer, upstreamHost = GROK_UPS
     blockingRefusals,
     toleratedRefusals,
     forwarded,
-    close: () => new Promise((resolve) => server.close(() => resolve())),
+    get failed() { return failed; },
+    close: () => {
+      if (closePromise) return closePromise;
+      closePromise = new Promise((resolve, reject) => {
+        isClosed = true;
+        const timer = setTimeout(() => reject(new Error('relay cleanup timeout')), GROK_CLEANUP_MS);
+        try {
+          for (const s of sockets) s.destroy();
+          for (const r of upReqs) r.destroy();
+          for (const r of upResps) r.destroy();
+          sockets.clear();
+          upReqs.clear();
+          upResps.clear();
+          server.close(error => {
+            clearTimeout(timer);
+            if (error) reject(new Error('relay cleanup failed')); else resolve();
+          });
+        } catch {
+          clearTimeout(timer);
+          reject(new Error('relay cleanup failed'));
+        }
+      });
+      return closePromise;
+    },
   };
 }
 
@@ -2968,6 +3352,23 @@ function snapshotTreeState(rootDir) {
 }
 
 function materializeIsolatedGitRepo(srcTree, destTree, { rootRepo = null, baseSha = null, headSha = null, extraShas = [], copySpawn = spawnSync } = {}) {
+  // 來源歷史可被 replace/grafts 改寫；複製前拒收，而非改動宿主設定來猜原歷史。
+  for (const source of new Set([srcTree, rootRepo].filter(Boolean))) {
+    let polluted;
+    try {
+      polluted = Boolean(git(source, ['for-each-ref', '--format=%(refname)', 'refs/replace/']).trim());
+      const graftPath = path.resolve(source, git(source, ['rev-parse', '--git-path', 'info/grafts']));
+      try {
+        fs.lstatSync(graftPath);
+        polluted = true;
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+    } catch {
+      throw new LaunchError('無法核對來源歷史替換狀態');
+    }
+    if (polluted) throw new LaunchError('來源含歷史替換（replace/grafts），拒絕建立審查材料');
+  }
   const resolveCommit = (repoDir, rev) => (repoDir && rev && gitOk(repoDir, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`])
     ? git(repoDir, ['rev-parse', '--verify', `${rev}^{commit}`])
     : null);
@@ -3105,7 +3506,124 @@ function materializeIsolatedGitRepo(srcTree, destTree, { rootRepo = null, baseSh
   return targetHead;
 }
 
+const GROK_WALL_MS = 60 * 60 * 1000;
+const GROK_CLEANUP_MS = 10000;
+
+// 診斷不可序列化子程序回覆：只投影內容無關的觀測欄位。
+function grokDiagnostic(value = {}) {
+  const triggers = ['record_failed', 'spawn_failed', 'child_exit', 'deadline', 'cancelled', 'relay_problem'];
+  const vetoes = ['none', 'deadline', 'cancelled', 'relay_problem'];
+  const states = ['empty', 'alive', 'unknown'];
+  return {
+    trigger: triggers.includes(value.trigger) ? value.trigger : 'unknown',
+    vetoTrigger: vetoes.includes(value.vetoTrigger) ? value.vetoTrigger : 'unknown',
+    childExitCode: Number.isInteger(value.childExitCode) && value.childExitCode >= 0 && value.childExitCode <= 255 ? value.childExitCode : null,
+    childSignalled: typeof value.childSignalled === 'boolean' ? value.childSignalled : null,
+    groupState: states.includes(value.groupState) ? value.groupState : 'unknown',
+    pipesClosed: typeof value.pipesClosed === 'boolean' ? value.pipesClosed : null,
+    cleanupFailed: typeof value.cleanupFailed === 'boolean' ? value.cleanupFailed : null,
+    elapsedMs: Number.isSafeInteger(value.elapsedMs) && value.elapsedMs >= 0 ? value.elapsedMs : null,
+  };
+}
+
+// exit 與 close 分開：後代可持有管線，不能用 close 當作開始收尾的條件。
+async function runGrokChild(command, args, options, deps = {}) {
+  const wallMs = deps.wallMs ?? GROK_WALL_MS;
+  const cleanupMs = deps.cleanupMs ?? GROK_CLEANUP_MS;
+  const kill = deps.kill || process.kill.bind(process);
+  const startedAt = Date.now();
+  const deadline = startedAt + wallMs;
+  const beforeSpawn = trigger => ({ status: 2, stdout: '', groupEmpty: true, startedAt, deadline,
+    diagnostic: grokDiagnostic({ trigger, vetoTrigger: trigger === 'cancelled' ? 'cancelled' : 'none', groupState: 'empty', pipesClosed: true, cleanupFailed: false, elapsedMs: Math.max(0, Date.now() - startedAt) }) });
+  if (deps.signal?.aborted) return beforeSpawn('cancelled');
+  try { deps.onStart?.({ startedAt, deadline, wallMs, cleanupMs }); }
+  catch { return beforeSpawn('record_failed'); }
+  let child;
+  try { child = (deps.spawnChild || spawn)(command, args, { ...options, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }); }
+  catch { return beforeSpawn('spawn_failed'); }
+  const pid = child.pid;
+  const trustedPid = Number.isSafeInteger(pid) && pid > 1;
+  let stdout = '';
+  let stderr = '';
+  let closed = false;
+  let invalid = false;
+  let finishing = false;
+  let trigger = null;
+  let vetoTrigger = null;
+  let childExitCode = null;
+  let childSignalled = null;
+  let cleanupFailed = false;
+  let settle;
+  const done = new Promise(resolve => { settle = resolve; });
+  child.stdout?.setEncoding('utf8');
+  child.stderr?.setEncoding('utf8');
+  child.stdout?.on('data', data => { stdout += data; });
+  child.stderr?.on('data', data => { stderr += data; });
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  function groupState() {
+    if (!trustedPid) return 'unknown';
+    try { kill(-pid, 0); return 'alive'; }
+    catch (error) { return error.code === 'ESRCH' ? 'empty' : 'unknown'; }
+  }
+  function signalGroup(signal) {
+    try { kill(-pid, signal); return true; }
+    catch (error) { return error.code === 'ESRCH'; }
+  }
+  async function finish(status) {
+    if (finishing) return;
+    finishing = true;
+    const cleanupDeadline = Date.now() + cleanupMs;
+    let state = groupState();
+    if (state === 'alive' && !signalGroup('SIGTERM')) { invalid = true; cleanupFailed = true; }
+    const forceAt = Date.now() + Math.min(250, cleanupMs / 2);
+    let forced = false;
+    while (state === 'alive' && Date.now() < cleanupDeadline) {
+      if (!forced && Date.now() >= forceAt) {
+        forced = true;
+        if (!signalGroup('SIGKILL')) { invalid = true; cleanupFailed = true; }
+      }
+      await delay(20);
+      state = groupState();
+    }
+    while (!closed && Date.now() < cleanupDeadline) await delay(20);
+    const groupEmpty = state === 'empty';
+    if (!groupEmpty || !closed) { invalid = true; cleanupFailed = true; }
+    clearTimeout(timer);
+    clearInterval(watch);
+    process.removeListener('SIGINT', cancel);
+    process.removeListener('SIGTERM', cancel);
+    deps.signal?.removeEventListener('abort', cancel);
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.unref();
+    settle({ status: invalid || status === null ? 2 : status, stdout, stderr, pid, groupEmpty, startedAt, deadline,
+      diagnostic: grokDiagnostic({ trigger, vetoTrigger: vetoTrigger ?? 'none', childExitCode, childSignalled, groupState: state, pipesClosed: closed, cleanupFailed, elapsedMs: Math.max(0, Date.now() - startedAt) }) });
+  }
+  function cancel(reason) {
+    const observed = typeof reason === 'string' && !['SIGINT', 'SIGTERM'].includes(reason) ? reason : 'cancelled';
+    trigger ??= observed;
+    // exit 先開始清理時，不能讓它遮住稍後的首個否決觀測。
+    if (observed !== 'spawn_failed') vetoTrigger ??= observed;
+    invalid = true;
+    void finish(2);
+  }
+  const timer = setTimeout(() => cancel('deadline'), Math.max(0, deadline - Date.now()));
+  const watch = setInterval(() => {
+    try { if (deps.failed?.()) cancel('relay_problem'); } catch { cancel('relay_problem'); }
+  }, 25);
+  process.on('SIGINT', cancel);
+  process.on('SIGTERM', cancel);
+  deps.signal?.addEventListener('abort', cancel, { once: true });
+  child.once('error', () => { trigger ??= 'spawn_failed'; invalid = true; void finish(2); });
+  child.once('exit', (status, signal) => { childExitCode = status; childSignalled = Boolean(signal); trigger ??= 'child_exit'; void finish(status); });
+  child.once('close', status => { closed = true; void finish(status); });
+  if (deps.signal?.aborted) cancel();
+  else if (!trustedPid) cancel('spawn_failed');
+  return done;
+}
+
 async function runGrokExec(argv, deps = {}) {
+  const removeBox = deps.removeBox || fs.rmSync;
   const parsed = parseGrokExecArgs(argv);
   if (parsed.error) return { code: 2, lines: [`送審產生器（Grok 隔離執行）：${parsed.error}——拒絕啟動。`] };
 
@@ -3138,7 +3656,15 @@ async function runGrokExec(argv, deps = {}) {
 
   let relay = null;
   let boxDir = null;
+  // 子程序退出後仍有非同步資源要收；取消資格必須保留到結果落地前。
+  const cancellation = new AbortController();
+  const cancelExecution = () => cancellation.abort();
+  process.on('SIGINT', cancelExecution);
+  process.on('SIGTERM', cancelExecution);
+  deps.signal?.addEventListener('abort', cancelExecution, { once: true });
+  if (deps.signal?.aborted) cancelExecution();
   try {
+    if (cancellation.signal.aborted) return { code: 2, lines: ['送審產生器（Grok 隔離執行）：已取消——未寫出結果。'] };
     relay = await startGrokRelay({
       realBearer: authInfo.realBearer,
       dummyBearer: authInfo.dummyBearer,
@@ -3149,6 +3675,11 @@ async function runGrokExec(argv, deps = {}) {
     boxDir = fs.realpathSync(rawBox);
 
     const probeGuardServer = net.createServer();
+    const probeSockets = new Set();
+    probeGuardServer.on('connection', (s) => {
+      probeSockets.add(s);
+      s.once('close', () => probeSockets.delete(s));
+    });
     await new Promise((r) => probeGuardServer.listen(0, '127.0.0.1', r));
     let probe;
     try {
@@ -3162,6 +3693,7 @@ async function runGrokExec(argv, deps = {}) {
         profile,
       });
     } finally {
+      for (const s of probeSockets) s.destroy();
       await new Promise((r) => probeGuardServer.close(() => r()));
     }
     if (!probe || !probe.ok) {
@@ -3170,14 +3702,32 @@ async function runGrokExec(argv, deps = {}) {
 
     const metaDir = path.dirname(outPath);
     let recMeta = null;
-    for (const metaName of ['scan.json', 'launch.json']) {
-      const mf = path.join(metaDir, metaName);
-      if (fs.existsSync(mf)) {
-        try { recMeta = JSON.parse(fs.readFileSync(mf, 'utf8')); break; } catch { /* ignore */ }
-      }
+    const metaName = parsed.mode === 'scan' ? 'scan.json' : 'launch.json';
+    const mf = path.join(metaDir, metaName);
+    if (fs.existsSync(mf)) {
+      try { recMeta = JSON.parse(fs.readFileSync(mf, 'utf8')); } catch { /* ignore */ }
     }
 
     let promptText = fs.readFileSync(promptPath, 'utf8');
+    // 排除範圍只認本次讀入的原提示；附加差異或路徑改寫不得擴張例外。
+    const activeNeedles = authInfo.needles.filter((needle) => !promptText.includes(needle));
+    if (parsed.mode === 'scan') {
+      if (!recMeta || !/^[0-9a-fA-F]{40}$/.test(recMeta.base) || !/^[0-9a-fA-F]{40}$/.test(recMeta.head)) {
+        return { code: 2, lines: ['送審產生器（Grok 隔離執行）：掃描模式缺少合法的 scan.json (需含 40-hex base/head)——拒絕啟動。'] };
+      }
+      const rootRepo = recMeta.root;
+      if (!rootRepo || !fs.existsSync(rootRepo)) {
+        return { code: 2, lines: ['送審產生器（Grok 隔離執行）：掃描模式來源倉庫不存在——拒絕啟動。'] };
+      }
+      if (!gitOk(rootRepo, ['rev-parse', '--verify', `${recMeta.base}^{commit}`]) || !gitOk(rootRepo, ['rev-parse', '--verify', `${recMeta.head}^{commit}`])) {
+        return { code: 2, lines: ['送審產生器（Grok 隔離執行）：掃描模式來源倉庫缺少基底或受審版本——拒絕啟動。'] };
+      }
+      const currentCwdHead = git(cwdPath, ['rev-parse', 'HEAD']);
+      if (currentCwdHead !== recMeta.head) {
+        return { code: 2, lines: ['送審產生器（Grok 隔離執行）：掃描樹 HEAD 與 scan.json 不符——拒絕啟動。'] };
+      }
+    }
+
     const promptShas = [...promptText.matchAll(/\bdiff\s+([0-9a-fA-F]{7,40})\.\.([0-9a-fA-F]{7,40})\b/gu)]
       .flatMap((m) => [m[1], m[2]]);
 
@@ -3246,22 +3796,62 @@ async function runGrokExec(argv, deps = {}) {
     const boxPromptFile = path.join(boxDir, 'prompt.md');
     fs.writeFileSync(boxPromptFile, promptText);
 
+    if (parsed.mode === 'scan') {
+      const diffHeader = `\n\n=== 掃描材料 (git diff ${recMeta.base}...${recMeta.head}) ===\n`;
+      fs.appendFileSync(boxPromptFile, diffHeader);
+      const diffFd = fs.openSync(boxPromptFile, 'a');
+      try {
+        await new Promise((resolve, reject) => {
+          const gitDiff = spawn('git', ['diff', '--no-ext-diff', '--no-textconv', `${recMeta.base}...${recMeta.head}`], {
+            cwd: recMeta.root,
+            env: gitEnv(),
+            stdio: ['ignore', diffFd, 'ignore'],
+          });
+          gitDiff.on('error', reject);
+          gitDiff.on('close', (code, signal) => {
+            if (code === 0) resolve();
+            else reject(new Error(`git diff 退 ${code || signal}`));
+          });
+        });
+      } catch (e) {
+        return { code: 2, lines: [`送審產生器（Grok 隔離執行）：掃描模式產生差異失敗（${e.message}）——拒絕啟動。`] };
+      } finally {
+        fs.closeSync(diffFd);
+      }
+    }
+
     const instruction = parsed.mode === 'scan'
-      ? `以下是掃描提示（亦存於 ${boxPromptFile}），請直接在目前工作目錄照做，只輸出最終掃描留言正文（第一行必須是 🔍 標頭，不要輸出任何前言或後記）：\n\n${promptText}`
-      : `以下是送審提示（亦存於 ${boxPromptFile}），請直接在目前工作目錄照做，只輸出最終複審結論正文（第一行必須是 🤖 標頭，文末單獨一行寫「未貼」）：\n\n${promptText}`;
+      ? `先使用 read_file 讀取盒內絕對路徑提示檔 ${boxPromptFile}，可分段直到讀完，並依該提示內容與附加之 git diff 材料工作。請僅使用提供之工具進行檢查，絕不可嘗試執行終端或測試指令。直接在目前工作目錄照做，只輸出最終掃描留言正文（第一行必須是 🔍 標頭，不要輸出任何前言或後記）。`
+      : `先使用 read_file 讀取盒內絕對路徑提示檔 ${boxPromptFile}，可分段直到讀完，並依該提示內容工作。請直接在目前工作目錄照做，只輸出最終複審結論正文（第一行必須是 🤖 標頭，文末單獨一行寫「未貼」）。`;
+
     const grokArgs = [
       '--sandbox', 'off',
       '--no-subagents',
-      '--allow', 'Bash(*)',
-      '--allow', 'Read(*)',
-      '--allow', 'Edit(*)',
-      '--allow', 'Write(*)',
-      '--allow', 'Grep(*)',
-      '--allow', 'Glob(*)',
+      '--output-format', 'streaming-messages-json'
+    ];
+    if (parsed.mode === 'scan') {
+      grokArgs.push(
+        '--tools', 'read_file,grep,list_dir',
+        '--disallowed-tools', 'search_tool,use_tool',
+        '--allow', 'Read(*)',
+        '--allow', 'Grep(*)',
+        '--allow', 'Glob(*)'
+      );
+    } else {
+      grokArgs.push(
+        '--allow', 'Bash(*)',
+        '--allow', 'Read(*)',
+        '--allow', 'Edit(*)',
+        '--allow', 'Write(*)',
+        '--allow', 'Grep(*)',
+        '--allow', 'Glob(*)'
+      );
+    }
+    grokArgs.push(
       '-m', parsed.model,
       '--reasoning-effort', parsed.effort,
       '-p', instruction,
-    ];
+    );
     const childEnv = {
       HOME: grokHome,
       TMPDIR: grokTmpDir,
@@ -3283,8 +3873,7 @@ async function runGrokExec(argv, deps = {}) {
         grokArgs,
         env: childEnv,
       })
-      : await new Promise((resolve) => {
-        const child = spawn(sandboxExec, [
+      : await runGrokChild(sandboxExec, [
           '-p', profile,
           '-D', `SCAN_DIR=${boxDir}`,
           '-D', `RELAY_PORT=${relay.port}`,
@@ -3293,19 +3882,19 @@ async function runGrokExec(argv, deps = {}) {
         ], {
           cwd: boxWorktree,
           env: childEnv,
-          stdio: ['ignore', 'pipe', 'pipe'],
+        }, {
+          spawnChild: deps.spawnChild,
+          signal: cancellation.signal,
+          failed: () => relay.failed || relay.blockingRefusals.length > 0,
+          onStart: limits => fs.writeFileSync(path.join(metaDir, 'execution.json'), JSON.stringify({
+            ...limits, mode: parsed.mode, model: parsed.model, effort: parsed.effort,
+          }, null, 2), { flag: 'wx' }),
         });
-        let stdout = '';
-        let stderr = '';
-        child.stdout.on('data', (d) => { stdout += d; });
-        child.stderr.on('data', (d) => { stderr += d; });
-        child.on('error', (err) => resolve({ status: 2, stdout, stderr: err.message }));
-        child.on('close', (status) => resolve({ status: status === null ? 2 : status, stdout, stderr }));
-      });
 
     if (runResult.status !== 0) {
-      return { code: 2, lines: [`送審產生器（Grok 隔離執行）：Grok 退 ${runResult.status}——未寫出結果。`] };
+      return { code: 2, lines: [`送審產生器（Grok 隔離執行）：Grok 退 ${runResult.status}——未寫出結果。`, `執行觀測：${JSON.stringify(grokDiagnostic(runResult.diagnostic))}`] };
     }
+    if (relay.failed) return { code: 2, lines: ['送審產生器（Grok 隔離執行）：受控認證通道失效——未寫出結果。'] };
     if (relay.blockingRefusals.length > 0) {
       return { code: 2, lines: [`送審產生器（Grok 隔離執行）：受控認證通道攔截到 ${relay.blockingRefusals.length} 筆未授權請求——已拒絕寫出結果。`] };
     }
@@ -3317,18 +3906,62 @@ async function runGrokExec(argv, deps = {}) {
       return { code: 2, lines: ['送審產生器（Grok 隔離執行）：執行後盒內工作樹或 .git 狀態被改動（違反唯讀邊界）——已拒絕寫出結果。'] };
     }
     const rawOutput = String(runResult.stdout || '');
-    const activeNeedles = authInfo.needles.filter((n) => n && !promptText.includes(n));
     if (activeNeedles.some((n) => rawOutput.includes(n))) {
-      return { code: 2, lines: ['送審產生器（Grok 隔離執行）：輸出疑似含真實憑證或私密欄位（DLP 攔截）——已拒絕寫出結果。'] };
+      return { code: 2, lines: ['送審產生器（Grok 隔離執行）：輸出疑似含真實憑證或私密欄位（DLP 攔截）——已拒絕寫出結果。', '拒收階段：dlp_raw'] };
     }
+    const ndLines = rawOutput.split(/\r?\n/u).map((l) => l.trim()).filter(Boolean);
+
+    function findNeedleInObj(obj, needles) {
+      if (typeof obj === 'string') {
+        if (needles.some((n) => obj.includes(n))) return true;
+      } else if (Array.isArray(obj)) {
+        for (const v of obj) {
+          if (findNeedleInObj(v, needles)) return true;
+        }
+      } else if (obj && typeof obj === 'object') {
+        for (const [k, v] of Object.entries(obj)) {
+          if (needles.some((n) => k.includes(n)) || findNeedleInObj(v, needles)) return true;
+        }
+      }
+      return false;
+    }
+
+    for (const line of ndLines) {
+      let obj;
+      try { obj = JSON.parse(line); } catch { continue; }
+      if (findNeedleInObj(obj, activeNeedles)) {
+        return { code: 2, lines: ['送審產生器（Grok 隔離執行）：輸出疑似含真實憑證或私密欄位（DLP 攔截）——已拒絕寫出結果。', '拒收階段：dlp_decoded'] };
+      }
+    }
+    const strictParsed = parseGrokStrictNDJSON(rawOutput, 'Grok 執行');
+    if (strictParsed.error) {
+       return { code: 2, lines: [`送審產生器（Grok 隔離執行）：${strictParsed.error}——已拒絕寫出結果。`] };
+    }
+
     const cleanedOutput = stripGrokPreamble(rawOutput, parsed.mode);
+    try {
+      await relay.close();
+      relay = null;
+      removeBox(boxDir, { recursive: true, force: true });
+      boxDir = null;
+    } catch {
+      return { code: 2, lines: ['送審產生器（Grok 隔離執行）：本次資源收尾失敗——未寫出結果。'] };
+    }
+    if (cancellation.signal.aborted) return { code: 2, lines: ['送審產生器（Grok 隔離執行）：已取消——未寫出結果。'] };
     fs.writeFileSync(outPath, cleanedOutput);
     return { code: 0, lines: [] };
   } finally {
-    if (relay) await relay.close();
-    if (boxDir) {
-      try { fs.rmSync(boxDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    let cleanupFailed = false;
+    if (relay) {
+      try { await relay.close(); } catch { cleanupFailed = true; }
     }
+    if (boxDir) {
+      try { removeBox(boxDir, { recursive: true, force: true }); } catch { cleanupFailed = true; }
+    }
+    process.removeListener('SIGINT', cancelExecution);
+    process.removeListener('SIGTERM', cancelExecution);
+    deps.signal?.removeEventListener('abort', cancelExecution);
+    if (cleanupFailed) return { code: 2, lines: ['送審產生器（Grok 隔離執行）：本次資源收尾失敗——未寫出結果。'] };
   }
 }
 
@@ -3371,12 +4004,18 @@ function parseArgs(argv) {
     '--round': 'round',
     '--expect-head': 'expectHead',
     '--expect-started-at': 'expectStartedAt',
+    '--continue-blocker': 'continueBlocker',
+    '--owner-question': 'ownerQuestion',
+    '--owner-approval': 'ownerApproval',
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (Object.hasOwn(flagMap, a)) {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) return { error: `${a} 後面要接值` };
+      if (['--continue-blocker', '--owner-question', '--owner-approval'].includes(a) && out[flagMap[a]] !== undefined) {
+        return { error: `獨立續審旗標不可重複：${a}` };
+      }
       out[flagMap[a]] = v;
       i += 1;
     } else if (a === '--run') out.run = true;
@@ -3386,6 +4025,14 @@ function parseArgs(argv) {
     else return { error: `多給了一個參數：${a}` };
   }
   const modes = ['close', 'post', 'scan', 'scanPost', 'scanClose'].filter((k) => out[k] !== undefined);
+  const continuationKeys = ['continueBlocker', 'ownerQuestion', 'ownerApproval'];
+  if (continuationKeys.some((k) => out[k] !== undefined)) {
+    if (modes.length || continuationKeys.some((k) => out[k] === undefined)) {
+      return { error: '獨立續審只用於備審，須一起給 --continue-blocker、--owner-question、--owner-approval；收件依固定場次重核' };
+    }
+    if (out.purge) return { error: '獨立續審不自動 purge；保留場次供原件與收據核對' };
+    out.continuation = { question: out.ownerQuestion, approval: out.ownerApproval, blocker: out.continueBlocker };
+  }
   if (modes.length > 1) return { error: '一次只能指定一種模式（--close、--post、--scan、--scan-post、--scan-close）' };
   if (out.purge && !out.run && out.close === undefined && out.scanClose === undefined) {
     return { error: '--purge 只能配 --close、--scan-close 或 --run 用' };
@@ -3514,13 +4161,20 @@ function main(argv, opts = {}) {
     }
     if (a.scanPost !== undefined) return scanPost(a.scanPost, { ...opts, ...expectOpts, ...(dir ? { dir } : {}), ...(a.file ? { file: a.file } : {}) });
     if (a.scanClose !== undefined) return scanClose(a.scanClose, { ...opts, ...expectOpts, ...(dir ? { dir } : {}), ...(purge ? { purge: true } : {}) });
-    const launched = launch(a.change, a.reviewer, { ...opts, ...(dir ? { dir } : {}) });
+    const launched = launch(a.change, a.reviewer, { ...opts, ...(a.continuation ? { continuation: a.continuation } : {}), ...(dir ? { dir } : {}) });
     if (!a.run || launched.code !== 0) return launched;
     const s = opts.settings || readSettings();
     const clearEnv = Array.isArray(s.platform && s.platform.clearEnv) ? s.platform.clearEnv : [];
     const runExec = opts.runExec || defaultRunExec;
     const folder = path.dirname(launched.record.promptFile);
     try {
+      if (Object.hasOwn(launched.record, 'continuation')) {
+        const saved = JSON.parse(fs.readFileSync(path.join(folder, 'launch.json'), 'utf8'));
+        if (JSON.stringify(saved) !== JSON.stringify(launched.record)) throw new LaunchError('獨立續審場次在模型啟動前已變');
+        recheckContinuation(launched.record,
+          askPlatform(opts.platform || { ask }, s, 'change', { change: String(launched.record.change) }),
+          askPlatform(opts.platform || { ask }, s, 'comments', { change: launched.record.change }), null, false, s);
+      }
       runExec(launched.command, { record: launched.record, clearEnv });
     } catch (e) {
       if (e instanceof LaunchError) {
@@ -3613,4 +4267,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { main, launch, close, post, scanLaunch, scanPost, scanClose, deriveScanCommand, resolveScannerSpec, stripGrokPreamble, prepareVerdict, prepareScan, splitCommandArgs, defaultRunPost, defaultRunExec, fill, promptPart, substitute, scopeOf, roundsOf, twoMissesInARow, parseArgs, templateProblems, freshEntries, lockedTrees, runGrokExec, parseGrokExecArgs, materializeIsolatedGitRepo, snapshotTreeState, prepareGrokBoxAuth, grokAuthNeedles, startGrokRelay, grokRelayRejectReason, isGrokToleratedRefusal, runGrokSeatbeltProbe, verifyGrokSeatbeltProfile, canApplySeatbelt, GROK_SEATBELT_PROFILE, GROK_ALLOWED_REQUESTS, GROK_TOLERATED_REFUSALS, GROK_BOX_FIELDS, GROK_PINNED_ISSUER, GROK_PINNED_CLIENT_ID, GROK_DUMMY_BEARER_PREFIX, FILL, SCAN_FILL, SCAN_TEMPLATE, SCAN_HEADER, FILE_SLOT, SAFE, COMMAND_TOKENS, SCAN_COMMAND_TOKENS, LaunchError };
+module.exports = { main, launch, close, post, scanLaunch, scanPost, scanClose, deriveScanCommand, resolveScannerSpec, stripGrokPreamble, prepareVerdict, prepareScan, unwrapScanOutput, splitCommandArgs, defaultRunPost, defaultRunExec, fill, promptPart, substitute, scopeOf, roundsOf, twoMissesInARow, parseArgs, templateProblems, freshEntries, lockedTrees, runGrokExec, runGrokChild, GROK_WALL_MS, GROK_CLEANUP_MS, parseGrokExecArgs, materializeIsolatedGitRepo, snapshotTreeState, prepareGrokBoxAuth, grokAuthNeedles, startGrokRelay, grokRelayRejectReason, isGrokToleratedRefusal, runGrokSeatbeltProbe, verifyGrokSeatbeltProfile, canApplySeatbelt, GROK_SEATBELT_PROFILE, GROK_ALLOWED_REQUESTS, GROK_TOLERATED_REFUSALS, GROK_BOX_FIELDS, GROK_PINNED_ISSUER, GROK_PINNED_CLIENT_ID, GROK_DUMMY_BEARER_PREFIX, FILL, SCAN_FILL, SCAN_TEMPLATE, SCAN_HEADER, FILE_SLOT, SAFE, COMMAND_TOKENS, SCAN_COMMAND_TOKENS, LaunchError };
