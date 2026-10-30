@@ -2786,6 +2786,42 @@ test('Grok 有界子程序診斷分離觸發與清理且不留合成機密', asy
   assert.throws(() => process.kill(-combined.pid, 0), { code: 'ESRCH' });
 });
 
+async function stopOtherGroup(pid, closed, kill = process.kill.bind(process)) {
+  try { kill(-pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+  await closed;
+}
+
+test('清理另一群組只容忍 ESRCH，其他原錯誤優先且不等 close', async (t) => {
+  for (const name of ['normal', 'ESRCH', 'EPERM', 'bodyAndCleanup']) {
+    await t.test(name, async () => {
+      const cleanupError = Object.assign(new Error('synthetic cleanup'), { code: name === 'ESRCH' ? 'ESRCH' : 'EPERM' });
+      const bodyError = new Error('synthetic body');
+      let killed = 0, waited = 0, entered = 0;
+      const closed = { then(resolve) { waited++; resolve(); } };
+      let didThrow = false, error;
+      try {
+        try {
+          entered++;
+          if (name === 'bodyAndCleanup') throw bodyError;
+        } finally {
+          await stopOtherGroup(12345, closed, (pid, signal) => {
+            killed++;
+            assert.equal(pid, -12345);
+            assert.equal(signal, 'SIGKILL');
+            if (name !== 'normal') throw cleanupError;
+          });
+        }
+      } catch (caught) { didThrow = true; error = caught; }
+      const fail = name === 'EPERM' || name === 'bodyAndCleanup';
+      assert.equal(entered, 1);
+      assert.equal(killed, 1);
+      assert.equal(waited, fail ? 0 : 1);
+      assert.equal(didThrow, fail);
+      if (fail) assert.equal(error, cleanupError);
+    });
+  }
+});
+
 test('Grok 有界子程序收持管線後代且不碰另一群組，未知狀態拒收', async () => {
   const { runGrokChild } = require('../tools/review-launch');
   const { spawn } = require('node:child_process');
@@ -2830,8 +2866,189 @@ test('Grok 有界子程序收持管線後代且不碰另一群組，未知狀態
     assert.equal(unknown.groupEmpty, false, unknownEvidence);
     assert.throws(() => process.kill(-unknown.pid, 0), { code: 'ESRCH' });
   } finally {
-    try { process.kill(-other.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
-    await otherClosed;
+    await stopOtherGroup(other.pid, otherClosed);
+  }
+});
+
+function cleanupExecFixture() {
+  const dir = tmp('grok-cleanup-results-');
+  const authFile = path.join(dir, 'auth.json');
+  const promptFile = path.join(dir, 'prompt.md');
+  const outFile = path.join(dir, 'result.md');
+  const mutation = path.join(dir, 'mutation');
+  fs.mkdirSync(mutation);
+  const counts = { authNetwork: 0 };
+  const entry = `${GROK_PINNED_ISSUER}::${GROK_PINNED_CLIENT_ID}`;
+  fs.writeFileSync(authFile, JSON.stringify({ [entry]: {
+    auth_mode: 'oidc', user_id: '10000000-0000-4000-8000-000000000001',
+    create_time: '2026-10-19T00:00:00.000Z', expires_at: '2026-10-19T00:10:00.000Z',
+    oidc_issuer: GROK_PINNED_ISSUER, oidc_client_id: GROK_PINNED_CLIENT_ID,
+    key: 'SYNTHETIC-CLEANUP-KEY', refresh_token: 'SYNTHETIC-CLEANUP-REFRESH',
+  } }), { mode: 0o600 });
+  fs.writeFileSync(promptFile, 'synthetic cleanup operation\n');
+  return { dir, outFile, entry, mutation, counts,
+    args: ['--mode', 'review', '--cwd', dir, '--mutation-copy', mutation, '--model', 'grok-4.7', '--reasoning-effort', 'xhigh', '--prompt-file', promptFile, '--out', outFile],
+    deps: { authFile, authOpts: { now: () => Date.parse('2026-10-19T00:01:00.000Z'), earlySecs: 0,
+      fetchImpl() { counts.authNetwork++; throw new Error('unexpected authentication network'); } } },
+  };
+}
+
+test('Grok 外層收尾保存原結果及 falsy 拋值，失敗優先且收妥監聽', async (t) => {
+  const http = require('node:http');
+  const { getEventListeners } = require('node:events');
+  const cases = [{ name: 'return' }, ...[null, undefined, false, 0, '', new Error('synthetic body')].map((value, index) => ({ name: `throw-${index}`, throws: true, value })),
+    { name: 'return-remove-failure', removeFailure: true },
+    { name: 'throw-remove-failure', throws: true, value: null, removeFailure: true },
+    { name: 'return-relay-failure', relayFailure: true },
+    { name: 'throw-relay-failure', throws: true, value: false, relayFailure: true }];
+  for (const scenario of cases) await t.test(scenario.name, async (t) => {
+    const f = cleanupExecFixture();
+    const controller = new AbortController();
+    const signals = ['SIGINT', 'SIGTERM'];
+    const before = signals.map(name => process.listeners(name));
+    const beforeAbort = getEventListeners(controller.signal, 'abort');
+    const originalServer = http.createServer;
+    let server, box, entered = 0, removed = 0, closeCalls = 0;
+    t.mock.method(http, 'createServer', (...args) => {
+      server = originalServer(...args);
+      const close = server.close;
+      server.close = function (done) {
+        closeCalls++;
+        return close.call(this, () => done(scenario.relayFailure ? new Error('synthetic close failure') : undefined));
+      };
+      return server;
+    });
+    let returned, thrown, didThrow = false;
+    try {
+      try {
+        returned = await runGrokExec(f.args, { ...f.deps, signal: controller.signal,
+          probeFn(info) {
+            entered++; box = info.boxDir;
+            assert.equal(server.listening, true);
+            signals.forEach((name, index) => assert.equal(process.listeners(name).length, before[index].length + 1));
+            assert.equal(getEventListeners(controller.signal, 'abort').length, beforeAbort.length + 1);
+            if (scenario.throws) throw scenario.value;
+            return { ok: false, reason: 'synthetic probe refusal' };
+          },
+          removeBox(dir, options) {
+            removed++;
+            assert.equal(dir, box);
+            assert.equal(fs.existsSync(f.outFile), false);
+            assert.equal(server.listening, false, '先嘗試關閉轉送器，再移除盒子');
+            fs.rmSync(dir, options);
+            if (scenario.removeFailure) throw new Error('synthetic remove failure');
+          },
+          spawnGrok() { assert.fail('probe failure must not launch a model'); },
+        });
+      } catch (error) { didThrow = true; thrown = error; }
+      assert.equal(entered, 1, JSON.stringify(returned));
+      assert.equal(f.counts.authNetwork, 0);
+      assert.equal(removed, 1);
+      assert.equal(closeCalls, 1);
+      assert.equal(server.listening, false);
+      assert.equal(fs.existsSync(box), false);
+      assert.equal(fs.existsSync(f.outFile), false);
+      assert.deepEqual(signals.map(name => process.listeners(name)), before);
+      assert.deepEqual(getEventListeners(controller.signal, 'abort'), beforeAbort);
+      if (scenario.relayFailure || scenario.removeFailure) {
+        assert.equal(didThrow, false);
+        assert.deepEqual(returned, { code: 2, lines: ['送審產生器（Grok 隔離執行）：本次資源收尾失敗——未寫出結果。'] });
+      } else if (scenario.throws) {
+        assert.equal(didThrow, true);
+        assert.equal(thrown, scenario.value);
+      } else {
+        assert.equal(didThrow, false);
+        assert.deepEqual(returned, { code: 2, lines: ['送審產生器（Grok 隔離執行）：synthetic probe refusal——拒絕啟動。'] });
+      }
+    } finally {
+      t.mock.restoreAll();
+      if (server?.listening) { server.closeAllConnections(); await new Promise(resolve => http.Server.prototype.close.call(server, resolve)); }
+      if (box && fs.existsSync(box)) fs.rmSync(box, { recursive: true, force: true });
+    }
+  });
+});
+
+test('Grok 真轉送器已建立上游串流 aborted 與 error 後拒收並收妥資源', async () => {
+  const http = require('node:http');
+  const { getEventListeners } = require('node:events');
+  const f = cleanupExecFixture();
+  const r = repo();
+  f.args[f.args.indexOf('--cwd') + 1] = r.dir;
+  sh(r.dir, 'clone', '--quiet', r.dir, f.mutation);
+  assert.notEqual(fs.realpathSync(f.mutation), fs.realpathSync(r.dir));
+  assert.equal(sh(f.mutation, 'rev-parse', 'HEAD'), r.head);
+  const controller = new AbortController();
+  const before = ['SIGINT', 'SIGTERM'].map(name => process.listeners(name));
+  const beforeAbort = getEventListeners(controller.signal, 'abort');
+  let upstreamResponse, upstreamRequest, incoming, downstream, box, relayPort, removed = 0;
+  const entered = { probe: 0, execution: 0, upstream: 0, partial: 0 };
+  const observed = [];
+  let observeError;
+  const failed = new Promise(resolve => { observeError = resolve; });
+  const server = http.createServer((_req, res) => { upstreamResponse = res; res.writeHead(200); res.write('partial synthetic stream'); });
+  const timer = setTimeout(() => { upstreamResponse?.destroy(); downstream?.destroy(); observeError(); }, 8000);
+  try {
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = server.address().port;
+    const result = await runGrokExec(f.args, { ...f.deps, signal: controller.signal,
+      probeFn(info) { entered.probe++; box = info.boxDir; relayPort = info.relayPort; return { ok: true }; },
+      requestImpl(options, receive) {
+        entered.upstream++;
+        upstreamRequest = http.request({ hostname: '127.0.0.1', port, method: options.method, path: options.path }, response => {
+          incoming = response;
+          response.once('aborted', () => observed.push('aborted'));
+          response.once('error', () => { observed.push('error'); observeError(); });
+          receive(response);
+        });
+        return upstreamRequest;
+      },
+      removeBox(dir, options) { removed++; assert.equal(fs.existsSync(f.outFile), false); fs.rmSync(dir, options); },
+      async spawnGrok({ env }) {
+        entered.execution++;
+        const auth = JSON.parse(fs.readFileSync(path.join(env.HOME, '.grok', 'auth.json'), 'utf8'));
+        await new Promise((resolve, reject) => {
+          downstream = http.get({ hostname: '127.0.0.1', port: relayPort, path: '/v1/models', headers: { authorization: `Bearer ${auth[f.entry].key}` } }, res => {
+            res.once('data', chunk => {
+              entered.partial++;
+              assert.equal(chunk.toString(), 'partial synthetic stream');
+              assert.ok(incoming && upstreamResponse);
+              upstreamResponse.destroy();
+              resolve();
+            });
+            res.on('error', () => {});
+          });
+          downstream.once('error', reject);
+        });
+        await failed;
+        downstream.destroy();
+        const body = 'SYNTHETIC-STREAM-FINAL';
+        const frames = [
+          { type: 'system', subtype: 'init', session_id: 'stream-failure', model: 'grok-4.7' },
+          { type: 'assistant', session_id: 'stream-failure', parent_tool_use_id: null, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: body }] } },
+          { type: 'result', session_id: 'stream-failure', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: body },
+        ];
+        return { status: 0, stdout: frames.map(JSON.stringify).join('\n') + '\n' };
+      },
+    });
+    assert.deepEqual(entered, { probe: 1, execution: 1, upstream: 1, partial: 1 }, JSON.stringify(result));
+    assert.equal(f.counts.authNetwork, 0);
+    assert.deepEqual(observed, ['aborted', 'error']);
+    assert.equal(result.code, 2);
+    assert.match(result.lines.join('\n'), /通道失效/);
+    assert.equal(removed, 1);
+    assert.equal(fs.existsSync(box), false);
+    assert.equal(fs.existsSync(f.outFile), false);
+    assert.equal(incoming.destroyed, true);
+    assert.equal(upstreamRequest.destroyed, true);
+    assert.deepEqual(['SIGINT', 'SIGTERM'].map(name => process.listeners(name)), before);
+    assert.deepEqual(getEventListeners(controller.signal, 'abort'), beforeAbort);
+    await assert.rejects(fetch(`http://127.0.0.1:${relayPort}/v1/models`, { signal: AbortSignal.timeout(1000) }), error => error.cause?.code === 'ECONNREFUSED');
+  } finally {
+    clearTimeout(timer);
+    downstream?.destroy(); upstreamRequest?.destroy(); incoming?.destroy(); upstreamResponse?.destroy();
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    if (box && fs.existsSync(box)) fs.rmSync(box, { recursive: true, force: true });
   }
 });
 
@@ -2911,7 +3128,7 @@ test('Seatbelt 預檢拒寫只接受權限錯誤，不把路徑錯誤當成功',
 });
 
 test('Grok 隔離執行：E8 原生 JSON 串流解析、cancelled 拒絕、DLP 掃描前文、只讀 scan 預產差異', async (t) => {
-  const { runGrokExec, GROK_PINNED_ISSUER, GROK_PINNED_CLIENT_ID, stripGrokPreamble } = require('../tools/review-launch.js');
+  const { runGrokExec, GROK_PINNED_ISSUER, GROK_PINNED_CLIENT_ID } = require('../tools/review-launch.js');
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ack-grok-exec-stream-test-')));
   const r = repo();
 
@@ -2973,17 +3190,19 @@ test('Grok 隔離執行：E8 原生 JSON 串流解析、cancelled 拒絕、DLP �
       ];
 
       const controller = new AbortController();
+      let removeCalls = 0;
       const signalCounts = ['SIGINT', 'SIGTERM'].map(name => process.listenerCount(name));
       const res = await runGrokExec(args, {
         signal: controller.signal,
         authFile, authOpts, probeFn: () => ({ ok: true }),
         requestImpl: () => { throw new Error('synthetic upstream failure'); },
         removeBox: (box, opts) => {
+          removeCalls++;
           assert.equal(fs.existsSync(outFile), false, '必要收尾完成前不可留下成功結果');
           fs.rmSync(box, opts);
           if (cleanupCancel === true) controller.abort();
           else if (cleanupCancel) process.emit(cleanupCancel);
-          if (cleanupFailure) throw Object.assign(new Error('synthetic cleanup failure'), { code: 'EIO' });
+          if (cleanupFailure === true || (cleanupFailure === 'first' && removeCalls === 1)) throw Object.assign(new Error('synthetic cleanup failure'), { code: 'EIO' });
         },
         spawnGrok: async ({ grokArgs, boxWorktree, boxPromptFile, relayPort, env }) => {
           spawnCalled = true;
@@ -3012,7 +3231,7 @@ test('Grok 隔離執行：E8 原生 JSON 串流解析、cancelled 拒絕、DLP �
       } else {
         assert.equal(fs.existsSync(outFile), false, '失敗時不可寫出 outFile');
       }
-      return { res, capturedArgs, capturedBoxDir, capturedBoxPromptContent, spawnCalled, output: fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8') : null };
+      return { res, capturedArgs, capturedBoxDir, capturedBoxPromptContent, spawnCalled, removeCalls, output: fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8') : null };
     };
 
     const sessId = "10000000-0000-4000-8000-000000000001";
@@ -3033,9 +3252,16 @@ test('Grok 隔離執行：E8 原生 JSON 串流解析、cancelled 拒絕、DLP �
         JSON.stringify({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', session_id: sessId, result: scanText }),
       ];
       const exactRaw = successStream.join('\n') + '\n';
-      await runStream(successStream, 'scan', 0, exactRaw);
+      const clean = await runStream(successStream, 'scan', 0, exactRaw);
+      assert.equal(clean.spawnCalled, true);
+      assert.equal(clean.removeCalls, 1, '已成功收好的盒子不重收');
       const cleanupRejected = await runStream(successStream, 'scan', 2, null, { cleanupFailure: true });
       assert.match(cleanupRejected.res.lines.join('\n'), /收尾失敗/);
+      assert.equal(cleanupRejected.removeCalls, 2);
+      const retryCleaned = await runStream(successStream, 'scan', 2, null, { cleanupFailure: 'first' });
+      assert.equal(retryCleaned.spawnCalled, true);
+      assert.equal(retryCleaned.removeCalls, 2, '外層重試清盒成功仍保留先前拒收');
+      assert.match(retryCleaned.res.lines.join('\n'), /收尾失敗/);
       const cleanupCancelled = await runStream(successStream, 'scan', 2, null, { cleanupCancel: true });
       assert.match(cleanupCancelled.res.lines.join('\n'), /取消/);
       for (const signal of ['SIGINT', 'SIGTERM']) {

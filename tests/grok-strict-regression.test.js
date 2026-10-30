@@ -122,6 +122,13 @@ test('Grok NDJSON 嚴格解析回歸（純函式題）', async (t) => {
     assert.equal(unwrapScanOutput(validFrames.join('\n')), 'FINAL');
   });
 
+  await t.test('result subtype 單欄非 success 不得借用合法完成正文', () => {
+    const changed = { ...validResult, subtype: 'error_during_execution' };
+    assert.deepEqual({ ...changed, subtype: validResult.subtype }, validResult);
+    assert.equal(unwrapScanOutput(validFrames.join('\n')), 'FINAL');
+    assert.throws(() => unwrapScanOutput([validFrames[0], validFrames[1], JSON.stringify(changed)].join('\n')), LaunchError);
+  });
+
   await t.test('1: 空格 JSON 且 cancelled', () => {
     const raw = [
       JSON.stringify({ type: 'system', subtype: 'init', session_id: sid, model: 'grok-4.7' }).replaceAll(':', ': '),
@@ -178,7 +185,8 @@ test('Grok NDJSON 嚴格解析回歸（純函式題）', async (t) => {
   });
 
   await t.test('5: 缺 is_error', () => {
-    const { is_error, ...missingIsErrorResult } = validResult;
+    const missingIsErrorResult = { ...validResult };
+    delete missingIsErrorResult.is_error;
     const raw = [
       validFrames[0],
       validFrames[1],

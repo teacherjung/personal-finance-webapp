@@ -16,6 +16,51 @@ after(cleanupTempRoots);
 const hash = (/** @type {string | Buffer} */ value) => createHash('sha256').update(value).digest('hex');
 const identity = { project: 'owner/repo', change: '17', reviewer: 'Grok', source: 'Grok CLI', round: 1 };
 
+for (const [name, options, reason] of [
+  ['非零退出', { fake: { status: 1 } }, 'grok 退出碼 1'],
+  ['缺末列', { shell: 'rm "$ws/fake-session/chat_history.jsonl"' }, 'final-selection=TRANSCRIPT_MISSING'],
+  ['多 root', { shell: 'mkdir "$ws/00000000-0000-4000-8000-000000000002"; cp "$ws/fake-session/chat_history.jsonl" "$ws/00000000-0000-4000-8000-000000000002/chat_history.jsonl"' }, 'final-selection=ROOT_CARDINALITY'],
+  ['重複原始鍵', { shell: `printf '%s\\n' '{"model_id":"grok-4.7","type":"assistant","content":"FAKE-REPLY","model_id":"grok-4.7","reasoning_effort":"xhigh"}' > "$ws/fake-session/chat_history.jsonl"` }, 'final-selection=FINAL_KEYS'],
+  ['工具欄', { shell: `printf '%s\\n' '{"type":"assistant","content":"FAKE-REPLY","model_id":"grok-4.7","reasoning_effort":"xhigh","tool_calls":[]}' > "$ws/fake-session/chat_history.jsonl"` }, 'final-selection=FINAL_KEYS'],
+]) test(`四鍵真 runner 拒收且不留正式結果：${name}`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const { result, iso, box, logs, observed } = await reviewRun({ ...options, fake: { ...options.fake, finalShape: 'four' } });
+  assert.ok(observed, '本題啟動前材料必須已建立');
+  assert.equal(result.code, 2, result.summary.join('\n'));
+  assert.ok(logs.some(line => line.includes(reason)), logs.join('\n'));
+  assert.equal(result.review, undefined); assert.deepEqual(readdirSync(iso.resultsRoot), []);
+  assert.equal(existsSync(box), false);
+});
+
+test('四鍵真 runner 拒收且不留正式結果：錯工作區', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const reply = 'FAKE-REPLY';
+  const { result, iso, box, logs, observed } = await reviewRun({ fake: { finalShape: 'four', reply },
+    shell: 'mv "$ws" "$GROK_HOME/sessions/%2Fother%2Fsrc"; ws="$GROK_HOME/sessions/%2Fother%2Fsrc"' });
+  assert.ok(observed, '本題啟動前材料必須已建立');
+  const endings = logs.map((line, index) => ({ line, index })).filter(entry => entry.line.startsWith('複審結束：'));
+  assert.equal(endings.length, 1, '本題須有且只有一筆 CLI 完成紀錄');
+  const completed = endings[0].line.match(new RegExp(`^複審結束：(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z)；grok 退出碼 0；回覆 ${reply.length} UTF-16 碼元；程序群組已收束$`, 'u'));
+  assert.ok(completed, '本題 CLI 須正常完成、產生固定合成回覆並收束群組');
+  assert.equal(new Date(completed[1]).toISOString(), completed[1]);
+  assert.equal(result.code, 2, result.summary.join('\n'));
+  const refusal = logs.findIndex(line => line.startsWith('⛔ 驗屍：找不到這次的 session 日誌（找不到 workspace 日誌目錄：'));
+  assert.ok(refusal > endings[0].index, '本題須在 CLI 完成後由精確 workspace 日誌檢查拒收');
+  assert.ok(!logs.some(line => line.includes('final-selection=')), '上游拒收後不能進入末列選取診斷');
+  assert.equal(result.review, undefined); assert.deepEqual(readdirSync(iso.resultsRoot), []);
+  assert.ok(box, '本題須實際建立隔離盒'); assert.equal(existsSync(box), false);
+});
+
+test('合法四鍵不能蓋過全 stdout 的 DLP，拒收不回聲且先於 selector', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const live = 'SYNTHETIC-FOUR-FINAL-LIVE-SENTINEL';
+  const { result, iso, logs, observed, box } = await reviewRun({ fake: { finalShape: 'four' }, shell: `printf '%s' '${live}'`, deps: { liveSecret: live } });
+  assert.ok(observed); assert.equal(result.code, 1, result.summary.join('\n'));
+  assert.equal(result.review, undefined); assert.equal(existsSync(box), false);
+  assert.ok(!logs.some(line => line.includes('final-selection=') || line.includes(live)));
+  assert.equal(readdirSync(iso.resultsRoot).length, 1);
+  const directory = join(iso.resultsRoot, readdirSync(iso.resultsRoot)[0]);
+  assert.deepEqual(readdirSync(directory).sort(), ['incident.json', 'launch.json']);
+  assert.ok(!readFileSync(join(directory, 'incident.json'), 'utf8').includes(live));
+});
+
 test('複審資格採精確的非空全員集合，不按陌生名稱推級別', () => {
   for (const models of [[], undefined, 'grok-4.7', [null], [61713], ['grok-4.5'], ['grok-4.8'], ['grok-4.7', 'grok-4.5'], ['grok-4.7', 'grok-4.7-other'], ['toString']]) {
     assert.equal(reviewModelsQualified(models), false);

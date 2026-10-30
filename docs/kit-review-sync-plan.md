@@ -2,14 +2,14 @@
 
 ## 目的與授權
 
-將套件已合併的 #128／#129 經官方整批同步帶回理財，處理阻擋正式複審的必要相容前置，再續辦 #747。Codex 實作、真正 Grok 4.7／xhigh 正式複審；技術取捨交實際 GPT-6.1 Sol／xhigh，不能把技術裁示或測試通過當正式結論。
+將套件已合併的 #128／#129／#130 經官方整批同步帶回理財，處理阻擋正式複審的必要相容前置，再續辦 #747。Codex 實作、真正 Grok 4.7／xhigh 正式複審；技術取捨交實際 GPT-6.1 Sol／xhigh，不能把技術裁示或測試通過當正式結論。
 
 本人在本工作線授權必要時暫關 #747、保留分支與證據後恢復。讓道留痕見 [#747](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6497817034)。#737、Gemini／Argon 與所有掃描繼續暫停，不動其他工作線、主網站、真實帳本、憑證或依賴安裝。
 
 ## 固定基準與單一目的
 
 - 理財基底：`8fbfe45ee0bbb6bb0ab61357d97edb1df7fb6f31`；本支不包含 #747 的店名規則產品差異。
-- 套件來源：已合併 `ec3817253faf77d2ed615ca8c7385c6c9c37fc3b`；舊清單版本 `c7125618592b757e29c6b76160dd517665987edf`。
+- 套件來源：已合併 `1a1e3954fe606b3da178b1d4bd8fe07073e1e008`；前次同步 `ec3817253faf77d2ed615ca8c7385c6c9c37fc3b` 的保存與已知失敗另記下節，原清單版本 `c7125618592b757e29c6b76160dd517665987edf`。
 - 套件完成證據：[#128 工具核對](https://github.com/teacherjung/ai-collab-kit/pull/128#issuecomment-6497292184)、[#129 工具核對](https://github.com/teacherjung/ai-collab-kit/pull/129#issuecomment-6488406048)。這些不替代理財本支的新驗證與正式審查。
 - 同步只用來源版本的 `tools/kit-lock.js --sync`；先預演、核五類獨有改動與所有權，再加 `--apply`。不手改共用檔、不跳過檢查。
 - 目的限於恢復理財正式審查前置。若相容修補超出必要前置或涉及新的安全判準，先交 Sol 裁範圍，不自行擴張；與本支無關的既有缺口不順修。
@@ -29,6 +29,17 @@
 先比對已固定版本的公開 CLI 程式、合成正常／異常形狀與套件完成證據，交實際 Sol 決定最小相容範圍。不得讀被隱私檢查攔截的原文、不得改舊結果或回溯冒稱通過；不得刪除精確末列、來源、雜湊、模型、DLP、程序清理與正式結論檢查。
 
 [Sol 範圍裁示](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6498273082)准先官方同步，收件相容必須等待固定版本合法證據。未取得與固定執行檔連結的公開來源時，允許以該執行檔、全合成材料、假認證及沒有轉送能力的 loopback 假服務，沿用 OS 隔離做原生持久化取證；不能啟真模型、讀私人設定或歷史 session。先公開對帳實際形狀與完成條件，再改封閉接受契約；探針失敗或語意不明維持拒收。此裁示不代替正式複審。
+
+## 固定版本收件契約（2026-10-30）
+
+[完整技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6501106212)及[開工範圍更正](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6513112098)限定以下修補，不更動正式 runner/provider 接線或安全設定。
+
+- 固定 CLI 1.0.46，正式入口仍核 binary SHA-256 `e8daa302364c9c3b6a5546d511cfbd1ab5e5d407a9b04282f660665ea405f9f3`。第四次合法合成實驗證明四鍵末列與完整正文，不證明真模型推理或所有版本格式；公開來源 commit 與該 binary 同版未獲證明。成功供給的主／輔預算外另有摘要用途被拒，不能概括成全程只有兩次請求。前次失敗保留，不再起第五次探針。
+- 精確列舉四鍵 `content,model_id,reasoning_effort,type`，只收 assistant／grok-4.7／xhigh；保留五鍵 `content,model_fingerprint,model_id,reasoning_effort,type` 與既有模型資格。未知欄、缺核心欄、tool_calls 即使為空仍拒收；不猜補 fingerprint。
+- metadata 非空與受選原始末列解碼後重複鍵拒收是新增防線，不是原先已有。字串內的鍵樣文字不誤判，Unicode escape 同名鍵拒收；只守末列、不宣稱全日誌重複鍵皆受檢。
+- 保留唯一 workspace/session、完整 JSONL/LF、最後列、UTF-8、stdout 唯一逐字對應與尾端限制、全 stdout 的 DLP 先行、模型資格、工具足跡、完整性與清理；正文及既有 v1 收據不改寫。
+- 紅題先行；假 CLI 分列四／五鍵，四鍵通過真正 runner→provider→官方 prepareVerdict 合成鏈。拒收及保存各有正反控，突變先核目標與基準綠、紅在預期斷言；不以語法錯或前置失敗計數。
+- [錯工作區考題技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6513386225)要求移走本場工作區的整合題精確驗上游日誌拒收，而非誤套後段 selector 碼；同題核 CLI 完整終態、拒收時序、無 selector 診斷、無正式結果與清理。原失敗保留，不追認尚未執行的清理斷言，不改產品防線。
 
 ## 驗證與停線條件
 

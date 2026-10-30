@@ -270,7 +270,8 @@ function recheckContinuation(rec, change, comments, prepared, allowAlreadyPosted
     history = comments.filter((c) => c !== candidates[0]);
   }
   const actual = continuationBinding(change, history, rec.reviewer, binding.refs, settings);
-  const { session: _session, ...facts } = binding;
+  const facts = { ...binding };
+  delete facts.session;
   if (JSON.stringify(actual) !== JSON.stringify(facts) || actual.round !== rec.round || actual.head !== rec.head) {
     throw new LaunchError('獨立續審原件、身分、來源、設定、HEAD 或輪次已變；不收件');
   }
@@ -3663,7 +3664,7 @@ async function runGrokExec(argv, deps = {}) {
   process.on('SIGTERM', cancelExecution);
   deps.signal?.addEventListener('abort', cancelExecution, { once: true });
   if (deps.signal?.aborted) cancelExecution();
-  try {
+  const execute = async () => {
     if (cancellation.signal.aborted) return { code: 2, lines: ['送審產生器（Grok 隔離執行）：已取消——未寫出結果。'] };
     relay = await startGrokRelay({
       realBearer: authInfo.realBearer,
@@ -3950,8 +3951,17 @@ async function runGrokExec(argv, deps = {}) {
     if (cancellation.signal.aborted) return { code: 2, lines: ['送審產生器（Grok 隔離執行）：已取消——未寫出結果。'] };
     fs.writeFileSync(outPath, cleanedOutput);
     return { code: 0, lines: [] };
+  };
+  let result;
+  let originalError;
+  let didThrow = false;
+  let cleanupFailed = false;
+  try {
+    result = await execute();
+  } catch (error) {
+    originalError = error;
+    didThrow = true;
   } finally {
-    let cleanupFailed = false;
     if (relay) {
       try { await relay.close(); } catch { cleanupFailed = true; }
     }
@@ -3961,8 +3971,11 @@ async function runGrokExec(argv, deps = {}) {
     process.removeListener('SIGINT', cancelExecution);
     process.removeListener('SIGTERM', cancelExecution);
     deps.signal?.removeEventListener('abort', cancelExecution);
-    if (cleanupFailed) return { code: 2, lines: ['送審產生器（Grok 隔離執行）：本次資源收尾失敗——未寫出結果。'] };
   }
+  if (cleanupFailed) return { code: 2, lines: ['送審產生器（Grok 隔離執行）：本次資源收尾失敗——未寫出結果。'] };
+  // throw undefined 等 falsy 值也必須傳回；清理失敗則優先拒收。
+  if (didThrow) throw originalError;
+  return result;
 }
 
 function stripGrokPreamble(rawOutput) {

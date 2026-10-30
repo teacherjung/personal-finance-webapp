@@ -1,7 +1,7 @@
 {
   "repo": "teacherjung/ai-collab-kit",
-  "version": "ec3817253faf77d2ed615ca8c7385c6c9c37fc3b",
-  "syncedAt": "2026-10-29",
+  "version": "1a1e3954fe606b3da178b1d4bd8fe07073e1e008",
+  "syncedAt": "2026-10-30",
   "entries": [
     {
       "mode": "100644",
@@ -240,7 +240,7 @@
     },
     {
       "mode": "100644",
-      "blob": "2ed34d2cee3dc8f3dea9e7ae6486c6db0c56d24f",
+      "blob": "72776d49fcbea782e835f8d3fcd4c598d0f1cd11",
       "path": "tests/grok-strict-regression.test.js"
     },
     {
@@ -330,7 +330,7 @@
     },
     {
       "mode": "100644",
-      "blob": "55f133fbb62620f8bce0884d540c504f3c2fda5a",
+      "blob": "e02459fdcd288129c6285c2fddf453859f36d48b",
       "path": "tests/review-launch.test.js"
     },
     {
@@ -510,7 +510,7 @@
     },
     {
       "mode": "100644",
-      "blob": "16249cf42c0cd473b0a85576e9a8d954aa1fa294",
+      "blob": "fb866d563ce3672beadbb37d873af44b799eeefb",
       "path": "tools/review-launch.js"
     },
     {
