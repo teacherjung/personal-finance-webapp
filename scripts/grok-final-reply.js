@@ -17,6 +17,8 @@ const FAILURE_CODES = Object.freeze([
 // 不讀 Error 的公開屬性：外來 throw 可以偽造 code，或以 getter 夾帶原文。
 const failureCodes = new WeakMap();
 const rootDiagnostics = new WeakMap();
+const keyReasons = new WeakMap();
+const KEY_REASONS = Object.freeze(['DUPLICATE_MEMBER', 'NESTED_VALUE', 'KEY_SET_MISMATCH', 'UNKNOWN']);
 const CARDINALITIES = Object.freeze(['ZERO', 'ONE', 'MULTIPLE']);
 const ROOT_FIELDS = Object.freeze(['rootComponents', 'uuidComponents', 'exactUuidTranscripts',
   'directWorkspaceFilePresent', 'nonUuidNestedComponentPresent', 'otherWorkspaceTopComponentPresent', 'equivalentEncodedWorkspacePresent']);
@@ -71,11 +73,17 @@ export function finalSelectionFailureCode(error) {
   const code = error && typeof error === 'object' ? failureCodes.get(error) : undefined;
   return FAILURE_CODES.find(allowed => allowed === code) ?? 'UNKNOWN';
 }
-/** @param {string} code @param {RootDiagnostic | 'UNKNOWN'} [diagnostic] */
-function failure(code, diagnostic = 'UNKNOWN') {
+/** @param {unknown} error */
+export function finalSelectionKeyReason(error) {
+  const reason = error && typeof error === 'object' ? keyReasons.get(error) : undefined;
+  return KEY_REASONS.find(allowed => allowed === reason) ?? 'UNKNOWN';
+}
+/** @param {string} code @param {RootDiagnostic | 'UNKNOWN'} [diagnostic] @param {string} [keyReason] */
+function failure(code, diagnostic = 'UNKNOWN', keyReason = 'UNKNOWN') {
   const error = new Error('GROK_FINAL_SELECTION_INVALID');
   failureCodes.set(error, code);
   if (code === 'ROOT_CARDINALITY' && diagnostic !== 'UNKNOWN') rootDiagnostics.set(error, diagnostic);
+  if (code === 'FINAL_KEYS' && KEY_REASONS.includes(keyReason)) keyReasons.set(error, keyReason);
   return error;
 }
 /** @type {(ok: unknown, code: string) => asserts ok} */
@@ -111,12 +119,13 @@ function finalMemberKeys(raw) {
   if (raw[at] !== '}') {
     while (true) {
       const key = string();
-      demand(!keys.has(key), 'FINAL_KEYS'); keys.add(key);
+      if (keys.has(key)) throw failure('FINAL_KEYS', 'UNKNOWN', 'DUPLICATE_MEMBER');
+      keys.add(key);
       space(); demand(raw[at++] === ':', 'TRANSCRIPT_JSON'); space();
       if (raw[at] === '"') string();
       else {
         // 巢狀值不屬於末列契約；其餘 scalar 仍交既有欄位型別檢查拒收。
-        demand(raw[at] !== '{' && raw[at] !== '[', 'FINAL_KEYS');
+        if (raw[at] === '{' || raw[at] === '[') throw failure('FINAL_KEYS', 'UNKNOWN', 'NESTED_VALUE');
         const start = at;
         while (at < raw.length && raw[at] !== ',' && raw[at] !== '}') at++;
         parse(raw.slice(start, at));
@@ -191,7 +200,7 @@ export function selectFinalReply(files, workspace, stdout, cliVersion) {
     rows.push(last);
     demand(last && typeof last === 'object' && !Array.isArray(last), 'FINAL_OBJECT');
     const four = keys === 'content,model_id,reasoning_effort,type';
-    demand(four || keys === 'content,model_fingerprint,model_id,reasoning_effort,type', 'FINAL_KEYS');
+    if (!four && keys !== 'content,model_fingerprint,model_id,reasoning_effort,type') throw failure('FINAL_KEYS', 'UNKNOWN', 'KEY_SET_MISMATCH');
     demand(last.type === 'assistant', 'FINAL_ROLE_METADATA');
     text(last.model_id, 'FINAL_ROLE_METADATA'); text(last.reasoning_effort, 'FINAL_ROLE_METADATA');
     if (four) demand(last.model_id === 'grok-4.7' && last.reasoning_effort === 'xhigh', 'FINAL_ROLE_METADATA');
@@ -205,7 +214,7 @@ export function selectFinalReply(files, workspace, stdout, cliVersion) {
       selection: { schema: 'grok-final-selection/v1', cliVersion, encoding: 'decoded-stdout-utf8',
         transcriptPath, transcriptSha256: hash(bytes), rowCount: rows.length, rowIndex: rows.length - 1,
         byteStart, byteEnd: byteStart + final.length, stdoutBytes: all.length, replyBytes: final.length } });
-  } catch (error) { throw failure(finalSelectionFailureCode(error), finalSelectionRootDiagnostic(error)); }
+  } catch (error) { throw failure(finalSelectionFailureCode(error), finalSelectionRootDiagnostic(error), finalSelectionKeyReason(error)); }
 }
 
 if (isMainModule(import.meta.url)) {

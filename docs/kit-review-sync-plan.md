@@ -43,6 +43,15 @@
 
 ## 驗證與停線條件
 
+### FINAL_KEYS 有限診斷補充（2026-10-30）
+
+依 [完整 Sol 技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6529284134)配[原題](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6529077951)，第四輪拒收不構成有效正式結論，亦不足以判定該次原文的具體形狀。只在本支專案自有 `scripts/grok-final-reply.js`、`scripts/grok-scan.js` 及各自的 `test/grok-final-reply.test.js`、`test/grok-scan-flow-review.test.js` 補固定診斷；不重同步套件，不動 provider、設定、隔離、轉送、來源蒐集或接受契約。
+
+- 外層錯誤仍為 `FINAL_KEYS`；私有品牌只輸出 `DUPLICATE_MEMBER`、`NESTED_VALUE`、`KEY_SET_MISMATCH` 或 `UNKNOWN`。保留既有首次失敗順序，不在拒收後重解析找下一個原因。
+- 診斷不含鍵名、值、正文、路徑、長度、位置、雜湊或堆疊，不讀外來錯誤／Proxy／getter。正式 runner 僅在既有 catch 於拒收時記固定字串，接著走原本失敗清理；不改成功收據或建立新的診斷檔。
+- 先補合成紅題，涵蓋原始及 escape 同名鍵、巢狀物件／陣列、未知 scalar／缺核心鍵、私有品牌跨 catch、外來錯誤及不回聲。假 CLI／假 relay 必須走真 runner，核完整執行、先行安全檢查、精確原因、非零、無正式結果及清理；正例的四／五鍵、Unicode、原文與 v1 收據維持。有效突變逐支驗新分類、品牌保留與 runner 接線，不能用語法或前置錯誤冒充。
+- 新版完整檢查、正常推送與新 CI 成功、重新避撞及官方備審後，僅准一次真正 Grok 4.7／xhigh 第五輪高風險全審，包含本支完整差異。不得同 SHA 探測重試，亦不把合成題當真模型格式證據；若再拒收、UNKNOWN、診斷／清理／完成度失敗即停自動第六輪，保全合法外層證據再裁。不得讀回已清除或被拒的原始資料。
+
 1. 草稿與原題／逐字答覆配對先行；D1 待裁未結，不實作該待裁項目或合併。
 2. 同步前後核清單版本、blob／權限與實際差異；確認錢攔截器指紋來源未變，不調整全域鉤子或信任。
 3. 相容修補先補能重現缺口的合成紅題，再修；合法正例與拒收反例都走正式使用路徑。每個關鍵守門以拿掉修法／破壞保存的有效突變證明，先斷言替換目標存在，保留原失敗。

@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import * as finalSelector from '../scripts/grok-final-reply.js';
 import { finalSelectionFailureCode, finalSelectionRootDiagnostic, rootCardinalityProjection, selectFinalReply, verifyFinalSelection } from '../scripts/grok-final-reply.js';
 
 const workspace = '/synthetic/box/src';
@@ -15,6 +16,64 @@ const bytes = (rows = [row()]) => Buffer.from(rows.map(r => JSON.stringify(r)).j
 const files = () => new Map([[path, bytes()]]);
 const select = (f = files(), out = final, version = '1.0.46') => selectFinalReply(f, workspace, out, version);
 const hash = value => createHash('sha256').update(value).digest('hex');
+
+const diagnosticSentinel = 'SYNTHETIC-KEY-REASON-PRIVATE';
+const diagnosticRow = { type: 'assistant', content: diagnosticSentinel, model_id: 'grok-4.7', reasoning_effort: 'xhigh' };
+for (const [name, raw, reason] of [
+  ['原始同名', '{"content":"earlier",' + JSON.stringify(diagnosticRow).slice(1), 'DUPLICATE_MEMBER'],
+  ['解碼同名', '{"\\u0063ontent":"earlier",' + JSON.stringify(diagnosticRow).slice(1), 'DUPLICATE_MEMBER'],
+  ['巢狀物件', JSON.stringify({ ...diagnosticRow, content: { [diagnosticSentinel]: diagnosticSentinel } }), 'NESTED_VALUE'],
+  ['巢狀陣列', JSON.stringify({ ...diagnosticRow, content: [diagnosticSentinel] }), 'NESTED_VALUE'],
+  ['未知純量', JSON.stringify({ ...diagnosticRow, [diagnosticSentinel]: diagnosticSentinel }), 'KEY_SET_MISMATCH'],
+  ...Object.keys(diagnosticRow).map(key => { const missing = { ...diagnosticRow }; delete missing[key]; return ['缺核心 ' + key, JSON.stringify(missing), 'KEY_SET_MISMATCH']; }),
+  ['巢狀先於同名', '{"content":[],"content":"later"}', 'NESTED_VALUE'],
+  ['同名先於巢狀', '{"content":"earlier","content":[]}', 'DUPLICATE_MEMBER'],
+]) test(`鍵拒收診斷保留首次原因且不回聲：${name}`, () => {
+  assert.equal(typeof finalSelector.finalSelectionKeyReason, 'function', '須提供私有品牌的固定鍵拒收原因');
+  assert.throws(() => select(new Map([[path, Buffer.from(raw + '\n')]]), diagnosticSentinel), error => {
+    assert.equal(finalSelectionFailureCode(error), 'FINAL_KEYS');
+    assert.equal(finalSelector.finalSelectionKeyReason(error), reason);
+    assert.equal(finalSelectionRootDiagnostic(error), 'UNKNOWN');
+    assert.equal(error.message, 'GROK_FINAL_SELECTION_INVALID');
+    assert.deepEqual(Object.keys(error), []); assert.equal(error.cause, undefined);
+    assert.ok(!String(error).includes(diagnosticSentinel));
+    assert.ok(!JSON.stringify([error, finalSelector.finalSelectionKeyReason(error)]).includes(diagnosticSentinel));
+    return true;
+  });
+});
+
+test('鍵診斷私有品牌不讀外來錯誤、Proxy 或 getter，包裝保留拒收與 UNKNOWN', () => {
+  assert.equal(typeof finalSelector.finalSelectionKeyReason, 'function', '須提供私有品牌的固定鍵拒收原因');
+  let reads = 0;
+  const read = () => { reads++; throw new Error(diagnosticSentinel); };
+  const foreign = new Proxy({}, { get: read, ownKeys: read, getOwnPropertyDescriptor: read });
+  const getter = Object.defineProperty({}, 'keyReason', { get: read });
+  const revoked = Proxy.revocable({}, {}); revoked.revoke();
+  for (const error of [foreign, getter, revoked.proxy, new Error(diagnosticSentinel), null, undefined, 17,
+    diagnosticSentinel, { code: 'FINAL_KEYS', keyReason: 'DUPLICATE_MEMBER' }, { keyReason: diagnosticSentinel }]) {
+    let projected;
+    assert.doesNotThrow(() => { projected = finalSelector.finalSelectionKeyReason(error); }, '外來錯誤不可觸發公開屬性讀取');
+    assert.equal(projected, 'UNKNOWN');
+  }
+  assert.equal(reads, 0);
+  const f = files(); f.keys = () => { throw foreign; };
+  assert.throws(() => select(f), error => {
+    assert.equal(finalSelectionFailureCode(error), 'UNKNOWN');
+    assert.equal(finalSelector.finalSelectionKeyReason(error), 'UNKNOWN');
+    assert.equal(error.message, 'GROK_FINAL_SELECTION_INVALID'); return true;
+  });
+  assert.equal(reads, 0);
+  assert.throws(() => select(new Map()), error => {
+    assert.equal(finalSelector.finalSelectionKeyReason(error), 'UNKNOWN');
+    assert.equal(finalSelectionFailureCode(error), 'ROOT_CARDINALITY'); return true;
+  });
+  assert.throws(() => select(new Map([[path, Buffer.from('{"content":[]}\n')]])), error => {
+    for (const key of ['keyReason', 'code', 'message', 'stack']) Object.defineProperty(error, key, { get: read });
+    assert.equal(finalSelector.finalSelectionKeyReason(error), 'NESTED_VALUE');
+    assert.equal(finalSelectionFailureCode(error), 'FINAL_KEYS');
+    assert.equal(reads, 0); return true;
+  });
+});
 
 test('固定四鍵末列保存原文、Unicode byte range 與無補值原始證據', () => {
   const content = '四鍵🙂：逗號,冒號:括號{}[]、"content":"不是欄位"與反斜線\\\n未貼\n';
@@ -59,6 +118,7 @@ for (const key of ['content', 'model_id', 'reasoning_effort', 'type', 'model_fin
     assert.equal(JSON.parse(raw)[key], row()[key], '反例須證明一般 JSON.parse 會蓋掉較早值');
     assert.throws(() => select(new Map([[path, Buffer.from(raw)]])), error => {
       assert.equal(finalSelectionFailureCode(error), 'FINAL_KEYS');
+      assert.equal(finalSelector.finalSelectionKeyReason(error), 'DUPLICATE_MEMBER');
       assert.equal(error.message, 'GROK_FINAL_SELECTION_INVALID'); assert.deepEqual(Object.keys(error), []); return true;
     });
   });
