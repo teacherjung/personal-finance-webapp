@@ -23,6 +23,27 @@ let settingsRead = 0;
 /** @type {{dirty:boolean, cleanup:()=>void}|null} */
 let settingsPresentation = null;
 
+// 編輯窗可跨同頁背景重畫存活，整頁重讀仍須保護新呈現及未存輸入。
+export function storeRulesContext() {
+  const intent = managerEntryIntent, root = byId('modal-root');
+  const hash = location.hash, nav = currentNavSeq();
+  const presentation = settingsPresentation, readAtOpen = settingsRead;
+  const eligible = () => managerEntryIntent === intent;
+  return {
+    eligible,
+    async refresh() {
+      const follow = watchModalRoot();
+      const canRefresh = () => eligible() && location.hash === hash && currentNavSeq() === nav
+        && byId('modal-root') === root && follow() && !root.querySelector('.modal')
+        && settingsPresentation === presentation && !presentation?.dirty;
+      if (settingsRead !== readAtOpen || !canRefresh()) return;
+      const refreshRead = settingsRead + 1;
+      try { await renderSettings(canRefresh); }
+      catch (err) { if (settingsRead === refreshRead && canRefresh()) toast('規則已儲存，畫面更新失敗：' + (err.message || ''), true); }
+    },
+  };
+}
+
 /**
  * ⏳ 文案（Claude 起草、**待 William 審改**）：「資料備份」卡的說明。
  *
@@ -561,7 +582,7 @@ export async function renderSettings(canCommit = () => true) {
   };
   bindStoreTable();
   byId('healthBtn').onclick = () => openHealthCheck();
-  byId('storeRulesBtn').onclick = () => openStoreRulesEditor(myRules);
+  bindManagerEntry('storeRulesBtn', async () => (await api('/statement/rules')).rules, openStoreRulesEditor, '讀取店名規則失敗：');
   if (orphans.items.length) byId('orphanBtn').onclick = () => openOrphanLearned(orphans);
   // 匯出備份：**攔下瀏覽器的直接下載**，改成 fetch → 驗狀態／驗內容 → 才落檔並出聲。
   // 舊版是純 <a download>，成功失敗都不出聲；雲端版 session 過期時瀏覽器會安靜存下一個

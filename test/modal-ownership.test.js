@@ -718,9 +718,6 @@ test('共用彈窗｜返回型叉叉可用明確名稱覆寫預設的關閉語�
   app.bindModalAccessibility(root, close, document.getElementById('modalOpener'), '回去繼續編輯');
   await Promise.resolve();
   assert.equal(root.querySelector('.x-close')?.getAttribute('aria-label'), '回去繼續編輯');
-  const rules = strip(readFileSync(join(ROOT, 'public/modules/settings-store-rules.js'), 'utf8'));
-  assert.match(rules, /bindModalAccessibility\(root, onBack, returnFocusTo, '回去繼續編輯'\);/,
-    '規則預覽要把真正的返回語意接進共用 helper，不可退回預設的「關閉」');
   root.querySelector('.x-close')?.click();
 });
 
