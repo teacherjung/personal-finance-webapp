@@ -1,8 +1,8 @@
 // @ts-check
 // 店名規則自助編輯器（系統優化階段二④，2026-07-24 從 settings.js 搬出、搬家不裝修）：
 // 「第三帖」規則資料化的工作區——編輯窗（五種規則表單、預覽→確認→儲存、學習規則衝突處理）
-// ＋影響預覽窗（openRulePreview＝U3 記錄在案的外殼例外：×是返回編輯不是關閉、無背景關閉）。
-// settings.js 只留設定頁本體；儲存成功後經 renderSettings 接縫回頭重繪設定頁。
+// ＋影響預覽窗（openRulePreview＝U3 外殼例外）：有效返回要保留半填草稿，失格只能關自己的窗。
+// 成功保存經 context.refresh 資格檢查才重畫設定頁，避免舊保存蓋掉較新的呈現或輸入。
 // 循環 import 安全：本檔 ↔ settings.js ↔ app.js 成環，所有 import 綁定一律只在函式內取用
 //（勿在檔案頂層取用＝TDZ 陷阱，見 theme.js 註記；本檔頂層只有常數字面量與函式宣告）。
 import { api, byId, esc, toast, modalSizeClass, bindModalAccessibility, claimModalRoot, watchModalRoot, currentNavSeq } from '../app.js';
@@ -216,8 +216,8 @@ export function openStoreRulesEditor(rules, context = storeRulesContext()) {
  *  @param {() => void} onBack 回到編輯窗（呼叫端負責帶著「編輯到一半的內容」重開）
  *  @param {ReturnType<typeof storeRulesContext>} context */
 function openRulePreview(r, onBack, context) {
-  // ⚠️ 刻意**不用** openModalShell（U3 擴大的記錄在案例外）：這個窗的「×」是**返回編輯**（onBack）
-  // 不是關閉，且**沒有**背景點擊關閉——防止使用者點到背景把「編輯到一半的規則」整窗弄丟。
+  // ⚠️ 刻意不用 openModalShell（U3 外殼例外）：有效的「×」返回編輯（onBack），保留半填草稿；
+  // 失格時只關自己的窗，不復活舊編輯窗或清掉新窗。禁止背景點擊關閉，避免誤觸丟失草稿。
   // 外殼會接管 x-close 與 bindBackdropClose，語意不同不可硬套（Codex U3 修訂點名的情況）。
   const root = byId('modal-root');
   const hash = location.hash, nav = currentNavSeq();
