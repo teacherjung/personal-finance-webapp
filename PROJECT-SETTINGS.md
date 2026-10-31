@@ -16,7 +16,7 @@ PR說明的「實作者」「複審者」兩欄、結論標頭與自評的角色
 | AI 甲 | Claude | teacherjung |
 | AI 乙 | Codex | teacherjung |
 | AI 丙 | Grok | teacherjung |
-| 本工作線技術裁示者（GPT‑6\.1 Sol） | Sol | teacherjung |
+| 本工作線技術裁示者（GPT‑6\.1 Sol）；\#748 正式複審另由未參與實作及本支技術裁示的獨立場次擔任 | Sol | teacherjung |
 | AI 丁（本人指定的單輪複審） | Gemini | teacherjung |
 
 貼文帳號資格：只採計登記在參與者表裡的貼文帳號貼的 ❓／⚖️／🚫；沒登記的帳號貼的不採計為有效留痕——它貼的 ❓ 不入待裁，它貼的 ⚖️／🚫 不能替已採計的問題收口（原題繼續待裁），形狀合規的會另列成疑似。⚖️ 另外要由裁示者那一位的帳號貼。結論閘只認識別值、不認帳號。多方共用同一個帳號時，機器分不出是誰親自貼的——那是這套機制的邊界，不是保證。
@@ -222,6 +222,7 @@ default 是全專案預設路由；其餘識別值只供明列範圍。依裁示
 
 | 複審者 | 最強模型 | 次強模型（額度用完才用） | 最高推理 | 不開的自動模式 |
 |---|---|---|---|---|
+| Sol | gpt\-6\.1\-sol | 未設定 | xhigh | 不使用自動模式 |
 | Claude | claude\-opus\-5\-5 | claude\-fable\-5\-1 | max | Ultracode |
 | Codex | gpt\-6\-astra | gpt\-6\-sol | max | ultra（這一檔會自動派助手） |
 | Grok | grok\-4\.7 | 未設定 | xhigh | 自動選模 |
@@ -229,6 +230,7 @@ default 是全專案預設路由；其餘識別值只供明列範圍。依裁示
 
 | 複審者 | 怎麼起（含放行哪些考題指令） | 機器擋得住的 | 只靠提示的、已知缺口 | 驗過的日期 |
 |---|---|---|---|---|
+| Sol | 僅 \#748 依本人留言 6538582075 指派未參與實作及本支技術裁示的獨立正式主審；送審產生器 node tools\/review\-launch\.js \<編號\> \-\-reviewer Sol 依本列印出固定模型與推理的命令。其他支仍依各自分工，\#747 與預設 Grok 不變。 | approval\_policy＝never 禁止申請提權；\-o 收最後回覆，外殼 \-\-post 核兩棵樹乾淨、版本、角色、來源及固定小標後代貼 | workspace\-write 執行期間可寫審查樹與暫存區，唯讀靠標準提示與審後驗樹；完整正文、實質必驗項與獨立資格須另核原生紀錄，登記及退出0不等於正式審查通過 | 每場依原生證據核模型、推理、終態、完整結論及人員獨立性；本列不是本次實跑證據 |
 | Claude | 送審產生器 node tools\/review\-launch\.js \<編號\> \-\-reviewer \<識別值\> 照下一格的樣板印出填好的那一行；它開好審查樹與突變副本之後，node\_modules 捷徑由實作者照 docs\/project\-collaboration\.md「工作目錄與樹」節備樹那一步掛上（只准建、不准動），再發審 | 放行清單以外的指令一律被拒（不跳出詢問）；Edit 工具改不了審查樹、只准改突變副本；不讀主目錄的本機設定檔 | 放行的指令仍可能寫檔（例如 git diff 的 \-\-output），副本裡改了程式再跑考題＝能跑任意程式，所以審查樹唯讀靠提示；讀檔的禁令管不到考題程式自己讀檔；助手被拒時最後的輸出看不到，要逐筆搜「has been denied」 | 2026\-10\-15 UTC（22\:30\:53）：claude \-\-version 回 2\.1\.300 \(Claude Code\)，exit 0；只核 CLI 版本、未啟模型，不代表本次已驗 Opus 模型或通道；模型選用依 \#687 及各輪實際紀錄。 |
 | Codex | 送審產生器 node tools\/review\-launch\.js \<編號\> \-\-reviewer \<識別值\> 照下一格的樣板印出填好的那一行；它開好審查樹與突變副本之後，node\_modules 捷徑由實作者照 docs\/project\-collaboration\.md「工作目錄與樹」節備樹那一步掛上（只准建、不准動），再發審 | 幾乎沒有：審查樹與系統暫存區都寫得進；使用者層放行規則命中的指令在沙箱外跑；樣板帶 approval\_policy＝never，申請提權一律不准（不帶就照本機設定檔自動核准） | 唯讀、不轉正式、不合併、只貼一則留言，全靠提示；退出 0 不代表通過、也不代表留言已貼成功（啟動失敗會退非零），發審的一方要自己去 PR 看留言在不在；設定檔預設推理是 low，指令漏帶就靜默降級；唯讀沙箱配 \-\-add\-dir 突變副本（2026\-10\-07 實測）連副本、暫存區、網路都被擋，不能拿來讓審查樹唯讀 |  |
 | Grok | 暫用安排依 docs\/project\-collaboration\.md「複審模型」；送審產生器印出下列固定模型、推理與材料路徑。 | 借用 grok\-scan\.js 的 OS 隔離、試探、執行檔釘值、假鑰匙中繼與掃後比對；正式用途另核材料與原文雜湊。GitHub 憑證不進盒，前端不代貼結論。 | 受審材料不改檔靠提示與前後雜湊核對；突變只改盒內副本。盒內沒有原倉庫的 \.git，版本以外層核過的清單表示。輸出零不代表通過或已貼文。 | 2026\-10\-15 合成材料與假 runner 行為題；真模型執行與逐字貼文另以每輪 PR 證據核對。 |
@@ -236,6 +238,7 @@ default 是全專案預設路由；其餘識別值只供明列範圍。依裁示
 
 | 複審者 | 結論標頭的來源字串 | 啟動指令樣板（送審產生器替換記號後印出） |
 |---|---|---|
+| Sol | codex CLI | codex exec \-m \{model\} \-c model\_reasoning\_effort\=\'\"\{effort\}\"\' \-c approval\_policy\=\'\"never\"\' \-s workspace\-write \-c sandbox\_workspace\_write\.network\_access\=true \-C \{reviewTree\} \-o \{outFile\} \- \< \{promptFile\} |
 | Claude | Claude CLI | cd \{reviewTree\} \&\& claude \-p \"\$\(cat \{promptFile\}\)\" \-\-model \{model\} \-\-effort \{effort\} \-\-permission\-mode dontAsk \-\-setting\-sources user\,project \-\-add\-dir \{mutationCopy\} \-\-verbose \-\-output\-format json \-\-allowedTools \'Read\,Grep\,Glob\,Bash\(node \-\-test \*\)\,Bash\(npm \-\-prefix \{mutationCopy\} test \*\)\,Bash\(git diff \*\)\,Bash\(git log \*\)\,Bash\(git show \*\)\,Bash\(git rev\-parse HEAD\)\,Bash\(git \-C \{mutationCopy\} rev\-parse HEAD\)\,Bash\(git \-C \{mutationCopy\} status \-\-porcelain\)\,Bash\(git \-C \{mutationCopy\} diff\)\,Bash\(gh pr view \*\)\,Bash\(gh pr diff \*\)\,Bash\(gh pr checks \*\)\,Bash\(gh run view \*\)\,Bash\(gh run list \*\)\,Bash\(gh pr comment \{change\} \*\)\,Edit\(\/\{mutationCopy\}\/\*\*\)\,Workflow\' \-\-disallowedTools \'Write\,NotebookEdit\,WebFetch\,WebSearch\,Edit\(\/\{reviewTree\}\/\*\*\)\,Bash\(gh pr merge \*\)\,Bash\(gh pr edit \*\)\,Bash\(gh pr close \*\)\,Bash\(gh pr review \*\)\,Bash\(gh pr ready \*\)\,Bash\(git push \*\)\,Bash\(git commit \*\)\,Bash\(git checkout \*\)\,Bash\(git switch \*\)\,Bash\(git stash \*\)\,Bash\(git worktree \*\)\,Bash\(git fetch \*\)\,Bash\(npm install \*\)\,Bash\(npm ci \*\)\,Bash\(npx \*\)\,Bash\(node \-e \*\)\' \< \/dev\/null \> \{outFile\} |
 | Codex | codex CLI | codex exec \-m \{model\} \-c model\_reasoning\_effort\=\'\"\{effort\}\"\' \-c approval\_policy\=\'\"never\"\' \-s workspace\-write \-c sandbox\_workspace\_write\.network\_access\=true \-C \{reviewTree\} \- \< \{promptFile\} \> \{outFile\} 2\>\&1 |
 | Grok | Grok CLI | node \{reviewTree\}\/scripts\/grok\-review\.js \-\-model \{model\} \-\-effort \{effort\} \-\-review\-tree \{reviewTree\} \-\-mutation\-copy \{mutationCopy\} \-\-prompt\-file \{promptFile\} \-\-out\-file \{outFile\} \-\-change \{change\} \-\-project \{project\} |

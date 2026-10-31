@@ -599,12 +599,18 @@ test('文末獨立未貼及三小標不可省，final 前言仍不接受', () =>
   }
 });
 
-for (const preface of ['', '未貼：這是前言\n\n']) test(`假 CLI→正式安全 runner→正式前端${preface ? '拒 final 自身前言' : '只收完整 final 並保存原 stdout'}`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async t => {
+for (const finalShape of /** @type {const} */ (['five', 'four'])) for (const [label, preface, prefix, privacy] of [
+  ['只收完整 final 並保存原 stdout', '', '進度🙂\n', false],
+  ['拒 final 自身前言', '未貼：這是前言\n\n', '進度🙂\n', false],
+  ...(finalShape === 'four' ? [
+    ['拒 final 外的路徑', '', '/Users/SYNTHETIC-UNAPPROVED-PATH\n', true],
+    ['拒 final 外的憑證形狀', '', 'sk-' + 'z'.repeat(24) + '\n', true],
+  ] : []),
+]) test(`假 CLI ${finalShape}→正式安全 runner→正式前端${label}`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async t => {
   const repo = tinyRepo({ firstCommitFiles: { 'RULES.md': 'synthetic rules\n' } });
   const f = fixture(t, { head: repo.head, base: repo.base, repo: repo.dir });
   const final = preface + replyOf().replace('aaaaaaa', repo.head.slice(0, 7));
-  const prefix = '進度🙂\n';
-  const inst = fakeGrok({ model: 'grok-4.7', reply: final, formalTranscript: true });
+  const inst = fakeGrok({ model: 'grok-4.7', reply: final, formalTranscript: true, finalShape });
   const bin = join(inst, 'bin', 'grok'), script = readFileSync(bin, 'utf8');
   const anchor = "printf '%s' \"";
   assert.equal(script.split(anchor).length - 1, 2);
@@ -620,7 +626,14 @@ for (const preface of ['', '未貼：這是前言\n\n']) test(`假 CLI→正式�
   assert.equal(safe.review.stdout, prefix + final);
   const saved = JSON.parse(readFileSync(join(safe.review.resultsDir, 'review-result.json'), 'utf8'));
   assert.equal(saved.stdout, prefix + final); assert.equal(saved.reply, final);
-  if (preface) { assert.equal(result.code, 2); absent(f); }
+  if (preface || privacy) {
+    assert.equal(result.code, 2); absent(f);
+    assert.equal(result.receipt, undefined);
+    if (privacy) {
+      assert.match(result.lines.join('\n'), /完整 stdout.*(?:本機絕對路徑|憑證)/u);
+      assert.ok(!result.lines.join('\n').includes(prefix.trim()));
+    }
+  }
   else {
     assert.equal(result.code, 0, result.lines.join('\n'));
     assert.equal(readFileSync(f.args.outFile, 'utf8'), final);
@@ -628,6 +641,13 @@ for (const preface of ['', '未貼：這是前言\n\n']) test(`假 CLI→正式�
     assert.equal(result.receipt.stdoutSha256, digest(prefix + final));
     assert.deepEqual(result.receipt.selection, saved.selection);
     assert.equal(result.receipt.posted, false);
+    const prepared = launcher.prepareVerdict(readFileSync(f.args.outFile, 'utf8'), {
+      reviewer: 'Grok', source: 'Grok CLI', round: 1, head: repo.head, usable: ['Grok'],
+    });
+    assert.equal(prepared.body, final.replace(/未貼\n$/u, ''));
+    assert.equal(prepared.strippedUnposted, true);
+    assert.equal(prepared.header.blocking, false);
+    assert.equal(readFileSync(f.args.outFile, 'utf8'), final, '代貼正規化不能回寫模型原文');
   }
 });
 

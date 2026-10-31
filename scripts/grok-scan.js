@@ -60,7 +60,7 @@ import { auditSessionDir, allSessionDirs } from './audit-grok-scan.js';
 import { gitEnv } from '../lib/git-env.js';
 import { refreshSandboxAuth, authNeedles, authNeedleFields } from './grok-auth-refresh.js';
 import { REFUSED_PREFIX, isToleratedRefusal, summarizeRelayDiagnostics } from './grok-relay.js';
-import { finalSelectionFailureCode, finalSelectionRootDiagnostic, selectFinalReply } from './grok-final-reply.js';
+import { finalSelectionFailureCode, finalSelectionKeyReason, finalSelectionRootDiagnostic, selectFinalReply } from './grok-final-reply.js';
 import { isMainModule } from '../lib/is-main.js';
 import { captureDiskSnapshot, verifyDiskProgress, finishDiskLedger, diskLedgerSha256, diskFileSha256 } from './grok-disk-snapshots.js';
 
@@ -1700,7 +1700,8 @@ export async function runScan(args, deps = {}) {
     try { selected = selectFinalReply(snap.files, src, reply, EXPECTED_GROK_VERSION); }
     catch (error) {
       if (finalSelectionFailureCode(error) === 'ROOT_CARDINALITY') log(`final-root-structure=${JSON.stringify(finalSelectionRootDiagnostic(error))}`);
-      return failAndClean(`正式複審的完整最後回覆無法與 root 紀錄及 stdout 唯一對應（final-selection=${finalSelectionFailureCode(error)}）；核對固定 CLI 格式後重跑 scripts/grok-review.js`);
+      if (finalSelectionFailureCode(error) === 'FINAL_KEYS') log(`final-key-reason=${finalSelectionKeyReason(error)}`);
+      return failAndClean(`正式複審的完整最後回覆無法與 root 紀錄及 stdout 唯一對應（final-selection=${finalSelectionFailureCode(error)}）；先核合法外層證據及合成驗證，依有效裁示確認後續程序，勿直接重跑模型`);
     }
     let diskLedger;
     try {
