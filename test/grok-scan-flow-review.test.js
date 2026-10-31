@@ -16,6 +16,87 @@ after(cleanupTempRoots);
 const hash = (/** @type {string | Buffer} */ value) => createHash('sha256').update(value).digest('hex');
 const identity = { project: 'owner/repo', change: '17', reviewer: 'Grok', source: 'Grok CLI', round: 1 };
 
+const keyDiagnosticSentinel = 'SYNTHETIC-RUNNER-KEY-REASON-PRIVATE';
+const keyDiagnosticRow = { type: 'assistant', content: 'FAKE-REPLY', model_id: 'grok-4.7', reasoning_effort: 'xhigh' };
+for (const [name, raw, reason] of [
+  ['原始同名', '{"content":"' + keyDiagnosticSentinel + '",' + JSON.stringify(keyDiagnosticRow).slice(1), 'DUPLICATE_MEMBER'],
+  ['解碼同名', '{"\\u0063ontent":"' + keyDiagnosticSentinel + '",' + JSON.stringify(keyDiagnosticRow).slice(1), 'DUPLICATE_MEMBER'],
+  ['巢狀物件', JSON.stringify({ ...keyDiagnosticRow, content: { [keyDiagnosticSentinel]: keyDiagnosticSentinel } }), 'NESTED_VALUE'],
+  ['巢狀陣列', JSON.stringify({ ...keyDiagnosticRow, content: [keyDiagnosticSentinel] }), 'NESTED_VALUE'],
+  ['未知純量', JSON.stringify({ ...keyDiagnosticRow, [keyDiagnosticSentinel]: keyDiagnosticSentinel }), 'KEY_SET_MISMATCH'],
+  ['缺核心', JSON.stringify({ type: 'assistant', model_id: 'grok-4.7', reasoning_effort: 'xhigh' }), 'KEY_SET_MISMATCH'],
+]) test(`真 runner 鍵診斷只在完成後拒收並清理：${name}`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  let candidate = '', candidateExisted = false;
+  const { result, iso, box, logs, observed } = await reviewRun({
+    shell: `printf '%s\\n' '${raw}' > "$ws/fake-session/chat_history.jsonl"`,
+    onLog: line => {
+      if (!line.startsWith('\n配方聲明可抄：')) return;
+      candidate = line.match(/結果包=(.*?)（launch.json/u)?.[1] ?? '';
+      candidateExisted = existsSync(join(candidate, 'launch.json'));
+    },
+  });
+  assert.ok(observed, '本題必須實際建立材料並啟動合成 CLI');
+  assert.ok(candidateExisted && candidate, '清理考題須先證明本題候選包確實建立');
+  const completed = logs.findIndex(line => /^複審結束：.*；grok 退出碼 0；回覆 10 UTF-16 碼元；程序群組已收束$/u.test(line));
+  assert.ok(completed >= 0, '本題 CLI 須完整成功退出後才量拒收');
+  const diagnostics = logs.filter(line => line.startsWith('final-key-reason='));
+  assert.deepEqual(diagnostics, ['final-key-reason=' + reason], '須由真 runner 印出且只印固定原因');
+  const diagnosed = logs.indexOf(diagnostics[0]);
+  const refused = logs.findIndex(line => line.startsWith('⛔ ') && line.includes('final-selection=FINAL_KEYS'));
+  assert.ok(diagnosed > completed && refused > diagnosed, '診斷必須位於 CLI 完成後及原本拒收路徑內');
+  assert.equal(result.code, 2); assert.equal(result.review, undefined);
+  assert.ok(!logs.join('\n').includes(keyDiagnosticSentinel));
+  assert.ok(!JSON.stringify(result).includes(keyDiagnosticSentinel));
+  assert.ok(!logs.some(line => line.startsWith('final-root-structure=')));
+  assert.deepEqual(readdirSync(iso.resultsRoot), []);
+  assert.equal(existsSync(candidate), false); assert.equal(existsSync(box), false);
+});
+
+for (const [name, options, reason] of [
+  ['非零退出', { fake: { status: 1 } }, 'grok 退出碼 1'],
+  ['缺末列', { shell: 'rm "$ws/fake-session/chat_history.jsonl"' }, 'final-selection=TRANSCRIPT_MISSING'],
+  ['多 root', { shell: 'mkdir "$ws/00000000-0000-4000-8000-000000000002"; cp "$ws/fake-session/chat_history.jsonl" "$ws/00000000-0000-4000-8000-000000000002/chat_history.jsonl"' }, 'final-selection=ROOT_CARDINALITY'],
+  ['重複原始鍵', { shell: `printf '%s\\n' '{"model_id":"grok-4.7","type":"assistant","content":"FAKE-REPLY","model_id":"grok-4.7","reasoning_effort":"xhigh"}' > "$ws/fake-session/chat_history.jsonl"` }, 'final-selection=FINAL_KEYS'],
+  ['工具欄', { shell: `printf '%s\\n' '{"type":"assistant","content":"FAKE-REPLY","model_id":"grok-4.7","reasoning_effort":"xhigh","tool_calls":[]}' > "$ws/fake-session/chat_history.jsonl"` }, 'final-selection=FINAL_KEYS'],
+]) test(`四鍵真 runner 拒收且不留正式結果：${name}`, { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const { result, iso, box, logs, observed } = await reviewRun({ ...options, fake: { ...options.fake, finalShape: 'four' } });
+  assert.ok(observed, '本題啟動前材料必須已建立');
+  assert.equal(result.code, 2, result.summary.join('\n'));
+  assert.ok(logs.some(line => line.includes(reason)), logs.join('\n'));
+  assert.equal(result.review, undefined); assert.deepEqual(readdirSync(iso.resultsRoot), []);
+  assert.equal(existsSync(box), false);
+});
+
+test('四鍵真 runner 拒收且不留正式結果：錯工作區', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const reply = 'FAKE-REPLY';
+  const { result, iso, box, logs, observed } = await reviewRun({ fake: { finalShape: 'four', reply },
+    shell: 'mv "$ws" "$GROK_HOME/sessions/%2Fother%2Fsrc"; ws="$GROK_HOME/sessions/%2Fother%2Fsrc"' });
+  assert.ok(observed, '本題啟動前材料必須已建立');
+  const endings = logs.map((line, index) => ({ line, index })).filter(entry => entry.line.startsWith('複審結束：'));
+  assert.equal(endings.length, 1, '本題須有且只有一筆 CLI 完成紀錄');
+  const completed = endings[0].line.match(new RegExp(`^複審結束：(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z)；grok 退出碼 0；回覆 ${reply.length} UTF-16 碼元；程序群組已收束$`, 'u'));
+  assert.ok(completed, '本題 CLI 須正常完成、產生固定合成回覆並收束群組');
+  assert.equal(new Date(completed[1]).toISOString(), completed[1]);
+  assert.equal(result.code, 2, result.summary.join('\n'));
+  const refusal = logs.findIndex(line => line.startsWith('⛔ 驗屍：找不到這次的 session 日誌（找不到 workspace 日誌目錄：'));
+  assert.ok(refusal > endings[0].index, '本題須在 CLI 完成後由精確 workspace 日誌檢查拒收');
+  assert.ok(!logs.some(line => line.includes('final-selection=')), '上游拒收後不能進入末列選取診斷');
+  assert.equal(result.review, undefined); assert.deepEqual(readdirSync(iso.resultsRoot), []);
+  assert.ok(box, '本題須實際建立隔離盒'); assert.equal(existsSync(box), false);
+});
+
+test('合法四鍵不能蓋過全 stdout 的 DLP，拒收不回聲且先於 selector', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
+  const live = 'SYNTHETIC-FOUR-FINAL-LIVE-SENTINEL';
+  const { result, iso, logs, observed, box } = await reviewRun({ fake: { finalShape: 'four' }, shell: `printf '%s' '${live}'`, deps: { liveSecret: live } });
+  assert.ok(observed); assert.equal(result.code, 1, result.summary.join('\n'));
+  assert.equal(result.review, undefined); assert.equal(existsSync(box), false);
+  assert.ok(!logs.some(line => line.includes('final-selection=') || line.includes(live)));
+  assert.equal(readdirSync(iso.resultsRoot).length, 1);
+  const directory = join(iso.resultsRoot, readdirSync(iso.resultsRoot)[0]);
+  assert.deepEqual(readdirSync(directory).sort(), ['incident.json', 'launch.json']);
+  assert.ok(!readFileSync(join(directory, 'incident.json'), 'utf8').includes(live));
+});
+
 test('複審資格採精確的非空全員集合，不按陌生名稱推級別', () => {
   for (const models of [[], undefined, 'grok-4.7', [null], [61713], ['grok-4.5'], ['grok-4.8'], ['grok-4.7', 'grok-4.5'], ['grok-4.7', 'grok-4.7-other'], ['toString']]) {
     assert.equal(reviewModelsQualified(models), false);
@@ -341,7 +422,7 @@ for (const [label, options] of [
 
 test('完整 root final 與 CLI 進度分列保存，Unicode 範圍使用 UTF-8 bytes', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
   const prefix = '進度🙂\n';
-  const { result, iso } = await reviewRun({ shell: `printf '%s' '${prefix}'` });
+  const { result, iso, logs } = await reviewRun({ shell: `printf '%s' '${prefix}'` });
   assert.equal(result.code, 0, result.summary.join('\n'));
   assert.ok(result.review);
   assert.equal(result.review.reply, 'FAKE-REPLY');
@@ -350,6 +431,7 @@ test('完整 root final 與 CLI 進度分列保存，Unicode 範圍使用 UTF-8 
   assert.equal(result.review.selection.byteStart, Buffer.byteLength(prefix));
   const saved = JSON.parse(readFileSync(join(iso.resultsRoot, readdirSync(iso.resultsRoot)[0], 'review-result.json'), 'utf8'));
   assert.deepEqual(saved, result.review);
+  assert.ok(!logs.some(line => line.startsWith('final-key-reason=')));
 });
 
 for (const [name, code, shell] of [
@@ -387,7 +469,7 @@ for (const [name, options] of [
   const shell = (options.shell ?? '') + '\nrm "$ws/fake-session/chat_history.jsonl"';
   const { result, iso, logs, box } = await reviewRun({ ...options, shell });
   assert.equal(result.code, 2);
-  assert.ok(!logs.some(line => line.includes('final-selection=') || line.includes('final-root-structure=')));
+  assert.ok(!logs.some(line => line.includes('final-selection=') || line.includes('final-root-structure=') || line.includes('final-key-reason=')));
   assert.equal(result.review, undefined);
   assert.deepEqual(readdirSync(iso.resultsRoot), []);
   assert.equal(existsSync(box), false);
@@ -396,7 +478,7 @@ for (const [name, options] of [
 test('DLP 拒收時不以 selector 診斷留下原文或正式結果', { skip: !SANDBOX_OK && SKIP_AFTER_CANARY }, async () => {
   const { result, iso, logs } = await reviewRun({ shell: 'printf "%s" "fake-owner@example.test"; rm "$ws/fake-session/chat_history.jsonl"' });
   assert.equal(result.code, 1);
-  assert.ok(!logs.some(line => line.includes('final-selection=') || line.includes('final-root-structure=')));
+  assert.ok(!logs.some(line => line.includes('final-selection=') || line.includes('final-root-structure=') || line.includes('final-key-reason=')));
   const directory = join(iso.resultsRoot, readdirSync(iso.resultsRoot)[0]);
   assert.deepEqual(readdirSync(directory), ['incident.json', 'launch.json']);
   assert.ok(!readFileSync(join(directory, 'incident.json'), 'utf8').includes('fake-owner@example.test'));
@@ -415,6 +497,7 @@ for (const [name, shell, expected] of [
   assert.equal(projected.length, 1);
   assert.deepEqual(JSON.parse(projected[0].slice('final-root-structure='.length)), expected);
   assert.ok(!projected[0].includes('SYNTHETIC')); assert.ok(!projected[0].includes(box));
+  assert.ok(!logs.some(line => line.startsWith('final-key-reason=')));
   assert.deepEqual(readdirSync(iso.resultsRoot), []); assert.equal(existsSync(box), false);
 });
 
@@ -465,6 +548,7 @@ for (const channel of ['stdout', 'stderr']) {
     assert.equal(result.review, undefined, flowHint);
     assert.ok(result.summary.some(line => line.includes('任一通道超過 8388608 UTF-16 碼元')), flowHint);
     assert.ok(logs.some(line => line.includes('grok 退出碼 0')), flowHint);
+    assert.ok(!logs.some(line => line.startsWith('final-key-reason=')), flowHint);
     assert.deepEqual(readdirSync(iso.resultsRoot), [], flowHint);
     assert.equal(existsSync(box), false, flowHint);
     assert.ok(!logs.join('\n').includes('q'.repeat(200)), ('失敗摘要不帶可控輸出') + '；' + flowHint);

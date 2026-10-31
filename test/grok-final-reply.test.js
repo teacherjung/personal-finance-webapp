@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import * as finalSelector from '../scripts/grok-final-reply.js';
 import { finalSelectionFailureCode, finalSelectionRootDiagnostic, rootCardinalityProjection, selectFinalReply, verifyFinalSelection } from '../scripts/grok-final-reply.js';
 
 const workspace = '/synthetic/box/src';
@@ -10,10 +11,124 @@ const session = '00000000-0000-4000-8000-000000000001';
 const path = encodeURIComponent(workspace) + '/' + session + '/chat_history.jsonl';
 const final = '🤖 合成完整回覆🙂\n未貼\n';
 const row = (content = final) => ({ type: 'assistant', content, model_id: 'grok-4.7', model_fingerprint: 'synthetic', reasoning_effort: 'xhigh' });
+const fourRow = (content = final) => { const r = row(content); delete r.model_fingerprint; return r; };
 const bytes = (rows = [row()]) => Buffer.from(rows.map(r => JSON.stringify(r)).join('\n') + '\n');
 const files = () => new Map([[path, bytes()]]);
 const select = (f = files(), out = final, version = '1.0.46') => selectFinalReply(f, workspace, out, version);
 const hash = value => createHash('sha256').update(value).digest('hex');
+
+const diagnosticSentinel = 'SYNTHETIC-KEY-REASON-PRIVATE';
+const diagnosticRow = { type: 'assistant', content: diagnosticSentinel, model_id: 'grok-4.7', reasoning_effort: 'xhigh' };
+for (const [name, raw, reason] of [
+  ['原始同名', '{"content":"earlier",' + JSON.stringify(diagnosticRow).slice(1), 'DUPLICATE_MEMBER'],
+  ['解碼同名', '{"\\u0063ontent":"earlier",' + JSON.stringify(diagnosticRow).slice(1), 'DUPLICATE_MEMBER'],
+  ['巢狀物件', JSON.stringify({ ...diagnosticRow, content: { [diagnosticSentinel]: diagnosticSentinel } }), 'NESTED_VALUE'],
+  ['巢狀陣列', JSON.stringify({ ...diagnosticRow, content: [diagnosticSentinel] }), 'NESTED_VALUE'],
+  ['未知純量', JSON.stringify({ ...diagnosticRow, [diagnosticSentinel]: diagnosticSentinel }), 'KEY_SET_MISMATCH'],
+  ...Object.keys(diagnosticRow).map(key => { const missing = { ...diagnosticRow }; delete missing[key]; return ['缺核心 ' + key, JSON.stringify(missing), 'KEY_SET_MISMATCH']; }),
+  ['巢狀先於同名', '{"content":[],"content":"later"}', 'NESTED_VALUE'],
+  ['同名先於巢狀', '{"content":"earlier","content":[]}', 'DUPLICATE_MEMBER'],
+]) test(`鍵拒收診斷保留首次原因且不回聲：${name}`, () => {
+  assert.equal(typeof finalSelector.finalSelectionKeyReason, 'function', '須提供私有品牌的固定鍵拒收原因');
+  assert.throws(() => select(new Map([[path, Buffer.from(raw + '\n')]]), diagnosticSentinel), error => {
+    assert.equal(finalSelectionFailureCode(error), 'FINAL_KEYS');
+    assert.equal(finalSelector.finalSelectionKeyReason(error), reason);
+    assert.equal(finalSelectionRootDiagnostic(error), 'UNKNOWN');
+    assert.equal(error.message, 'GROK_FINAL_SELECTION_INVALID');
+    assert.deepEqual(Object.keys(error), []); assert.equal(error.cause, undefined);
+    assert.ok(!String(error).includes(diagnosticSentinel));
+    assert.ok(!JSON.stringify([error, finalSelector.finalSelectionKeyReason(error)]).includes(diagnosticSentinel));
+    return true;
+  });
+});
+
+test('鍵診斷私有品牌不讀外來錯誤、Proxy 或 getter，包裝保留拒收與 UNKNOWN', () => {
+  assert.equal(typeof finalSelector.finalSelectionKeyReason, 'function', '須提供私有品牌的固定鍵拒收原因');
+  let reads = 0;
+  const read = () => { reads++; throw new Error(diagnosticSentinel); };
+  const foreign = new Proxy({}, { get: read, ownKeys: read, getOwnPropertyDescriptor: read });
+  const getter = Object.defineProperty({}, 'keyReason', { get: read });
+  const revoked = Proxy.revocable({}, {}); revoked.revoke();
+  for (const error of [foreign, getter, revoked.proxy, new Error(diagnosticSentinel), null, undefined, 17,
+    diagnosticSentinel, { code: 'FINAL_KEYS', keyReason: 'DUPLICATE_MEMBER' }, { keyReason: diagnosticSentinel }]) {
+    let projected;
+    assert.doesNotThrow(() => { projected = finalSelector.finalSelectionKeyReason(error); }, '外來錯誤不可觸發公開屬性讀取');
+    assert.equal(projected, 'UNKNOWN');
+  }
+  assert.equal(reads, 0);
+  const f = files(); f.keys = () => { throw foreign; };
+  assert.throws(() => select(f), error => {
+    assert.equal(finalSelectionFailureCode(error), 'UNKNOWN');
+    assert.equal(finalSelector.finalSelectionKeyReason(error), 'UNKNOWN');
+    assert.equal(error.message, 'GROK_FINAL_SELECTION_INVALID'); return true;
+  });
+  assert.equal(reads, 0);
+  assert.throws(() => select(new Map()), error => {
+    assert.equal(finalSelector.finalSelectionKeyReason(error), 'UNKNOWN');
+    assert.equal(finalSelectionFailureCode(error), 'ROOT_CARDINALITY'); return true;
+  });
+  assert.throws(() => select(new Map([[path, Buffer.from('{"content":[]}\n')]])), error => {
+    for (const key of ['keyReason', 'code', 'message', 'stack']) Object.defineProperty(error, key, { get: read });
+    assert.equal(finalSelector.finalSelectionKeyReason(error), 'NESTED_VALUE');
+    assert.equal(finalSelectionFailureCode(error), 'FINAL_KEYS');
+    assert.equal(reads, 0); return true;
+  });
+});
+
+test('固定四鍵末列保存原文、Unicode byte range 與無補值原始證據', () => {
+  const content = '四鍵🙂：逗號,冒號:括號{}[]、"content":"不是欄位"與反斜線\\\n未貼\n';
+  const raw = Buffer.from(JSON.stringify({ reasoning_effort: 'xhigh', content, type: 'assistant', model_id: 'grok-4.7' }) + '\n');
+  const f = new Map([[path, raw]]), prefix = '進度🙂\n';
+  const got = select(f, prefix + content + '\n');
+  assert.equal(got.reply, content); assert.equal(got.stdout, prefix + content + '\n');
+  assert.equal(got.selection.byteStart, Buffer.byteLength(prefix));
+  assert.equal(got.selection.byteEnd, Buffer.byteLength(prefix + content));
+  assert.equal(got.selection.transcriptSha256, hash(raw));
+  assert.equal(got.replySha256, hash(content)); assert.equal(got.stdoutSha256, hash(got.stdout));
+  assert.equal(verifyFinalSelection(got), got);
+  assert.deepEqual([...f], [[path, raw]]);
+  assert.equal(Object.hasOwn(JSON.parse(raw.toString()), 'model_fingerprint'), false);
+  assert.equal(Object.hasOwn(got, 'model_fingerprint'), false);
+});
+
+for (const [name, changes, version] of [
+  ['別的版本', {}, '1.0.47'], ['未知版本', {}, 'unknown'],
+  ['別的模型', { model_id: 'grok-4.6' }], ['模型別名', { model_id: 'grok-4.7-build' }],
+  ['不同推理', { reasoning_effort: 'high' }], ['非 assistant', { type: 'user' }],
+  ['空模型', { model_id: '' }], ['空推理', { reasoning_effort: ' ' }],
+  ['額外欄', { extra: 'value' }], ['空工具欄', { tool_calls: [] }],
+  ['巢狀正文', { content: { text: final } }], ['空正文', { content: '' }],
+  ['孤立 surrogate', { content: '\ud800' }],
+]) test(`四鍵封閉契約拒收：${name}`, () => {
+  const f = new Map([[path, bytes([{ ...fourRow(), ...changes }])]]);
+  assert.throws(() => select(f, final, version ?? '1.0.46'), /GROK_FINAL_SELECTION_INVALID/);
+});
+
+for (const key of ['model_id', 'reasoning_effort', 'model_fingerprint']) {
+  for (const value of ['', '  ', null, 17, [], {}]) test(`五鍵 metadata 非空字串：${key}=${JSON.stringify(value)}`, () => {
+    const f = new Map([[path, bytes([{ ...row(), [key]: value }])]]);
+    assert.throws(() => select(f), /GROK_FINAL_SELECTION_INVALID/);
+  });
+}
+
+for (const key of ['content', 'model_id', 'reasoning_effort', 'type', 'model_fingerprint']) {
+  for (const escaped of [false, true]) test(`原始末列拒重複解碼鍵：${key}／${escaped ? 'escape' : 'literal'}`, () => {
+    const keyToken = escaped ? '"\\u' + key.charCodeAt(0).toString(16).padStart(4, '0') + key.slice(1) + '"' : JSON.stringify(key);
+    const raw = '{' + keyToken + ':"SYNTHETIC-REPLACED-VALUE",' + JSON.stringify(row()).slice(1) + '\n';
+    assert.equal(JSON.parse(raw)[key], row()[key], '反例須證明一般 JSON.parse 會蓋掉較早值');
+    assert.throws(() => select(new Map([[path, Buffer.from(raw)]])), error => {
+      assert.equal(finalSelectionFailureCode(error), 'FINAL_KEYS');
+      assert.equal(finalSelector.finalSelectionKeyReason(error), 'DUPLICATE_MEMBER');
+      assert.equal(error.message, 'GROK_FINAL_SELECTION_INVALID'); assert.deepEqual(Object.keys(error), []); return true;
+    });
+  });
+}
+
+test('合法 Unicode escape 鍵可解碼但正文的鍵樣字串不當 member', () => {
+  const content = '"content": "x", "content": "y"\\🙂[]{}';
+  const raw = JSON.stringify(fourRow(content)).replace('"content":', '"\\u0063ontent":');
+  assert.equal(select(new Map([[path, Buffer.from(raw + '\n')]]), content).reply, content);
+});
 
 test('最後 root assistant 的完整原字串、stdout 與 Unicode byte range 分列保存', () => {
   const prefix = '進度🙂\n', stdout = prefix + final + '\n';
@@ -61,7 +176,7 @@ for (const [name, change] of [
   ['tool_calls 即使空陣列', f => f.set(path, bytes([{ ...row(), tool_calls: [] }]))],
   ['assistant reasoning 欄不可混入', f => f.set(path, bytes([{ ...row(), reasoning: final }]))],
   ['未知完成欄', f => f.set(path, bytes([{ ...row(), complete: false }]))],
-  ['缺固定 metadata', f => { const r = row(); delete r.model_fingerprint; f.set(path, bytes([r])); }],
+  ...['model_id', 'reasoning_effort', 'content'].map(key => [`缺核心欄 ${key}`, f => { const r = row(); delete r[key]; f.set(path, bytes([r])); }]),
   ['非字串 metadata', f => f.set(path, bytes([{ ...row(), model_fingerprint: null }]))],
   ['content 陣列', f => f.set(path, bytes([{ ...row(), content: [final] }]))],
   ['content 空', f => f.set(path, bytes([row('')]))],

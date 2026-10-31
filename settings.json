@@ -21,7 +21,7 @@
    "account": "teacherjung"
   },
   {
-   "role": "本工作線技術裁示者（GPT‑6.1 Sol）",
+   "role": "本工作線技術裁示者（GPT‑6.1 Sol）；#748 正式複審另由未參與實作及本支技術裁示的獨立場次擔任",
    "id": "Sol",
    "account": "teacherjung"
   },
@@ -1025,6 +1025,19 @@
   }
  },
  "reviewers": [
+  {
+   "participant": "Sol",
+   "strongest": "gpt-6.1-sol",
+   "second": "未設定",
+   "maxEffort": "xhigh",
+   "autoMode": "不使用自動模式",
+   "source": "codex CLI",
+   "launch": "僅 #748 依本人留言 6538582075 指派未參與實作及本支技術裁示的獨立正式主審；送審產生器 node tools/review-launch.js <編號> --reviewer Sol 依本列印出固定模型與推理的命令。其他支仍依各自分工，#747 與預設 Grok 不變。",
+   "command": "codex exec -m {model} -c model_reasoning_effort='\"{effort}\"' -c approval_policy='\"never\"' -s workspace-write -c sandbox_workspace_write.network_access=true -C {reviewTree} -o {outFile} - < {promptFile}",
+   "machine": "approval_policy＝never 禁止申請提權；-o 收最後回覆，外殼 --post 核兩棵樹乾淨、版本、角色、來源及固定小標後代貼",
+   "promptOnly": "workspace-write 執行期間可寫審查樹與暫存區，唯讀靠標準提示與審後驗樹；完整正文、實質必驗項與獨立資格須另核原生紀錄，登記及退出0不等於正式審查通過",
+   "verified": "每場依原生證據核模型、推理、終態、完整結論及人員獨立性；本列不是本次實跑證據"
+  },
   {
    "participant": "Claude",
    "strongest": "claude-opus-5-5",

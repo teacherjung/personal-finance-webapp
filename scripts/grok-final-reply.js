@@ -17,6 +17,8 @@ const FAILURE_CODES = Object.freeze([
 // 不讀 Error 的公開屬性：外來 throw 可以偽造 code，或以 getter 夾帶原文。
 const failureCodes = new WeakMap();
 const rootDiagnostics = new WeakMap();
+const keyReasons = new WeakMap();
+const KEY_REASONS = Object.freeze(['DUPLICATE_MEMBER', 'NESTED_VALUE', 'KEY_SET_MISMATCH', 'UNKNOWN']);
 const CARDINALITIES = Object.freeze(['ZERO', 'ONE', 'MULTIPLE']);
 const ROOT_FIELDS = Object.freeze(['rootComponents', 'uuidComponents', 'exactUuidTranscripts',
   'directWorkspaceFilePresent', 'nonUuidNestedComponentPresent', 'otherWorkspaceTopComponentPresent', 'equivalentEncodedWorkspacePresent']);
@@ -71,11 +73,17 @@ export function finalSelectionFailureCode(error) {
   const code = error && typeof error === 'object' ? failureCodes.get(error) : undefined;
   return FAILURE_CODES.find(allowed => allowed === code) ?? 'UNKNOWN';
 }
-/** @param {string} code @param {RootDiagnostic | 'UNKNOWN'} [diagnostic] */
-function failure(code, diagnostic = 'UNKNOWN') {
+/** @param {unknown} error */
+export function finalSelectionKeyReason(error) {
+  const reason = error && typeof error === 'object' ? keyReasons.get(error) : undefined;
+  return KEY_REASONS.find(allowed => allowed === reason) ?? 'UNKNOWN';
+}
+/** @param {string} code @param {RootDiagnostic | 'UNKNOWN'} [diagnostic] @param {string} [keyReason] */
+function failure(code, diagnostic = 'UNKNOWN', keyReason = 'UNKNOWN') {
   const error = new Error('GROK_FINAL_SELECTION_INVALID');
   failureCodes.set(error, code);
   if (code === 'ROOT_CARDINALITY' && diagnostic !== 'UNKNOWN') rootDiagnostics.set(error, diagnostic);
+  if (code === 'FINAL_KEYS' && KEY_REASONS.includes(keyReason)) keyReasons.set(error, keyReason);
   return error;
 }
 /** @type {(ok: unknown, code: string) => asserts ok} */
@@ -84,6 +92,52 @@ const demand = (ok, code) => { if (!ok) throw failure(code); };
 function text(value, code) {
   demand(typeof value === 'string' && value.trim() !== '', code);
   demand(Buffer.from(value, 'utf8').toString('utf8') === value, code);
+}
+
+/** 先讀原始 member，避免 JSON.parse 覆蓋同名鍵後才檢查；不解析較早列的新語意。
+ * 字串逐 token 解碼，正文中的逗號或鍵樣文字不會被當作 member。
+ * @param {string} raw */
+function finalMemberKeys(raw) {
+  let at = 0;
+  const space = () => { while (at < raw.length && /[ \t\r\n]/u.test(raw[at])) at++; };
+  const parse = (/** @type {string} */ token) => {
+    try { return JSON.parse(token); } catch { throw failure('TRANSCRIPT_JSON'); }
+  };
+  const string = () => {
+    demand(raw[at] === '"', 'TRANSCRIPT_JSON');
+    const start = at++;
+    while (at < raw.length) {
+      if (raw[at] === '\\') { at += 2; continue; }
+      if (raw[at++] === '"') return parse(raw.slice(start, at));
+    }
+    throw failure('TRANSCRIPT_JSON');
+  };
+  space();
+  if (raw[at] !== '{') { parse(raw); throw failure('FINAL_OBJECT'); }
+  at++; space();
+  const keys = new Set();
+  if (raw[at] !== '}') {
+    while (true) {
+      const key = string();
+      if (keys.has(key)) throw failure('FINAL_KEYS', 'UNKNOWN', 'DUPLICATE_MEMBER');
+      keys.add(key);
+      space(); demand(raw[at++] === ':', 'TRANSCRIPT_JSON'); space();
+      if (raw[at] === '"') string();
+      else {
+        // 巢狀值不屬於末列契約；其餘 scalar 仍交既有欄位型別檢查拒收。
+        if (raw[at] === '{' || raw[at] === '[') throw failure('FINAL_KEYS', 'UNKNOWN', 'NESTED_VALUE');
+        const start = at;
+        while (at < raw.length && raw[at] !== ',' && raw[at] !== '}') at++;
+        parse(raw.slice(start, at));
+      }
+      space();
+      if (raw[at] !== ',') break;
+      at++; space();
+    }
+  }
+  demand(raw[at++] === '}', 'TRANSCRIPT_JSON'); space();
+  demand(at === raw.length, 'TRANSCRIPT_JSON');
+  return [...keys].sort().join(',');
 }
 
 /** @typedef {{schema:string, cliVersion:string, encoding:string, transcriptPath:string, transcriptSha256:string,
@@ -138,13 +192,19 @@ export function selectFinalReply(files, workspace, stdout, cliVersion) {
     const lines = decoded.slice(0, -1).split('\n');
     // 所有列須完整 JSON；除最後一列外只驗語法，不讀 reasoning／tool／較早訊息的內容。
     let rows;
-    try { rows = lines.map(line => JSON.parse(line)); }
+    try { rows = lines.slice(0, -1).map(line => JSON.parse(line)); }
     catch { throw failure('TRANSCRIPT_JSON'); }
-    const last = rows[rows.length - 1];
+    const lastRaw = lines[lines.length - 1], keys = finalMemberKeys(lastRaw);
+    let last;
+    try { last = JSON.parse(lastRaw); } catch { throw failure('TRANSCRIPT_JSON'); }
+    rows.push(last);
     demand(last && typeof last === 'object' && !Array.isArray(last), 'FINAL_OBJECT');
-    demand(Object.keys(last).sort().join(',') === 'content,model_fingerprint,model_id,reasoning_effort,type', 'FINAL_KEYS');
-    demand(last.type === 'assistant' && typeof last.model_id === 'string'
-      && typeof last.model_fingerprint === 'string' && typeof last.reasoning_effort === 'string', 'FINAL_ROLE_METADATA');
+    const four = keys === 'content,model_id,reasoning_effort,type';
+    if (!four && keys !== 'content,model_fingerprint,model_id,reasoning_effort,type') throw failure('FINAL_KEYS', 'UNKNOWN', 'KEY_SET_MISMATCH');
+    demand(last.type === 'assistant', 'FINAL_ROLE_METADATA');
+    text(last.model_id, 'FINAL_ROLE_METADATA'); text(last.reasoning_effort, 'FINAL_ROLE_METADATA');
+    if (four) demand(last.model_id === 'grok-4.7' && last.reasoning_effort === 'xhigh', 'FINAL_ROLE_METADATA');
+    else text(last.model_fingerprint, 'FINAL_ROLE_METADATA');
     const reply = last.content;
     text(reply, 'FINAL_CONTENT'); text(stdout, 'STDOUT_TEXT');
     const all = Buffer.from(stdout, 'utf8'), final = Buffer.from(reply, 'utf8');
@@ -154,7 +214,7 @@ export function selectFinalReply(files, workspace, stdout, cliVersion) {
       selection: { schema: 'grok-final-selection/v1', cliVersion, encoding: 'decoded-stdout-utf8',
         transcriptPath, transcriptSha256: hash(bytes), rowCount: rows.length, rowIndex: rows.length - 1,
         byteStart, byteEnd: byteStart + final.length, stdoutBytes: all.length, replyBytes: final.length } });
-  } catch (error) { throw failure(finalSelectionFailureCode(error), finalSelectionRootDiagnostic(error)); }
+  } catch (error) { throw failure(finalSelectionFailureCode(error), finalSelectionRootDiagnostic(error), finalSelectionKeyReason(error)); }
 }
 
 if (isMainModule(import.meta.url)) {

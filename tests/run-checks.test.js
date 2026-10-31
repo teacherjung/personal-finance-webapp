@@ -1325,8 +1325,9 @@ test('⑬既有狀態擋下時說壞在哪（登記不登記都一樣）：這�
       ['共用設定的 core.bare 是壞布林值', (p) => g(root, 'config', '--file', p.cfg, 'core.bare', 'banana'), /bad boolean config value 'banana' for 'core\.bare'/u],
       ['這棵樹自己的 config.worktree 的 core.bare 是壞布林值', (p, perTree) => g(root, 'config', '--file', perTree, 'core.bare', 'banana'), /bad boolean/u],
       ['這棵樹自己的 core.worktree 指到不存在的地方', (p, perTree) => g(root, 'config', '--file', perTree, 'core.worktree', `${nowhere}/zz`), /Invalid path/u],
-      ['.git 指標檔指到不存在的地方', (p) => fs.writeFileSync(path.join(p.wt, '.git'), `gitdir: ${nowhere}/.git/worktrees/wt\n`), /not a git repository/u],
-      ['這棵樹的 HEAD 是亂碼', (p) => fs.writeFileSync(path.join(p.main, '.git', 'worktrees', 'wt', 'HEAD'), 'garbage\n'), /not a git repository/u],
+      // Git 2.56 將壞 gitdir 的診斷細分；仍由下方逐字比對當次 Git 原話及拒收行為。
+      ['.git 指標檔指到不存在的地方', (p) => fs.writeFileSync(path.join(p.wt, '.git'), `gitdir: ${nowhere}/.git/worktrees/wt\n`), /(?:not a git repository|gitfile does not point to a valid repository)/u],
+      ['這棵樹的 HEAD 是亂碼', (p) => fs.writeFileSync(path.join(p.main, '.git', 'worktrees', 'wt', 'HEAD'), 'garbage\n'), /(?:not a git repository|gitfile does not point to a valid repository)/u],
     ];
     for (const [i, [why, breakIt, cause]] of shapes.entries()) {
       const p = makePair(g, root, `nr${i}`, { ext: true });
