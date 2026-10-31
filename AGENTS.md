@@ -137,7 +137,7 @@
 
 ## William 的常設指示
 
-- **2026-10-21 UTC**：本人：「本輪正式複審改用 Gemini（建議）」。[原話](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6308077455)。
+- **2026-10-24 UTC**：本人：「請確認Gemini是使用 Argon high來複審」。[完整授權與沿革](docs/gemini-argon-review-plan.md#授權原話)。
 
 收到跨 PR 都適用的指示時，收到的那一方當下寫進這一節。
 
