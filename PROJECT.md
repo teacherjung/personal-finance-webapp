@@ -100,6 +100,8 @@
 
 工具與流程的待辦（不排優先序；開工印待辦 `tools/backlog-touch.js` 只讀 `- ` 開頭的條目；每條＝一句話／放在哪裡／什麼情況下值得做）：
 
+- （#747 原生驗證，條件待辦）補齊 #747 原生驗證通道前提，核實觀測器終態保存疑點／放：本節，由 [#747 正式原文](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6557300314)及[完整技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6557485344)對帳本輪原件／觸發：取得合法可用通道及具體可重現證據，足以定位需要修改的檔案與行為；依[本人限定同意](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6558100911)僅登記，不認定產品缺陷，不啟動修補、瀏覽器或重審，不解除既有阻擋。
+
 - （原生掃描接線）上游前言受理修復 [套件 #121](https://github.com/teacherjung/ai-collab-kit/pull/121)與[理財 #731](https://github.com/teacherjung/personal-finance-webapp/pull/731)已合併；專案入口、用途證據及驗證由 [#736](https://github.com/teacherjung/personal-finance-webapp/pull/736)承接，完成與否依當版正式複審、真掃描及交付紀錄。舊停止與恢復條件、原件和有限核對保留；不把上游同步、預檢或正式複審當作已完成掃描。
 
 **#692 合併界線**：下列標記隨 #692 合併的文字與限定修法，依[本人單次免再複審指示](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6210098773)合併；最終版本未取得有效 Grok 通過。較早 [Grok r1](https://github.com/teacherjung/personal-finance-webapp/pull/692#issuecomment-6209127404)的需修改結論、原完整檢查失敗、未證根因與未結量測依原紀錄保留，不能據此推成以後免審。
