@@ -55,6 +55,8 @@
 
 ### 審查（RULES F1〜F10）
 
+- **本工作線技術代決（2026-11-02）**：依[本人委任節錄](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6573790643)，技術問題由實際 GPT-6.1 Sol／xhigh 決定，必要時諮詢 Grok／Gemini；沿用 `finance-backlog-20261019`，原話見 AGENTS.md 常設指示。#747 本次接線及條件式試行依[Sol 完整裁示](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6574109120)辦理，不再把同一技術選項交回本人；技術裁示場次不得充任本支獨立正式主審。本人保留事項、錢與真實資料界線、既有防護、正式關卡及其他停止指示不變。
+
 - **Sol 個案正式複審（#748 的個別授權）**：2026-10-31 UTC，[本人答覆](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6538582075)配[原題](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6532843447)，原話：「同意僅 #748 改由獨立 Sol 極高主審（建議）」。以下是操作化：先在專案自有設定合法登記，再由官方 `node tools/review-launch.js 748 --reviewer Sol --dir <本輪新資料夾>` 備審，使用未參與實作及本支技術裁示的新獨立 CLI 場次，固定 `gpt-6.1-sol`／`xhigh`、不開自動模式。歷史 Grok 結論、缺項及停止裁示完整保留，不改標頭冒充 Sol、不由技術代理充任正式主審。正式發審、全審、原生證據／完整正文核實、公開結論、F7、實作者獨立查證及合併關卡照舊；設定識別值只能讓官方入口認得角色，不能機械證明同名場次的獨立性。預設 Codex 實作／Grok 複審、掃描與 Gemini／Argon 的暫停不變；本條僅覆蓋下方通用 Grok 接法在 #748 的人選，#747 依下一條另行授權，不由本條延用。
 - **Sol 個案正式複審（#747 的個別授權）**：2026-11-01 UTC，[本人答覆](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6554723015)配[原題](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6542897619)，原話：「同意僅 #747 改由獨立 Sol 極高主審（建議）」。以下是操作化：先補專案自有登記，再由官方 `node tools/review-launch.js 747 --reviewer Sol --dir <本輪新資料夾>` 備審；以未參與 #747 實作或技術裁示的新獨立 CLI 場次，固定 `gpt-6.1-sol`／`xhigh`、不開自動模式，完成高風險全審。沿既有命令及安全方式，不改隔離／隱私保護、正式考題或任何閘；必要實跑仍無法完成就停止後續，不採計為正式通過。原 Grok 全文、缺項、停止裁示與失敗證據保留；改派或程序退出零不能單獨解除合併阻擋，仍須核原生身分／推理／終態、獨立資格、完整結論與實質必驗、公開對帳、F7、實作者獨立查證及全部合併關卡。本條只覆蓋下方通用 Grok 接法與 `docs/kit-review-sync-plan.md`「回復與續辦」對 #747 的舊接續人選，不改預設分工或其他支授權。依[本人讓道答覆](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6556889451)配[原題](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6554729897)，#737 僅暫關讓道、保留原件，由本理財續作線 Codex 於 #747 合併後重開原版草稿，仍停工、停掃；若 #747 提前停止，先回報並保留重開責任。這不啟動 Gemini／Argon 或任何掃描。
 - **套件的審查規定（2026-10-10 整批同步起）**：風險級別＝RULES D4 與 `node tools/risk-tier.js <編號>`；複審與掃描分級＝RULES F2、G1 與 `PROJECT-SETTINGS.md` 第十節；送審提示＝RULES F3 與 `templates/review-request.md`，可以用 `node tools/review-launch.js <編號> --reviewer <識別值> --dir <資料夾>` 產生；送審前跑 `node tools/stale-text.js`（RULES K5）；複審者的模型、推理與怎麼起＝RULES F11 與 `settings.json` 的 reviewers（`PROJECT-SETTINGS.md` 第十一節）；快速通道＝RULES F12；擁有者通道的本專案值：William 當複審者，結論標頭的角色寫 `William`、來源字串寫 `William 本人`；AI 通道的範圍由 `settings.json` 的 `fastLane.ai` 登記，本專案維持未登記。口頭指定過的模型與推理（含 9/29、10/1 兩次）一律由設定第十一節與 C28 取代。下面兩條（觸發與指令列、送審提示詞）跟它們不一致的，以它們為準；複審必驗清單的項號以同步進來的 `templates/review-fixed-dimensions.md` 為準。
@@ -183,3 +185,12 @@
 - **複審後掃的通用紀錄**（RULES G1〜G4）：第一次有效正式通過後、轉正式前，依本檔[Gemini 條件式原生掃描](#gemini-條件式原生掃描)核本場授權條件、當版通過及官方時序，在 PR 說明的「### 複審後掃」留真實結果與來源。沒有執行時依 G3 記本場原因；表定不掃按分級理由記錄，不預填取消、無登記或額度狀態。歷史掃描紀錄保留；Grok 正式複審仍走本節隔離入口，不以複審代替掃描，也不恢復舊 Grok 掃描入口。
 - **主目錄禁區（隱私線，任何模式無例外）**：不得在主目錄工作——`data/store.db` 有真實餘額、IB flexToken、證件號，Grok 讀到的內容會送往 xAI 伺服器。現行條款下 Grok 本來就**不進任何樹**（上一條，材料制）；本條是兜底鐵線——連「在主目錄啟動它的 CLI」都算違規。
 - **全域段落一體適用＋先規矩後開門**：錢的絕對邊界、鐵則、協作唯一不變量寫明「適用所有 AI」，Grok 含在內。要讓 Grok 承接本段以外的任何工作＝先在本段補上角色與邊界、William 拍板，才開門。
+
+### 鐵則 12 編號沿革
+
+此段保留共同入口鐵則12的編號沿革；規範仍在 [AGENTS.md](../AGENTS.md)。
+
+⚠️ **為什麼獨立成一條**（William 2026-09-08 裁，原話逐字「另外，把第 7 條剩下的那半條獨立成一條新鐵則
+（給它自己的編號），第 7 就變成純路牌（指路）」，落點＝https://github.com/teacherjung/personal-finance-webapp/pull/584#issuecomment-5581991626 ）：
+它原本擠在鐵則 7 那個**空樁**的後半，而樁的開頭寫著「已改列下方…」——讀的人很容易以為整條都搬走了。
+給它自己的編號之後，第 7 條變成純路牌，這一條也不再被路牌的外觀淹掉。

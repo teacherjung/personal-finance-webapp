@@ -129,13 +129,12 @@
     「懂了才不會把正常數字當算錯」的概念**必須在網頁上就地白話解釋**——用 `.info-link`＋`openInfo`
     或未來任何等效機制（機制與樣式可實驗，**解釋本身不可省**）；文案 Claude 起草、William 審改。
 
-    ⚠️ **為什麼獨立成一條**（William 2026-09-08 裁，原話逐字「另外，把第 7 條剩下的那半條獨立成一條新鐵則
-    （給它自己的編號），第 7 就變成純路牌（指路）」，落點＝https://github.com/teacherjung/personal-finance-webapp/pull/584#issuecomment-5581991626 ）：
-    它原本擠在鐵則 7 那個**空樁**的後半，而樁的開頭寫著「已改列下方…」——讀的人很容易以為整條都搬走了。
-    給它自己的編號之後，第 7 條變成純路牌，這一條也不再被路牌的外觀淹掉。
+    編號沿革與原話見[協作附則](docs/project-collaboration.md#鐵則-12-編號沿革)。
     ⚠️ **它不隨「UI 現行慣例」那一節放寬**：那一節是可以偏離的預設值，這一條是鐵則（見該節第 5 點）。
 
 ## William 的常設指示
+
+- **技術代決｜2026-11-02 UTC**：本人原話節錄：「能不能有問題都請GPT 6.1 Sol或是問Grok或Gemini，再請GPT 6.1 Sol替我決定」。[來源](https://github.com/teacherjung/personal-finance-webapp/pull/747#issuecomment-6573790643)。
 
 - **2026-10-21 UTC**：本人：「本輪正式複審改用 Gemini（建議）」。[原話](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6308077455)。
 
