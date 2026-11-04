@@ -24,6 +24,10 @@
 
 ## 待辦（依優先序；已完結主線的結案紀錄在[完工紀錄](docs/archive/project-completion-log.md)）
 
+- **未結事項現況正本**：[理財未結事項清單](docs/backlog-status.md)。以 FIN 編號追蹤優先工作、條件候選、欠來源或產品決定、停線及封存事項；功能候選清單另列，不與已收件事項相加。
+- **既有沿革的讀法**：本節下方保留原收件、有限交付及觸發條件；其中「承接」「尚待程序」等字是當時記錄，現況按上方清單逐項對帳。既有停止與本人保留事項不因整理解除。
+
+
 - **本輪範圍（2026-10-20 更新）**：本人要求完成所有後端待辦；[總目標原話](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6297608626)與[簡單 CLI 補充](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6297698527)逐字正本在 AGENTS.md。依[實際 Sol 範圍裁示](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6297844896)，市場階段交付後先修 GS-D04，再有限核對 GS-D02；既有有限保存交付不重開，未驗的外部寫入／完整並行不冒稱全部安全。前端隨使用需求處理，手機與 HOSTED 保持停止；缺來源、本人判斷或其他擁有線的項目保留前提，不為清單歸零捏造修法。
   - **掃描承接**：本人新的條件式 CLI 切換授權及原話保留。依[簡化裁示](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6297846120)與[上游承接補正](https://github.com/teacherjung/personal-finance-webapp/pull/728#issuecomment-6298038910)，採最小必要入口；具體上游前言受理缺陷已觸發[同步前停止條件](https://github.com/teacherjung/personal-finance-webapp/pull/730#issuecomment-6298590535)，上游修復與理財同步已由套件 #121、理財 #731 完成，原生專案入口由 #736 承接。後續責任集中在下方「原生掃描接線」條；正式 Grok 複審不計作掃描。
   - **後端前提清單**：銀行真實版型／帳戶身分、逐月逐檔股息與期末部位等缺來源項等待可靠輸入；靜態加密／異地保存屬未定架構，不自動新增服務；套件共用 D1 長輸出缺口由套件擁有線處理，理財以檔案輸出保存完整結果。舊 archive／attributes 與 GIT 環境缺口須在重用相關舊路徑前修，新的入口依實際材料接法核對；完整執行身分、平台量測及原生安裝未驗項保留，不能由磁碟帳或考題代替。各項作用路徑、觸發與明示停止的 LOCAL PDF 等界線見上列完整裁示，完成條件是逐項有處置或具體前提，不宣稱技術債歸零。
