@@ -1,18 +1,18 @@
 # 理財未結事項現況（2026-11-04）
 
-初始盤點基準為 [#748][pr748] 合併後主幹 `484e92b1dd83b8e943562433e609d0997cfda78a`，對照 [PROJECT.md][p] 及近期 PR 的明確交付與待辦。**初盤 50＋新 minimatch 1＋獨立覆核補回原保存前提 1＝52**：優先工作（含待交付）**1**、條件候選／技術未驗 **19**、欠來源／產品決定／功能前提 **15**、停線／封存／其他擁有線 **17**。
+初始盤點基準為 [#748][pr748] 合併後主幹 `484e92b1dd83b8e943562433e609d0997cfda78a`，對照 [PROJECT.md][p] 及近期 PR 的明確交付與待辦。**初盤 50＋新 minimatch 1＋獨立覆核補回原保存前提 1＝52**：優先工作（含待交付）**2**、條件候選／技術未驗 **18**、欠來源／產品決定／功能前提 **15**、停線／封存／其他擁有線 **17**。
 
 一束以可追溯的目的與完成條件計算，重複記載只算一次；GS-F04 依未交付入口拆分。52 包含候選與未驗責任，不能稱為 52 個已證缺陷或 52 支已准開工的 PR。**功能候選清單的 124 列是不同集合，不與此處相加。**
 
 #747 繼續封存，#737 保持關閉與原稿保全；手機、HOSTED、Gemini／Argon、掃描及他線停止安排保持，不因本表恢復。真帳本／憑證、交易與資金工具、受限私有原件及原圖／完整 Console 的用途授權，依共同入口與既有個案界線辦理。技術裁示交實際 GPT-6.1 Sol／xhigh；未完成的正式審查、本人保留事項與合併／驗收條件不因整理清單解除。
 
-## 優先工作（1；待交付）
+## 優先工作（2；含待交付）
 
 - **FIN-001｜qs 安全通報修補的本機交付**。位置：package.json 的 qs override、package-lock.json 與既有本機更新入口。新鎖檔的 CI 安裝與實際檢查、Grok r1、F7 及第2趟完整合併閘已通過，#749 已合併。首次因仍為草稿被拒的紀錄與 Sol 程序續裁保留。B級本機安裝、重啟及核心流程仍須依實際操作分開核收；既有不重裝限制不由技術代理解除，安裝同意與實際結果見[本次本人題](https://github.com/teacherjung/personal-finance-webapp/pull/749#issuecomment-6626768319)。未完成的本機交付保留未結，不將遠端合併寫成本機已生效。來源：[#749][pr749]；[既有優先裁示][qs-sol]。
 
-## 條件候選與技術未驗（19）
+- **FIN-002｜設定管理入口開窗取得所有權後同步拋錯的直接行為題**。位置：待新增 test/settings-manager-open-error.test.js 與 test/helpers/settings-manager-open-error-case.js，保留既有 test/helpers/settings-manager-entry-case.js 的 HTTP 覆蓋。原真 LOCAL HTTP 補題候選未套用；依 [Sol 初次前提裁示](https://github.com/teacherjung/personal-finance-webapp/pull/750#issuecomment-6627860626) 改備無 TCP 獨立補題，作者與未變更的既有沙箱能力驗證已完成，兩場六入口皆取得有效基線／指定同步 catch 突變／還原的有限證據。依 [Sol 續作裁示](https://github.com/teacherjung/personal-finance-webapp/pull/750#issuecomment-6628398035)，可排施工，須先完成 #750 當版 CI、Grok 正式複審與合併；本項正式施工／複審／合併未完成，Grok 仍須獨立重跑基線、有效突變及還原。只補指定同步例外的缺題，不改產品 catch、資格、錯誤判準、沙箱或接線；能力收據不代替正式放行，也不提供 HTTP、真帳本保存或原生瀏覽器證據。來源：[#743 採納待辦][pr743]。
 
-- **FIN-002｜設定管理入口開窗取得所有權後同步拋錯的直接行為題**。位置：test/helpers/settings-manager-entry-case.js。原真 LOCAL HTTP 補題候選未套用；正式 Grok 沙箱的連線限制使複審者無法獨立重跑本候選基線與突變，作者或 CI 綠不能代替必驗清單第1、4項。依 [Sol 驗證前提裁示](https://github.com/teacherjung/personal-finance-webapp/pull/750#issuecomment-6627860626) 先列條件候選：保留既有 HTTP 覆蓋，提出不依賴 TCP、仍實際走正式開窗與錯誤處理的補題設計，並重新取得有效基線與突變證據後再裁；不改產品 catch、資格或錯誤判準、不放寬沙箱、不另造代跑通道。來源：[#743 採納待辦][pr743]。
+## 條件候選與技術未驗（18）
 
 - **FIN-003｜信用卡批次管理晚回應與續行保護**。位置：public/modules/transactions-import.js 的 openBatchManager。先以完整 LOCAL 正常／晚回應案例核具體缺口，再裁最小修法；原生及正式複審不得以 HTTP／DOM 替代。本入口不是 #737，也不是 #739 預覽／完成窗已交付範圍。 來源：[GS-F04][p]；[#739 範圍排除][pr739]。
 
