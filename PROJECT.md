@@ -32,7 +32,9 @@
 
 ### 既有相依安全通報（CI 核對）
 
-- **GHSA-6pq8-jhm2-2vcw｜qs 的 comma 陣列序列化通報，尚未修補**：在 `a583022f5536420fb6e12632e1763b93d25ab139` 的 [CI](https://github.com/teacherjung/personal-finance-webapp/actions/runs/40993329773) 核到 qs 6.16.0／Express 相依傳遞的同一中度通報；[上游公告](https://github.com/advisories/GHSA-6pq8-jhm2-2vcw)列修補版 6.16.1。限定查證未找到應用直接載入 qs 或指定 comma 陣列格式的呼叫，已讀 Express／body-parser 路徑是解析；未證全應用或全部間接相依不可利用，也未驗修補版相容性。落點：`package.json` 的 qs override、`package-lock.json` 與後續實際相依修補 PR。觸發：下一個可依既定程序開工的後端相依修補優先處理，不等實際故障；若取得不可信輸入可到達 comma stringify 的證據，立即重裁為先修。依 [原題](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6513981708)及 [Sol 完整技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6514104671)，#748 僅登記未修風險，新版本完整驗證後才可續正式複審；不夾帶相依更新、不放寬 audit 或合併閘，不以既有 CI 成功當安全豁免。後續修補的 PR 額度、所有權與相依操作權限仍須先核，掃描維持暫停。
+- **GHSA-6pq8-jhm2-2vcw｜qs 安全修補**：由 [#749](https://github.com/teacherjung/personal-finance-webapp/pull/749)承接，override 精確固定公告修補版 `6.16.1`，鎖檔僅更新該套件。範圍及有限新舊產物驗證見[計畫](docs/qs-security-patch-plan.md)；當版 CI、Grok 正式複審及全部合併閘未完成前不記交付。本機相依仍為舊版，沒有安裝或重啟；B 級安裝與本人核心流程另留，不以 CI 代替。原來源與有限可達性查證見 [#748 技術裁示](https://github.com/teacherjung/personal-finance-webapp/pull/748#issuecomment-6514104671)；不將其誤寫為全部相依不可利用。
+
+- **GHSA-g3hv-75wg-m249｜開發相依 minimatch 通報**：本輪舊鎖檔 audit 已含同一通報，並非 qs 修補新增；完整稽核退出 1，high／critical 為 0。位置為 `package.json`、`package-lock.json` 及 ESLint／config-array 相依鏈。限定核對的消費者仍採 10.x，未找到可直接採用的相容窄修補，不強制跨到公告修補版 11.0.1，也不將通報當已修。值得續作：上游提供適用修補、消費者正式支援已修補版、取得本案不可信 glob 且啟用 optimizationLevel >= 2 的可達反例，或必要檢查受阻。依 [Sol 分流](https://github.com/teacherjung/personal-finance-webapp/pull/749#issuecomment-6625377121)另項列管；[官方公告](https://github.com/advisories/GHSA-g3hv-75wg-m249)與 [ESLint 固定版相依](https://raw.githubusercontent.com/eslint/eslint/v10.14.0/package.json)。未完成當日所有版本的窮舉，不宣稱產品或完整供應鏈安全。
 
 ### 提供掃描的核實與分流（2026-10-20）
 
