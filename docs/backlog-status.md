@@ -1,6 +1,8 @@
 # 理財未結事項現況（2026-11-04）
 
-初始盤點基準為 [#748][pr748] 合併後主幹 `484e92b1dd83b8e943562433e609d0997cfda78a`，對照 [PROJECT.md][p] 及近期 PR 的明確交付與待辦。**初盤 50＋新 minimatch 1＋獨立覆核補回原保存前提 1＝52**：優先工作（含待交付）**2**、條件候選／技術未驗 **18**、欠來源／產品決定／功能前提 **15**、停線／封存／其他擁有線 **17**。
+**#750 初盤未結 52 項**（[初盤PR](https://github.com/teacherjung/personal-finance-webapp/pull/750)）。初始盤點基準為 [#748][pr748] 合併後主幹 `484e92b1dd83b8e943562433e609d0997cfda78a`，對照 [PROJECT.md][p] 及近期 PR 的明確交付與待辦。**初盤 50＋新 minimatch 1＋獨立覆核補回原保存前提 1＝52**：優先工作（含待交付）**2**、條件候選／技術未驗 **18**、欠來源／產品決定／功能前提 **15**、停線／封存／其他擁有線 **17**。
+
+下列分類及數目為 #750 初盤快照；後續完成須核對各項承接支的正式合併及適用核收紀錄，不把初盤數當作即時未結數。
 
 一束以可追溯的目的與完成條件計算，重複記載只算一次；GS-F04 依未交付入口拆分。52 包含候選與未驗責任，不能稱為 52 個已證缺陷或 52 支已准開工的 PR。**功能候選清單的 124 列是不同集合，不與此處相加。**
 
@@ -10,7 +12,7 @@
 
 - **FIN-001｜qs 安全通報修補的本機交付**。位置：package.json 的 qs override、package-lock.json 與既有本機更新入口。新鎖檔的 CI 安裝與實際檢查、Grok r1、F7 及第2趟完整合併閘已通過，#749 已合併。首次因仍為草稿被拒的紀錄與 Sol 程序續裁保留。B級本機安裝、重啟及核心流程仍須依實際操作分開核收；既有不重裝限制不由技術代理解除，安裝同意與實際結果見[本次本人題](https://github.com/teacherjung/personal-finance-webapp/pull/749#issuecomment-6626768319)。未完成的本機交付保留未結，不將遠端合併寫成本機已生效。來源：[#749][pr749]；[既有優先裁示][qs-sol]。
 
-- **FIN-002｜設定管理入口開窗取得所有權後同步拋錯的直接行為題**。位置：待新增 test/settings-manager-open-error.test.js 與 test/helpers/settings-manager-open-error-case.js，保留既有 test/helpers/settings-manager-entry-case.js 的 HTTP 覆蓋。原真 LOCAL HTTP 補題候選未套用；依 [Sol 初次前提裁示](https://github.com/teacherjung/personal-finance-webapp/pull/750#issuecomment-6627860626) 改備無 TCP 獨立補題，作者與未變更的既有沙箱能力驗證已完成，兩場六入口皆取得有效基線／指定同步 catch 突變／還原的有限證據。依 [Sol 續作裁示](https://github.com/teacherjung/personal-finance-webapp/pull/750#issuecomment-6628398035)，可排施工，須先完成 #750 當版 CI、Grok 正式複審與合併；本項正式施工／複審／合併未完成，Grok 仍須獨立重跑基線、有效突變及還原。只補指定同步例外的缺題，不改產品 catch、資格、錯誤判準、沙箱或接線；能力收據不代替正式放行，也不提供 HTTP、真帳本保存或原生瀏覽器證據。來源：[#743 採納待辦][pr743]。
+- **FIN-002｜設定管理入口開窗取得所有權後同步拋錯的直接行為題**。位置：test/settings-manager-open-error.test.js 與 test/helpers/settings-manager-open-error-case.js。承接：[本支 #751](https://github.com/teacherjung/personal-finance-webapp/pull/751)。完成條件：本支正式合併，並完成實際分級要求的核收；達成前仍列未結。實際交付狀態與證據見承接支結案紀錄。只結清六入口指定同步例外及原錯誤前綴的缺題；原 HTTP 全卷與產品程式保持，合成 fetch／DOM 不當作 HTTP、真帳本保存或原生瀏覽器證據。原 HTTP 補題候選不套用，有限能力證據與續作範圍見 [Sol 續作裁示](https://github.com/teacherjung/personal-finance-webapp/pull/750#issuecomment-6628398035)，記帳依 [完成判準裁示](https://github.com/teacherjung/personal-finance-webapp/pull/750#issuecomment-6629221656)。來源：[#743 採納待辦][pr743]。
 
 ## 條件候選與技術未驗（18）
 
