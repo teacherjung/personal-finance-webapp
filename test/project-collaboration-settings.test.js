@@ -58,7 +58,55 @@ test('Gemini 單輪登記與 Claude CLI 審查命令符合設定契約', () => {
   assert.equal(claude.maxEffort, 'high');
   assert.equal(claude.autoMode, 'auto');
   assert.equal(claude.source, 'Claude CLI');
-  assert.match(claude.command, /agy -p "\$\(cat \{promptFile\}\)" --model \{model\} --effort \{effort\} --dangerously-skip-permissions --add-dir \{mutationCopy\} --output-format json < \/dev\/null > \{outFile\}/u);
+  assert.doesNotMatch(claude.command, /--dangerously-skip-permissions/u);
+  assert.doesNotMatch(claude.scanCommand, /--dangerously-skip-permissions|reviewTree|mutationCopy/u);
+  assert.deepEqual(reviewLaunch.templateProblems(settings), []);
+  const { text: claudeCmd } = reviewLaunch.substitute(claude.command, {
+    model: claude.strongest,
+    effort: claude.maxEffort,
+    reviewTree: '/synthetic/review',
+    mutationCopy: '/synthetic/mutation',
+    promptFile: '/synthetic/prompt.md',
+    outFile: '/synthetic/output.log',
+  }, 'Claude 合成命令');
+  assert.match(claudeCmd, /^cd \/synthetic\/review && agy -p "\$\(cat \/synthetic\/prompt\.md\)" --model claude-opus-5-5-high --effort high --disable-slash-commands --add-dir \/synthetic\/mutation --settings '([^']+)' --output-format json < \/dev\/null > \/synthetic\/output\.log$/u);
+  const settingsArg = claudeCmd.match(/--settings '([^']+)'/u)?.[1];
+  assert.ok(settingsArg, 'Claude 啟動命令必須帶單次會話 --settings JSON；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
+  const parsedAgySettings = JSON.parse(settingsArg);
+  assert.equal(parsedAgySettings.allowNonWorkspaceAccess, false);
+  assert.equal(parsedAgySettings.enableTerminalSandbox, false);
+  assert.deepEqual(parsedAgySettings.permissions.allow, ['write_file(/synthetic/mutation)']);
+  for (const denied of [
+    'mcp(*)',
+    'read_url(*)',
+    'execute_url(*)',
+    'download_url(*)',
+    'write_file(/synthetic/review)',
+    'command(gh pr merge)',
+    'command(gh pr edit)',
+    'command(gh pr close)',
+    'command(gh pr comment)',
+    'command(gh api -X)',
+    'command(gh api graphql)',
+    'command(git push)',
+    'command(git commit)',
+    'command(git checkout)',
+    'command(npm install)',
+    'command(npm ci)',
+  ]) {
+    assert.ok(parsedAgySettings.permissions.deny.includes(denied), `Claude 權限拒絕清單缺少 ${denied}；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js`);
+  }
+  const { text: claudeScanCmd } = reviewLaunch.substitute(claude.scanCommand, {
+    model: claude.strongest,
+    effort: claude.maxEffort,
+    scanTree: '/synthetic/scan',
+    promptFile: '/synthetic/scan-prompt.md',
+    outFile: '/synthetic/scan-output.log',
+  }, 'Claude 掃描合成命令');
+  const parsedScanSettings = JSON.parse(claudeScanCmd.match(/--settings '([^']+)'/u)?.[1] ?? '');
+  assert.ok(parsedScanSettings.permissions.deny.includes('mcp(*)'));
+  assert.ok(parsedScanSettings.permissions.deny.includes('write_file(/synthetic/scan)'));
+  assert.match(claude.verified, /available: low, medium, high/u);
 
   const codex = settings.reviewers.find(item => item.participant === 'Codex');
   assert.equal(codex.second, 'gpt-6.1-sol');

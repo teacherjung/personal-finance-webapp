@@ -226,6 +226,7 @@ test('掃描設定：缺檔、壞 JSON、沒有掃描那一節、strongest／max
     [write('m3.json', JSON.stringify({ scanner: { strongest: 47, maxEffort: 'xhigh' } })), /strongest/],
     [write('e1.json', JSON.stringify({ scanner: { strongest: 'grok-4.7', maxEffort: '--x' } })), /maxEffort（最高推理）沒填或形狀不對/],
     [write('e2.json', JSON.stringify({ scanner: { strongest: 'grok-4.7', maxEffort: '' } })), /maxEffort/],
+    [write('disabled.json', JSON.stringify({ scanner: { tool: '無', strongest: 'grok-4.7', maxEffort: 'xhigh' } })), /掃描入口未登記為 scripts\/grok-scan\.js/],
     [write('grokexec.json', JSON.stringify({ scanner: { strongest: 'grok-4.7', maxEffort: 'xhigh', command: 'node tools/review-launch.js --grok-exec --mode scan' } })), /掃描入口未登記為 scripts\/grok-scan\.js/],
   ];
   for (const [f, re] of /** @type {[string, RegExp][]} */ (bad)) {
