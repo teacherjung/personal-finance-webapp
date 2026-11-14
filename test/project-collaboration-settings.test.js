@@ -8,19 +8,28 @@ import reviewVerdicts from '../tools/gates/check-review-verdicts.js';
 
 const settings = JSON.parse(readFileSync(new URL('../settings.json', import.meta.url), 'utf8'));
 
-test('專案設定產出的分工為 Codex 實作與 Grok 複審，條件式 Gemini 掃描登記', () => {
+test('專案設定產出的分工為 Codex 實作與 Grok 複審，預設 Grok 隔離掃描登記且保留 Gemini 掃描樣板', () => {
   const rendered = settingsBuilder.build(settings);
   assert.equal(rendered, readFileSync(new URL('../PROJECT-SETTINGS.md', import.meta.url), 'utf8'));
   assert.ok(rendered.includes('實作者＝Codex；複審者＝Grok'));
-  assert.ok(rendered.includes('- 掃描者識別值：Gemini；怎麼起：Gemini 原生 CLI 唯讀掃描（'));
-  assert.equal(settings.scanner.strongest, 'gemini-3.1-pro-preview');
-  assert.equal(settings.scanner.maxEffort, 'HIGH');
-  const spec = reviewLaunch.resolveScannerSpec(settings, undefined, settings.participants.map(row => row.id));
-  assert.equal(spec.scanner, 'Gemini');
-  assert.match(spec.command, /scripts\/gemini-scan-native\.js --model \{model\} --effort \{effort\} --scan-tree \{scanTree\}/u);
-  assert.doesNotMatch(spec.command, /review-tree|mutation-copy/u);
+  assert.ok(rendered.includes('- 掃描者識別值：Grok；怎麼起：Grok CLI（經 tools\\/review\\-launch\\.js \\-\\-grok\\-exec'));
+  assert.equal(settings.scanner.participant, 'Grok');
+  assert.equal(settings.scanner.strongest, 'grok-4.7');
+  assert.equal(settings.scanner.maxEffort, 'xhigh');
+  assert.equal(settings.scanner.source, 'Grok CLI');
+  const usable = settings.participants.map(row => row.id);
+  const spec = reviewLaunch.resolveScannerSpec(settings, undefined, usable);
+  assert.equal(spec.scanner, 'Grok');
+  assert.match(spec.command, /^node tools\/review-launch\.js --grok-exec --mode scan --cwd \{scanTree\} --model \{model\} --reasoning-effort \{effort\} --prompt-file \{promptFile\} --out \{outFile\}$/u);
+  assert.doesNotMatch(spec.command, /reviewTree|review-tree|mutationCopy|mutation-copy/u);
   assert.ok(!Object.hasOwn(settings.scanner, 'nativeSources'));
+  assert.match(settings.scanner.assignedBy, /6878641993/u);
   assert.match(settings.scanner.assignedBy, /額度用完/u);
+
+  const geminiSpec = reviewLaunch.resolveScannerSpec(settings, 'Gemini', usable);
+  assert.equal(geminiSpec.scanner, 'Gemini');
+  assert.match(geminiSpec.command, /scripts\/gemini-scan-native\.js --model \{model\} --effort \{effort\} --scan-tree \{scanTree\}/u);
+  assert.doesNotMatch(geminiSpec.command, /reviewTree|review-tree|mutationCopy|mutation-copy/u);
 });
 
 test('專案停用掃描設定讓掃描啟動入口在外部命令前拒絕', () => {
@@ -33,7 +42,7 @@ test('專案停用掃描設定讓掃描啟動入口在外部命令前拒絕', ()
 });
 
 
-test('Gemini 單輪登記使用原生有效模型與推理命令', () => {
+test('Gemini 單輪登記與 Claude CLI 審查命令符合設定契約', () => {
   const row = settings.reviewers.find(item => item.participant === 'Gemini');
   assert.ok(settings.participants.some(item => item.id === 'Gemini'));
   assert.ok(settings.sources.some(item => item.string === 'Gemini CLI'));
@@ -41,6 +50,73 @@ test('Gemini 單輪登記使用原生有效模型與推理命令', () => {
   assert.equal(row.maxEffort, 'HIGH');
   assert.equal(row.source, 'Gemini CLI');
   assert.match(row.command, /scripts\/gemini-review\.js --model \{model\} --effort \{effort\}/u);
+  assert.match(row.scanCommand, /scripts\/gemini-scan-native\.js --model \{model\} --effort \{effort\} --scan-tree \{scanTree\}/u);
+
+  const claude = settings.reviewers.find(item => item.participant === 'Claude');
+  assert.equal(claude.strongest, 'claude-opus-5-5-high');
+  assert.equal(claude.second, 'claude-sonnet-5-5-high');
+  assert.equal(claude.maxEffort, 'high');
+  assert.equal(claude.autoMode, 'auto');
+  assert.equal(claude.source, 'Claude CLI');
+  assert.doesNotMatch(claude.command, /--dangerously-skip-permissions/u);
+  assert.doesNotMatch(claude.scanCommand, /--dangerously-skip-permissions|reviewTree|mutationCopy/u);
+  assert.deepEqual(reviewLaunch.templateProblems(settings), []);
+  const { text: claudeCmd } = reviewLaunch.substitute(claude.command, {
+    model: claude.strongest,
+    effort: claude.maxEffort,
+    reviewTree: '/synthetic/review',
+    mutationCopy: '/synthetic/mutation',
+    promptFile: '/synthetic/prompt.md',
+    outFile: '/synthetic/output.log',
+  }, 'Claude 合成命令');
+  assert.match(claudeCmd, /^cd \/synthetic\/review && agy -p "\$\(cat \/synthetic\/prompt\.md\)" --model claude-opus-5-5-high --effort high --disable-slash-commands --add-dir \/synthetic\/mutation --settings '([^']+)' --output-format json < \/dev\/null > \/synthetic\/output\.log$/u);
+  const settingsArg = claudeCmd.match(/--settings '([^']+)'/u)?.[1];
+  assert.ok(settingsArg, 'Claude 啟動命令必須帶單次會話 --settings JSON；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
+  const parsedAgySettings = JSON.parse(settingsArg);
+  assert.ok(!Object.hasOwn(parsedAgySettings, 'allowNonWorkspaceAccess'), 'Claude 複審 --settings 不得保留未生效的 allowNonWorkspaceAccess；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
+  assert.equal(parsedAgySettings.enableTerminalSandbox, false);
+  assert.deepEqual(parsedAgySettings.permissions.allow, ['write_file(/synthetic/mutation)']);
+  assert.ok(!parsedAgySettings.permissions.deny.includes('command(gh pr comment)'), 'Claude 複審命令須允許依送審提示執行 gh pr comment 自貼結論；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
+  for (const denied of [
+    'mcp(*)',
+    'read_url(*)',
+    'execute_url(*)',
+    'download_url(*)',
+    'write_file(/synthetic/review)',
+    'command(gh pr merge)',
+    'command(gh pr edit)',
+    'command(gh pr close)',
+    'command(gh api -X)',
+    'command(gh api graphql)',
+    'command(git push)',
+    'command(git commit)',
+    'command(git checkout)',
+    'command(npm install)',
+    'command(npm ci)',
+  ]) {
+    assert.ok(parsedAgySettings.permissions.deny.includes(denied), `Claude 權限拒絕清單缺少 ${denied}；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js`);
+  }
+  const { text: claudeScanCmd } = reviewLaunch.substitute(claude.scanCommand, {
+    model: claude.strongest,
+    effort: claude.maxEffort,
+    scanTree: '/synthetic/scan',
+    promptFile: '/synthetic/scan-prompt.md',
+    outFile: '/synthetic/scan-output.log',
+  }, 'Claude 掃描合成命令');
+  const parsedScanSettings = JSON.parse(claudeScanCmd.match(/--settings '([^']+)'/u)?.[1] ?? '');
+  assert.ok(!Object.hasOwn(parsedScanSettings, 'allowNonWorkspaceAccess'), 'Claude 掃描 --settings 不得保留未生效的 allowNonWorkspaceAccess；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
+  assert.ok(parsedScanSettings.permissions.deny.includes('mcp(*)'), 'Claude 掃描命令缺少 mcp(*)；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
+  assert.ok(parsedScanSettings.permissions.deny.includes('write_file(/synthetic/scan)'), 'Claude 掃描命令缺少 write_file(/synthetic/scan)；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
+  assert.ok(parsedScanSettings.permissions.deny.includes('command(gh pr comment)'), 'Claude 掃描命令必須維持拒絕 command(gh pr comment)；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
+  assert.match(claude.verified, /available: low, medium, high/u);
+  assert.match(claude.verified, /guard_canary\/ping/u, 'Claude verified 欄須記錄測試鈕實測；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
+
+  const codex = settings.reviewers.find(item => item.participant === 'Codex');
+  assert.equal(codex.second, 'gpt-6.1-sol');
+
+  const grok = settings.reviewers.find(item => item.participant === 'Grok');
+  assert.match(grok.scanCommand, /^node tools\/review-launch\.js --grok-exec --mode scan --cwd \{scanTree\}/u);
+
   assert.equal(settings.defaultDivision.reviewer, 'Grok');
 });
 

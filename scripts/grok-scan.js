@@ -1013,6 +1013,10 @@ export async function runScan(args, deps = {}) {
     /** @type {any} */ let s;
     try { s = JSON.parse(readFileSync(deps.settingsFile ?? join(REPO, 'settings.json'), 'utf8')); } catch (e) { return fail(`讀不出掃描設定（settings.json：${errCode(e)}）`); }
     const sc = s && typeof s === 'object' ? s.scanner : undefined;
+    if ((typeof sc?.tool === 'string' && sc.tool === '無')
+      || (typeof sc?.command === 'string' && !sc.command.includes('scripts/grok-scan.js'))) {
+      return fail('settings.json 掃描入口未登記為 scripts/grok-scan.js（請依官方 tools/review-launch.js --scan 啟動）');
+    }
     model = sc?.strongest; effort = sc?.maxEffort;
     if (typeof model !== 'string' || !/^grok-[0-9][0-9a-z.-]*$/.test(model)) return fail('settings.json 掃描那一節的 strongest（最強模型）沒填或形狀不對');
     if (typeof effort !== 'string' || !/^[a-z]+$/.test(effort)) return fail('settings.json 掃描那一節的 maxEffort（最高推理）沒填或形狀不對');

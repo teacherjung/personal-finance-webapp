@@ -2043,6 +2043,11 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
         oidc_client_id: GROK_PINNED_CLIENT_ID,
         key: 'OLD-KEY-SECRET-1111',
         refresh_token: 'OLD-REFRESH-SECRET-2222',
+        email: 'owner@example.com',
+        first_name: 'William',
+        last_name: 'Jung',
+        coding_data_retention_opt_out: true,
+        principal_type: 'user',
       },
     };
     fs.writeFileSync(authFile, JSON.stringify(expiredAuth, null, 2), { mode: 0o600 });
@@ -2061,6 +2066,10 @@ test('Grok 隔離執行（--grok-exec）：參數檢查、OIDC 續期與白名�
     assert.equal(refreshed.realBearer, 'NEW-KEY-SECRET-3333');
     assert.equal(refreshed.forBox[entryKey].key, refreshed.dummyBearer);
     assert.equal(refreshed.forBox[entryKey].refresh_token, undefined);
+    assert.equal(refreshed.forBox[entryKey].first_name, undefined);
+    assert.ok(refreshed.needles.includes('NEW-KEY-SECRET-3333') && refreshed.needles.includes('NEW-REFRESH-SECRET-4444') && refreshed.needles.includes('owner@example.com'));
+    assert.equal(refreshed.needles.includes('William'), false, '公開顯示名 first_name 不誤納入 DLP 針');
+    assert.equal(refreshed.needles.includes('Jung'), false, '公開顯示名 last_name 不誤納入 DLP 針');
 
     // 連結檔 auth.json 一律拒收
     const linkAuth = path.join(tmp, 'link-auth.json');
@@ -3414,6 +3423,8 @@ test('Grok 隔離執行：E8 原生 JSON 串流解析、cancelled 拒絕、DLP �
         JSON.stringify({type:"result",subtype:"success",is_error:false,stop_reason:"end_turn",session_id:sessId,result:passText})
       ];
       const resReview = await runStream(successStream, 'review', 0, successStream.join('\n') + '\n');
+      assert.ok(resReview.capturedArgs.includes('--always-approve'), 'review 應有 --always-approve 避免盒內單輪權限詢問取消');
+      assert.ok(resReview.capturedArgs.includes('--disable-web-search'), 'review 應停用外部網路搜尋工具');
       assert.ok(resReview.capturedArgs.includes('--allow'), 'review 應有 --allow');
       assert.ok(resReview.capturedArgs.includes('Bash(*)'), 'review 應允許 Bash');
 
@@ -3425,6 +3436,8 @@ test('Grok 隔離執行：E8 原生 JSON 串流解析、cancelled 拒絕、DLP �
         JSON.stringify({type:"result",subtype:"success",is_error:false,stop_reason:"end_turn",session_id:sessId,result:scanText})
       ];
       const resScan = await runStream(scanStream, 'scan', 0, scanStream.join('\n') + '\n');
+      assert.ok(resScan.capturedArgs.includes('--disable-web-search'), 'scan 應停用外部網路搜尋工具');
+      assert.ok(!resScan.capturedArgs.includes('--always-approve'), 'scan 不應開啟 --always-approve');
       assert.ok(resScan.capturedArgs.includes('--output-format'), '必須傳遞 output-format');
       assert.ok(resScan.capturedArgs.includes('streaming-messages-json'), '必須使用 streaming-messages-json 格式');
 
@@ -6340,5 +6353,55 @@ test('⑬ runGrokExec 資源限制回歸 (R2)：1MiB 緩衝區與 OS argv 容量
       try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) {}
     }
     try { fs.rmSync(r.dir, { recursive: true, force: true }); } catch (e) {}
+  }
+});
+
+test('unwrapScanOutput / prepareVerdict / prepareScan：支援 agy --output-format json 封包（status === SUCCESS 解出 response，非 SUCCESS 或空 response 拒收）', () => {
+  const head = '0123456789abcdef0123456789abcdef01234567';
+  const usable = ['Claude', 'Gemini', 'Codex', 'Grok'];
+  const verdictText = '🤖 Claude｜來源：Claude CLI｜審 `0123456`｜r1｜結論：通過\n\n### 本輪實際用的設定\n- claude-opus-5-5-high\n\n### 清單逐項結果\n- 零發現\n未貼\n';
+  const agyVerdictJson = JSON.stringify({
+    conversation_id: 'conv-1',
+    status: 'SUCCESS',
+    response: verdictText,
+    duration_seconds: 7.5,
+    num_turns: 1,
+  });
+  const vRes = prepareVerdict(agyVerdictJson, {
+    reviewer: 'Claude',
+    source: 'Claude CLI',
+    round: 1,
+    head,
+    usable,
+  });
+  assert.match(vRes.body, /^🤖 Claude｜來源：Claude CLI｜審 `0123456`｜r1｜結論：通過/u);
+  assert.equal(vRes.strippedUnposted, true);
+
+  const scanText = '🔍 Gemini｜來源：Gemini CLI｜掃 `0123456`\n\n- 零發現\n未貼\n';
+  const agyScanJson = JSON.stringify({
+    conversation_id: 'conv-2',
+    status: 'SUCCESS',
+    response: scanText,
+    duration_seconds: 6.2,
+    num_turns: 1,
+  });
+  const sRes = prepareScan(agyScanJson, {
+    scanner: 'Gemini',
+    source: 'Gemini CLI',
+    head,
+    usable,
+  });
+  assert.match(sRes.body, /^🔍 Gemini｜來源：Gemini CLI｜掃 `0123456`/u);
+
+  for (const badEnvelope of [
+    JSON.stringify({ conversation_id: 'c3', status: 'ERROR', response: verdictText }),
+    JSON.stringify({ conversation_id: 'c4', status: 'CANCELLED', response: verdictText }),
+    JSON.stringify({ conversation_id: 'c5', status: 'SUCCESS', response: '   ' }),
+    JSON.stringify({ conversation_id: 'c6', status: 'SUCCESS', response: null }),
+  ]) {
+    assert.throws(
+      () => prepareVerdict(badEnvelope, { reviewer: 'Claude', source: 'Claude CLI', round: 1, head, usable }),
+      /JSON 標示執行失敗（status 非 SUCCESS 或 response 為空），不代貼/u,
+    );
   }
 });

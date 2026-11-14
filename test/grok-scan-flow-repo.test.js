@@ -226,6 +226,8 @@ test('掃描設定：缺檔、壞 JSON、沒有掃描那一節、strongest／max
     [write('m3.json', JSON.stringify({ scanner: { strongest: 47, maxEffort: 'xhigh' } })), /strongest/],
     [write('e1.json', JSON.stringify({ scanner: { strongest: 'grok-4.7', maxEffort: '--x' } })), /maxEffort（最高推理）沒填或形狀不對/],
     [write('e2.json', JSON.stringify({ scanner: { strongest: 'grok-4.7', maxEffort: '' } })), /maxEffort/],
+    [write('disabled.json', JSON.stringify({ scanner: { tool: '無', strongest: 'grok-4.7', maxEffort: 'xhigh' } })), /掃描入口未登記為 scripts\/grok-scan\.js/],
+    [write('grokexec.json', JSON.stringify({ scanner: { strongest: 'grok-4.7', maxEffort: 'xhigh', command: 'node tools/review-launch.js --grok-exec --mode scan' } })), /掃描入口未登記為 scripts\/grok-scan\.js/],
   ];
   for (const [f, re] of /** @type {[string, RegExp][]} */ (bad)) {
     const r = await run({ base: repo.base, head: repo.head }, { repo: repo.dir, settingsFile: f });
@@ -237,7 +239,7 @@ test('掃描設定：缺檔、壞 JSON、沒有掃描那一節、strongest／max
 
 });
 
-test('正式預設設定：Gemini 登記使舊 Grok 掃描在建盒、CLI、試探及外連之前拒絕；不讀受掃倉庫或目前資料夾的設定', async () => {
+test('正式預設設定：統一掃描入口登記使舊 Grok 掃描在建盒、CLI、試探及外連之前拒絕；不讀受掃倉庫或目前資料夾的設定', async () => {
   const repo = tinyRepo();
   const cwd = keep(mkdtempSync(join(tmpdir(), 'scan-decoy-cwd-')));
   // 兩份誘餌必須合法；若用非法值，誤讀誘餌也會退場而假綠。
@@ -261,7 +263,7 @@ test('正式預設設定：Gemini 登記使舊 Grok 掃描在建盒、CLI、試�
       fetchImpl: async () => { fetches++; throw new Error('不得外連'); },
     });
     assert.equal(result.code, 2);
-    assert.match(result.summary.join('\n'), /settings.json 掃描那一節的 strongest（最強模型）沒填或形狀不對/);
+    assert.match(result.summary.join('\n'), /settings\.json 掃描入口未登記為 scripts\/grok-scan\.js/);
     assert.equal(boxes, 0, 'CLI 只在建盒後啟動，不能先建盒再清掉');
     assert.equal(canaries, 0); assert.equal(fetches, 0);
     assert.deepEqual(readdirSync(iso.resultsRoot), []);

@@ -26,7 +26,7 @@
    "account": "teacherjung"
   },
   {
-   "role": "AI 丁（本人指定的單輪複審）",
+   "role": "AI 丁（本人指定的實作或單輪複審）",
    "id": "Gemini",
    "account": "teacherjung"
   }
@@ -134,15 +134,15 @@
  },
  "mainBranch": "main",
  "scanner": {
-  "participant": "Gemini",
-  "tool": "Gemini 原生 CLI 唯讀掃描",
-  "assignedBy": "Codex（實作者，能起 CLI）：依 William 2026-10-20 條件式授權，在 Grok 掃描額度用完後使用；來源與實際執行情況見 docs/project-collaboration.md「Gemini 條件式原生掃描」。",
-  "tieBreak": "兩方都起得了時由實作者發射；Gemini 不得同時是該支實作者或複審者。",
+  "participant": "Grok",
+  "tool": "Grok CLI（經 tools/review-launch.js --grok-exec 以預設拒絕 Seatbelt 沙盒與本機受控認證通道唯讀執行）",
+  "assignedBy": "實作者或發審者（能起 CLI）：依 William 2026-11-14 指示（套件 #136 留言 6878641993）掃描交給 Grok；若 Grok 掃描額度用完需依 2026-10-20 條件式授權改用 Gemini 原生掃描，須先將 scanner 切回 Gemini（scripts/gemini-scan-native.js 會核對 scanner.participant === 'Gemini'，見 docs/project-collaboration.md）。",
+  "tieBreak": "兩方都起得了時由實作者發射；掃描者不得同時是該支實作者或複審者（G1）。",
   "fallback": "實作者依 RULES G3、G4 留真實未執行原因；普通 CLI 失敗不盲重送、不自行換正式複審者，疑似破口依 G2。",
-  "strongest": "gemini-3.1-pro-preview",
-  "maxEffort": "HIGH",
-  "source": "Gemini CLI",
-  "command": "node {scanTree}/scripts/gemini-scan-native.js --model {model} --effort {effort} --scan-tree {scanTree} --prompt-file {promptFile} --out-file {outFile} --change {change} --project {project}"
+  "strongest": "grok-4.7",
+  "maxEffort": "xhigh",
+  "source": "Grok CLI",
+  "command": "node tools/review-launch.js --grok-exec --mode scan --cwd {scanTree} --model {model} --reasoning-effort {effort} --prompt-file {promptFile} --out {outFile}"
  },
  "platform": {
   "name": "GitHub",
@@ -1040,21 +1040,22 @@
   },
   {
    "participant": "Claude",
-   "strongest": "claude-opus-5-5",
-   "second": "claude-fable-5-1",
-   "maxEffort": "max",
-   "autoMode": "Ultracode",
+   "strongest": "claude-opus-5-5-high",
+   "second": "claude-sonnet-5-5-high",
+   "maxEffort": "high",
+   "autoMode": "auto",
    "source": "Claude CLI",
-   "launch": "送審產生器 node tools/review-launch.js <編號> --reviewer <識別值> 照下一格的樣板印出填好的那一行；它開好審查樹與突變副本之後，node_modules 捷徑由實作者照 docs/project-collaboration.md「工作目錄與樹」節備樹那一步掛上（只准建、不准動），再發審",
-   "command": "cd {reviewTree} && claude -p \"$(cat {promptFile})\" --model {model} --effort {effort} --permission-mode dontAsk --setting-sources user,project --add-dir {mutationCopy} --verbose --output-format json --allowedTools 'Read,Grep,Glob,Bash(node --test *),Bash(npm --prefix {mutationCopy} test *),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git rev-parse HEAD),Bash(git -C {mutationCopy} rev-parse HEAD),Bash(git -C {mutationCopy} status --porcelain),Bash(git -C {mutationCopy} diff),Bash(gh pr view *),Bash(gh pr diff *),Bash(gh pr checks *),Bash(gh run view *),Bash(gh run list *),Bash(gh pr comment {change} *),Edit(/{mutationCopy}/**),Workflow' --disallowedTools 'Write,NotebookEdit,WebFetch,WebSearch,Edit(/{reviewTree}/**),Bash(gh pr merge *),Bash(gh pr edit *),Bash(gh pr close *),Bash(gh pr review *),Bash(gh pr ready *),Bash(git push *),Bash(git commit *),Bash(git checkout *),Bash(git switch *),Bash(git stash *),Bash(git worktree *),Bash(git fetch *),Bash(npm install *),Bash(npm ci *),Bash(npx *),Bash(node -e *)' < /dev/null > {outFile}",
-   "machine": "放行清單以外的指令一律被拒（不跳出詢問）；Edit 工具改不了審查樹、只准改突變副本；不讀主目錄的本機設定檔",
-   "promptOnly": "放行的指令仍可能寫檔（例如 git diff 的 --output），副本裡改了程式再跑考題＝能跑任意程式，所以審查樹唯讀靠提示；讀檔的禁令管不到考題程式自己讀檔；助手被拒時最後的輸出看不到，要逐筆搜「has been denied」",
-   "verified": "2026-10-15 UTC（22:30:53）：claude --version 回 2.1.300 (Claude Code)，exit 0；只核 CLI 版本、未啟模型，不代表本次已驗 Opus 模型或通道；模型選用依 #687 及各輪實際紀錄。"
+   "launch": "送審產生器 node tools/review-launch.js <編號> --reviewer <識別值> 照下一格的樣板印出填好的那一行（產生器備樹時自動掛好獨立 node_modules 捷徑、收樹時自動卸載）；詳見 docs/project-collaboration.md「工作目錄與樹」及「審查」節",
+    "command": "cd {reviewTree} && agy -p \"$(cat {promptFile})\" --model {model} --effort {effort} --disable-slash-commands --add-dir {mutationCopy} --settings '{\"agentMode\":\"accept-edits\",\"toolPermission\":\"always-proceed\",\"enableTerminalSandbox\":false,\"permissions\":{\"allow\":[\"write_file({mutationCopy})\"],\"deny\":[\"mcp(*)\",\"read_url(*)\",\"execute_url(*)\",\"download_url(*)\",\"write_file({reviewTree})\",\"command(gh pr merge)\",\"command(gh pr edit)\",\"command(gh pr close)\",\"command(gh pr reopen)\",\"command(gh pr review)\",\"command(gh pr ready)\",\"command(gh pr create)\",\"command(gh issue)\",\"command(gh repo)\",\"command(gh release)\",\"command(gh workflow)\",\"command(gh api -X)\",\"command(gh api --method)\",\"command(gh api -f)\",\"command(gh api -F)\",\"command(gh api --field)\",\"command(gh api --raw-field)\",\"command(gh api --input)\",\"command(gh api graphql)\",\"command(git push)\",\"command(git commit)\",\"command(git checkout)\",\"command(git switch)\",\"command(git stash)\",\"command(git worktree)\",\"command(git fetch)\",\"command(git merge)\",\"command(git rebase)\",\"command(git reset)\",\"command(git clean)\",\"command(npm install)\",\"command(npm ci)\",\"command(npx)\",\"command(curl)\",\"command(wget)\"]}}' --output-format json < /dev/null > {outFile}",
+    "scanCommand": "cd {scanTree} && agy -p \"$(cat {promptFile})\" --model {model} --effort {effort} --disable-slash-commands --settings '{\"agentMode\":\"accept-edits\",\"toolPermission\":\"always-proceed\",\"enableTerminalSandbox\":false,\"permissions\":{\"deny\":[\"mcp(*)\",\"read_url(*)\",\"execute_url(*)\",\"download_url(*)\",\"write_file({scanTree})\",\"command(gh pr merge)\",\"command(gh pr edit)\",\"command(gh pr close)\",\"command(gh pr reopen)\",\"command(gh pr review)\",\"command(gh pr ready)\",\"command(gh pr create)\",\"command(gh pr comment)\",\"command(gh issue)\",\"command(gh repo)\",\"command(gh release)\",\"command(gh workflow)\",\"command(gh api -X)\",\"command(gh api --method)\",\"command(gh api -f)\",\"command(gh api -F)\",\"command(gh api --field)\",\"command(gh api --raw-field)\",\"command(gh api --input)\",\"command(gh api graphql)\",\"command(git push)\",\"command(git commit)\",\"command(git checkout)\",\"command(git switch)\",\"command(git stash)\",\"command(git worktree)\",\"command(git fetch)\",\"command(git merge)\",\"command(git rebase)\",\"command(git reset)\",\"command(git clean)\",\"command(npm install)\",\"command(npm ci)\",\"command(npx)\",\"command(curl)\",\"command(wget)\"]}}' < /dev/null > {outFile}",
+    "machine": "先 cd {reviewTree} 固定進入審查樹，透過本機 Antigravity CLI（agy -p）指定 --model {model}、--effort {effort}、--disable-slash-commands、--add-dir {mutationCopy}，並以單次會話不落盤的 --settings 帶入 permissions.deny：經實測由權限引擎機械阻擋 mcp(*)（所有 MCP 工具呼叫，含 server/tool 形式）、write_file({reviewTree})（編輯工具改不了審查樹，放行 write_file({mutationCopy}) 與審查資料夾暫存檔），以及「指令或 && 串接子句直接以所列前綴開頭」的指令（列了 gh pr merge/edit/close/reopen/review/ready/create、gh issue/repo/release/workflow、gh api -X/--method/-f/-F/--field/--raw-field/--input/graphql、git push/commit/checkout/switch/stash/worktree/fetch/merge/rebase/reset/clean、npm install/ci、npx、curl、wget；另有依官方語法配置的 read_url(*)／execute_url(*)／download_url(*)；command 不擋 gh pr comment 以供複審者依提示自貼結論，scanCommand 仍擋）；注意 command(...) 只比對指令開頭，同一動作換旗標順序或加全域旗標不擋（見下一欄）。--output-format json 輸出結構化 JSON 封包（外殼 unwrapScanOutput 核驗 status === \"SUCCESS\" 後解出 response），審後由外殼 --post／--close 核對兩棵樹乾淨、HEAD 沒變",
+    "promptOnly": "相較主幹舊 claude -p 放行清單（未列即拒），agy 非互動 -p 須配 toolPermission=always-proceed（命中 Ask 於 < /dev/null 下會直接中止整回合且無輸出）加拒絕清單，強度較放行清單弱：① command(...) 只比對字面開頭，同一動作改旗標順序（如 gh api <端點> -X PUT、gh api .../comments -f body=...）或加全域旗標（如 gh -R <repo> pr merge、git -C <任意路徑，含審查樹> commit/push/checkout）皆會放行；② 編輯或 shell 寫入審查樹外的路徑（如兩個工作區上一層的審查資料夾）、shell 重導向、考題或 node 腳本內自行讀寫與連線不受 permissions.deny 約束；因此審查樹唯讀、不改平台狀態、只貼一則留言與不碰真實資料（審查樹內無未追蹤的 data/store.db）仍靠提示、事後 --post／--close 驗樹與合併閘。若複審者已依提示以 gh pr comment 自貼合規結論，而 agy 多步工具呼叫間輸出的過程文字使 {outFile} 的 response 首行非 🤖 標頭，外殼 --run 會報不自動收尾，此時由發審者跑結論閘確認平台留言合規後以 --close 核兩棵樹乾淨收尾。錢類 MCP 防護：agy CLI 不載入 .claude/settings.json 釘指紋 PreToolUse 鉤子與 .mcp.json，靠本機 agy 未掛載任何 MCP 伺服器加上單次會話 permissions.deny 的 mcp(*) 封鎖（誠實劃界與重核條件見 docs/money-guard-operations.md）",
+    "verified": "2026-11-15 本機 agy CLI 實測：① --effort xhigh／max 對 claude-opus-5-5-high 皆退 1 報 conflicts with --effort，對 claude-opus-5-5 報 has no \"max\" effort (available: low, medium, high)，確認 high 為 Opus 5.5 最高可用推理；② 於隔離目錄暫掛指定無害測試鈕 tools/canary-server.js（guard_canary）實跑對照組：未帶 mcp(*) 時呼叫 guard_canary/ping 回 pong，帶入 permissions.deny: [\"mcp(*)\"] 時呼叫 guard_canary/ping 由權限引擎拒絕（Permission denied for mcp(guard_canary/ping). Matches user-configured deny rule.、無 pong），確認單一 * 可跨 / 攔截 server/tool，測畢當場移除並重驗 agy mcp list 為 No MCP servers configured.；③ --settings 實跑確認 write_file({reviewTree})、直接前綴（gh pr merge、npx --version、gh api -X GET ...、git checkout）及 && 串接（echo hi && npx --version）皆報 Matches user-configured deny rule 擋下且不中斷回合，write_file({mutationCopy}) 放行；④ #752 1781bcc 審查實測確認前綴比對邊界：gh api <端點> -X GET（唯讀）與 git -C <路徑> 因未命中字面開頭而放行，且 allowNonWorkspaceAccess=false 未擋下兩個工作區上一層暫存檔的 write_file，故移出樣板與機器欄，不宣稱工作區外寫檔受機械阻擋"
   },
   {
    "participant": "Codex",
    "strongest": "gpt-6-astra",
-   "second": "gpt-6-sol",
+   "second": "gpt-6.1-sol",
    "maxEffort": "max",
    "autoMode": "ultra（這一檔會自動派助手）",
    "source": "codex CLI",
@@ -1073,6 +1074,7 @@
    "source": "Grok CLI",
    "launch": "暫用安排依 docs/project-collaboration.md「複審模型」；送審產生器印出下列固定模型、推理與材料路徑。",
    "command": "node {reviewTree}/scripts/grok-review.js --model {model} --effort {effort} --review-tree {reviewTree} --mutation-copy {mutationCopy} --prompt-file {promptFile} --out-file {outFile} --change {change} --project {project}",
+   "scanCommand": "node tools/review-launch.js --grok-exec --mode scan --cwd {scanTree} --model {model} --reasoning-effort {effort} --prompt-file {promptFile} --out {outFile}",
    "machine": "借用 grok-scan.js 的 OS 隔離、試探、執行檔釘值、假鑰匙中繼與掃後比對；正式用途另核材料與原文雜湊。GitHub 憑證不進盒，前端不代貼結論。",
    "promptOnly": "受審材料不改檔靠提示與前後雜湊核對；突變只改盒內副本。盒內沒有原倉庫的 .git，版本以外層核過的清單表示。輸出零不代表通過或已貼文。",
    "verified": "2026-10-15 合成材料與假 runner 行為題；真模型執行與逐字貼文另以每輪 PR 證據核對。"
@@ -1086,6 +1088,7 @@
    "source": "Gemini CLI",
    "launch": "僅在本人另行指定的 PR 使用；#730 單輪授權及原生接法見 docs/project-collaboration.md。先由官方產生器備樹與掛相依捷徑。",
    "command": "node {reviewTree}/scripts/gemini-review.js --model {model} --effort {effort} --review-tree {reviewTree} --mutation-copy {mutationCopy} --prompt-file {promptFile} --out-file {outFile} --change {change} --project {project}",
+   "scanCommand": "node {scanTree}/scripts/gemini-scan-native.js --model {model} --effort {effort} --scan-tree {scanTree} --prompt-file {promptFile} --out-file {outFile} --change {change} --project {project}",
    "machine": "原生 CLI 載入前限定本輪信任；公開來源釘值，真 Config、主審請求模型與 HIGH、工具 registry 觀測，工具與 Shell 終態私有旁錄；完整原生 JSON 保留。",
    "promptOnly": "來源唯讀、僅改突變副本、不得讀真資料與憑證或提交合併靠角色提示；Shell 考題可跑任意程式，沒有 OS 隔離，前後相同不能排除中途改回。CLI 自行處理既有登入，未讀認證到模型材料。",
    "verified": "限定驗證與正式輪依 PR 證據；格式受理後仍待人工逐項核收。舊手造 Config 預檢不算真啟動等價證據。",
