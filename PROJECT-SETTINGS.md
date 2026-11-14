@@ -17,7 +17,7 @@ PR說明的「實作者」「複審者」兩欄、結論標頭與自評的角色
 | AI 乙 | Codex | teacherjung |
 | AI 丙 | Grok | teacherjung |
 | 本工作線技術裁示者（GPT‑6\.1 Sol）；\#748 正式複審另由未參與實作及本支技術裁示的獨立場次擔任 | Sol | teacherjung |
-| AI 丁（本人指定的單輪複審） | Gemini | teacherjung |
+| AI 丁（本人指定的實作或單輪複審） | Gemini | teacherjung |
 
 貼文帳號資格：只採計登記在參與者表裡的貼文帳號貼的 ❓／⚖️／🚫；沒登記的帳號貼的不採計為有效留痕——它貼的 ❓ 不入待裁，它貼的 ⚖️／🚫 不能替已採計的問題收口（原題繼續待裁），形狀合規的會另列成疑似。⚖️ 另外要由裁示者那一位的帳號貼。結論閘只認識別值、不認帳號。多方共用同一個帳號時，機器分不出是誰親自貼的——那是這套機制的邊界，不是保證。
 
@@ -74,12 +74,12 @@ default 是全專案預設路由；其餘識別值只供明列範圍。依裁示
 
 ## 四、掃描發射者（規矩 A1、G1、G4）
 
-- 掃描者識別值：Gemini；怎麼起：Gemini 原生 CLI 唯讀掃描（沒有掃描者＝照風險級別要掃的那幾支，掃描紀錄寫「未執行：本專案無掃描者」，由下面指定的那一方記錄並轉正式；表定不掃的照規矩 G1）
-- 誰指派、登記在哪：Codex（實作者，能起 CLI）：依 William 2026\-10\-20 條件式授權，在 Grok 掃描額度用完後使用；來源與實際執行情況見 docs\/project\-collaboration\.md「Gemini 條件式原生掃描」。
-- 兩方都起得了時：兩方都起得了時由實作者發射；Gemini 不得同時是該支實作者或複審者。
+- 掃描者識別值：Grok；怎麼起：Grok CLI（經 tools\/review\-launch\.js \-\-grok\-exec 以預設拒絕 Seatbelt 沙盒與本機受控認證通道唯讀執行）（沒有掃描者＝照風險級別要掃的那幾支，掃描紀錄寫「未執行：本專案無掃描者」，由下面指定的那一方記錄並轉正式；表定不掃的照規矩 G1）
+- 誰指派、登記在哪：實作者或發審者（能起 CLI）：依 William 2026\-11\-14 指示（套件 \#136 留言 6878641993）掃描交給 Grok；若 Grok 掃描額度用完需依 2026\-10\-20 條件式授權改用 Gemini 原生掃描，須先將 scanner 切回 Gemini（scripts\/gemini\-scan\-native\.js 會核對 scanner\.participant \=\=\= \'Gemini\'，見 docs\/project\-collaboration\.md）。
+- 兩方都起得了時：兩方都起得了時由實作者發射；掃描者不得同時是該支實作者或複審者（G1）。
 - 沒有合格者時，誰記錄未執行、誰轉正式：實作者依 RULES G3、G4 留真實未執行原因；普通 CLI 失敗不盲重送、不自行換正式複審者，疑似破口依 G2。
-- 掃描用的最強模型（規矩 G1；換新模型只改這裡）：gemini\-3\.1\-pro\-preview；最高推理：HIGH
-- 掃描留言標頭的來源字串：Gemini CLI；啟動指令樣板（tools/review-launch.js --scan 替換記號後印出）：node \{scanTree\}\/scripts\/gemini\-scan\-native\.js \-\-model \{model\} \-\-effort \{effort\} \-\-scan\-tree \{scanTree\} \-\-prompt\-file \{promptFile\} \-\-out\-file \{outFile\} \-\-change \{change\} \-\-project \{project\}
+- 掃描用的最強模型（規矩 G1；換新模型只改這裡）：grok\-4\.7；最高推理：xhigh
+- 掃描留言標頭的來源字串：Grok CLI；啟動指令樣板（tools/review-launch.js --scan 替換記號後印出）：node tools\/review\-launch\.js \-\-grok\-exec \-\-mode scan \-\-cwd \{scanTree\} \-\-model \{model\} \-\-reasoning\-effort \{effort\} \-\-prompt\-file \{promptFile\} \-\-out \{outFile\}
 
 ## 五、平台介面（規矩 E5、H1；閘要問平台的每一件事都走這裡）
 
@@ -223,15 +223,15 @@ default 是全專案預設路由；其餘識別值只供明列範圍。依裁示
 | 複審者 | 最強模型 | 次強模型（額度用完才用） | 最高推理 | 不開的自動模式 |
 |---|---|---|---|---|
 | Sol | gpt\-6\.1\-sol | 未設定 | xhigh | 不使用自動模式 |
-| Claude | claude\-opus\-5\-5 | claude\-fable\-5\-1 | max | Ultracode |
-| Codex | gpt\-6\-astra | gpt\-6\-sol | max | ultra（這一檔會自動派助手） |
+| Claude | claude\-opus\-5\-5\-high | claude\-sonnet\-5\-5\-high | high | auto |
+| Codex | gpt\-6\-astra | gpt\-6\.1\-sol | max | ultra（這一檔會自動派助手） |
 | Grok | grok\-4\.7 | 未設定 | xhigh | 自動選模 |
 | Gemini | gemini\-3\.1\-pro\-preview | 未設定 | HIGH | 自動選模 |
 
 | 複審者 | 怎麼起（含放行哪些考題指令） | 機器擋得住的 | 只靠提示的、已知缺口 | 驗過的日期 |
 |---|---|---|---|---|
 | Sol | 僅 \#748 依本人留言 6538582075 指派未參與實作及本支技術裁示的獨立正式主審；送審產生器 node tools\/review\-launch\.js \<編號\> \-\-reviewer Sol 依本列印出固定模型與推理的命令。其他支仍依各自分工，\#747 與預設 Grok 不變。 | approval\_policy＝never 禁止申請提權；\-o 收最後回覆，外殼 \-\-post 核兩棵樹乾淨、版本、角色、來源及固定小標後代貼 | workspace\-write 執行期間可寫審查樹與暫存區，唯讀靠標準提示與審後驗樹；完整正文、實質必驗項與獨立資格須另核原生紀錄，登記及退出0不等於正式審查通過 | 每場依原生證據核模型、推理、終態、完整結論及人員獨立性；本列不是本次實跑證據 |
-| Claude | 送審產生器 node tools\/review\-launch\.js \<編號\> \-\-reviewer \<識別值\> 照下一格的樣板印出填好的那一行；它開好審查樹與突變副本之後，node\_modules 捷徑由實作者照 docs\/project\-collaboration\.md「工作目錄與樹」節備樹那一步掛上（只准建、不准動），再發審 | 放行清單以外的指令一律被拒（不跳出詢問）；Edit 工具改不了審查樹、只准改突變副本；不讀主目錄的本機設定檔 | 放行的指令仍可能寫檔（例如 git diff 的 \-\-output），副本裡改了程式再跑考題＝能跑任意程式，所以審查樹唯讀靠提示；讀檔的禁令管不到考題程式自己讀檔；助手被拒時最後的輸出看不到，要逐筆搜「has been denied」 | 2026\-10\-15 UTC（22\:30\:53）：claude \-\-version 回 2\.1\.300 \(Claude Code\)，exit 0；只核 CLI 版本、未啟模型，不代表本次已驗 Opus 模型或通道；模型選用依 \#687 及各輪實際紀錄。 |
+| Claude | 送審產生器 node tools\/review\-launch\.js \<編號\> \-\-reviewer \<識別值\> 照下一格的樣板印出填好的那一行（產生器備樹時自動掛好獨立 node\_modules 捷徑、收樹時自動卸載）；詳見 docs\/project\-collaboration\.md「工作目錄與樹」及「審查」節 | 先 cd \{reviewTree\} 固定進入審查樹，透過本機已登入之 Antigravity CLI（agy \-p）指定 \-\-model \{model\} 與 \-\-effort \{effort\}，以 \-\-add\-dir \{mutationCopy\} 納入突變副本並以 \-\-output\-format json 輸出結構化 JSON 封包（外殼 unwrapScanOutput 核驗 status \=\=\= \"SUCCESS\" 後只解出最終 response 正文）；審完由外殼 \-\-post／\-\-close 先核對審查樹與突變副本乾淨、HEAD 沒變、標頭與小標合規，才代貼結論與收樹 | \-\-dangerously\-skip\-permissions 於非互動模式下放行工具呼叫以執行考題與副本突變測試，審查樹唯讀、不讀真實資料與不直接跑平台變更指令靠提示與事後 \-\-post／\-\-close 的樹乾淨核對；若改用獨立 claude CLI 則須另配 \-\-permission\-mode dontAsk 與 allowedTools／disallowedTools 清單 | 2026\-11\-14 本機 agy CLI（claude\-opus\-5\-5\-high／high）於套件 \#136 r1 獨立場次正式複審與收樹核驗實跑通過 |
 | Codex | 送審產生器 node tools\/review\-launch\.js \<編號\> \-\-reviewer \<識別值\> 照下一格的樣板印出填好的那一行；它開好審查樹與突變副本之後，node\_modules 捷徑由實作者照 docs\/project\-collaboration\.md「工作目錄與樹」節備樹那一步掛上（只准建、不准動），再發審 | 幾乎沒有：審查樹與系統暫存區都寫得進；使用者層放行規則命中的指令在沙箱外跑；樣板帶 approval\_policy＝never，申請提權一律不准（不帶就照本機設定檔自動核准） | 唯讀、不轉正式、不合併、只貼一則留言，全靠提示；退出 0 不代表通過、也不代表留言已貼成功（啟動失敗會退非零），發審的一方要自己去 PR 看留言在不在；設定檔預設推理是 low，指令漏帶就靜默降級；唯讀沙箱配 \-\-add\-dir 突變副本（2026\-10\-07 實測）連副本、暫存區、網路都被擋，不能拿來讓審查樹唯讀 |  |
 | Grok | 暫用安排依 docs\/project\-collaboration\.md「複審模型」；送審產生器印出下列固定模型、推理與材料路徑。 | 借用 grok\-scan\.js 的 OS 隔離、試探、執行檔釘值、假鑰匙中繼與掃後比對；正式用途另核材料與原文雜湊。GitHub 憑證不進盒，前端不代貼結論。 | 受審材料不改檔靠提示與前後雜湊核對；突變只改盒內副本。盒內沒有原倉庫的 \.git，版本以外層核過的清單表示。輸出零不代表通過或已貼文。 | 2026\-10\-15 合成材料與假 runner 行為題；真模型執行與逐字貼文另以每輪 PR 證據核對。 |
 | Gemini | 僅在本人另行指定的 PR 使用；\#730 單輪授權及原生接法見 docs\/project\-collaboration\.md。先由官方產生器備樹與掛相依捷徑。 | 原生 CLI 載入前限定本輪信任；公開來源釘值，真 Config、主審請求模型與 HIGH、工具 registry 觀測，工具與 Shell 終態私有旁錄；完整原生 JSON 保留。 | 來源唯讀、僅改突變副本、不得讀真資料與憑證或提交合併靠角色提示；Shell 考題可跑任意程式，沒有 OS 隔離，前後相同不能排除中途改回。CLI 自行處理既有登入，未讀認證到模型材料。 | 限定驗證與正式輪依 PR 證據；格式受理後仍待人工逐項核收。舊手造 Config 預檢不算真啟動等價證據。 |
@@ -239,7 +239,7 @@ default 是全專案預設路由；其餘識別值只供明列範圍。依裁示
 | 複審者 | 結論標頭的來源字串 | 啟動指令樣板（送審產生器替換記號後印出） |
 |---|---|---|
 | Sol | codex CLI | codex exec \-m \{model\} \-c model\_reasoning\_effort\=\'\"\{effort\}\"\' \-c approval\_policy\=\'\"never\"\' \-s workspace\-write \-c sandbox\_workspace\_write\.network\_access\=true \-C \{reviewTree\} \-o \{outFile\} \- \< \{promptFile\} |
-| Claude | Claude CLI | cd \{reviewTree\} \&\& claude \-p \"\$\(cat \{promptFile\}\)\" \-\-model \{model\} \-\-effort \{effort\} \-\-permission\-mode dontAsk \-\-setting\-sources user\,project \-\-add\-dir \{mutationCopy\} \-\-verbose \-\-output\-format json \-\-allowedTools \'Read\,Grep\,Glob\,Bash\(node \-\-test \*\)\,Bash\(npm \-\-prefix \{mutationCopy\} test \*\)\,Bash\(git diff \*\)\,Bash\(git log \*\)\,Bash\(git show \*\)\,Bash\(git rev\-parse HEAD\)\,Bash\(git \-C \{mutationCopy\} rev\-parse HEAD\)\,Bash\(git \-C \{mutationCopy\} status \-\-porcelain\)\,Bash\(git \-C \{mutationCopy\} diff\)\,Bash\(gh pr view \*\)\,Bash\(gh pr diff \*\)\,Bash\(gh pr checks \*\)\,Bash\(gh run view \*\)\,Bash\(gh run list \*\)\,Bash\(gh pr comment \{change\} \*\)\,Edit\(\/\{mutationCopy\}\/\*\*\)\,Workflow\' \-\-disallowedTools \'Write\,NotebookEdit\,WebFetch\,WebSearch\,Edit\(\/\{reviewTree\}\/\*\*\)\,Bash\(gh pr merge \*\)\,Bash\(gh pr edit \*\)\,Bash\(gh pr close \*\)\,Bash\(gh pr review \*\)\,Bash\(gh pr ready \*\)\,Bash\(git push \*\)\,Bash\(git commit \*\)\,Bash\(git checkout \*\)\,Bash\(git switch \*\)\,Bash\(git stash \*\)\,Bash\(git worktree \*\)\,Bash\(git fetch \*\)\,Bash\(npm install \*\)\,Bash\(npm ci \*\)\,Bash\(npx \*\)\,Bash\(node \-e \*\)\' \< \/dev\/null \> \{outFile\} |
+| Claude | Claude CLI | cd \{reviewTree\} \&\& agy \-p \"\$\(cat \{promptFile\}\)\" \-\-model \{model\} \-\-effort \{effort\} \-\-dangerously\-skip\-permissions \-\-add\-dir \{mutationCopy\} \-\-output\-format json \< \/dev\/null \> \{outFile\} |
 | Codex | codex CLI | codex exec \-m \{model\} \-c model\_reasoning\_effort\=\'\"\{effort\}\"\' \-c approval\_policy\=\'\"never\"\' \-s workspace\-write \-c sandbox\_workspace\_write\.network\_access\=true \-C \{reviewTree\} \- \< \{promptFile\} \> \{outFile\} 2\>\&1 |
 | Grok | Grok CLI | node \{reviewTree\}\/scripts\/grok\-review\.js \-\-model \{model\} \-\-effort \{effort\} \-\-review\-tree \{reviewTree\} \-\-mutation\-copy \{mutationCopy\} \-\-prompt\-file \{promptFile\} \-\-out\-file \{outFile\} \-\-change \{change\} \-\-project \{project\} |
 | Gemini | Gemini CLI | node \{reviewTree\}\/scripts\/gemini\-review\.js \-\-model \{model\} \-\-effort \{effort\} \-\-review\-tree \{reviewTree\} \-\-mutation\-copy \{mutationCopy\} \-\-prompt\-file \{promptFile\} \-\-out\-file \{outFile\} \-\-change \{change\} \-\-project \{project\} |

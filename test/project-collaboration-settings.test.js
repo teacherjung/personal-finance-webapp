@@ -8,19 +8,28 @@ import reviewVerdicts from '../tools/gates/check-review-verdicts.js';
 
 const settings = JSON.parse(readFileSync(new URL('../settings.json', import.meta.url), 'utf8'));
 
-test('專案設定產出的分工為 Codex 實作與 Grok 複審，條件式 Gemini 掃描登記', () => {
+test('專案設定產出的分工為 Codex 實作與 Grok 複審，預設 Grok 隔離掃描登記且保留 Gemini 掃描樣板', () => {
   const rendered = settingsBuilder.build(settings);
   assert.equal(rendered, readFileSync(new URL('../PROJECT-SETTINGS.md', import.meta.url), 'utf8'));
   assert.ok(rendered.includes('實作者＝Codex；複審者＝Grok'));
-  assert.ok(rendered.includes('- 掃描者識別值：Gemini；怎麼起：Gemini 原生 CLI 唯讀掃描（'));
-  assert.equal(settings.scanner.strongest, 'gemini-3.1-pro-preview');
-  assert.equal(settings.scanner.maxEffort, 'HIGH');
-  const spec = reviewLaunch.resolveScannerSpec(settings, undefined, settings.participants.map(row => row.id));
-  assert.equal(spec.scanner, 'Gemini');
-  assert.match(spec.command, /scripts\/gemini-scan-native\.js --model \{model\} --effort \{effort\} --scan-tree \{scanTree\}/u);
-  assert.doesNotMatch(spec.command, /review-tree|mutation-copy/u);
+  assert.ok(rendered.includes('- 掃描者識別值：Grok；怎麼起：Grok CLI（經 tools\\/review\\-launch\\.js \\-\\-grok\\-exec'));
+  assert.equal(settings.scanner.participant, 'Grok');
+  assert.equal(settings.scanner.strongest, 'grok-4.7');
+  assert.equal(settings.scanner.maxEffort, 'xhigh');
+  assert.equal(settings.scanner.source, 'Grok CLI');
+  const usable = settings.participants.map(row => row.id);
+  const spec = reviewLaunch.resolveScannerSpec(settings, undefined, usable);
+  assert.equal(spec.scanner, 'Grok');
+  assert.match(spec.command, /^node tools\/review-launch\.js --grok-exec --mode scan --cwd \{scanTree\} --model \{model\} --reasoning-effort \{effort\} --prompt-file \{promptFile\} --out \{outFile\}$/u);
+  assert.doesNotMatch(spec.command, /reviewTree|review-tree|mutationCopy|mutation-copy/u);
   assert.ok(!Object.hasOwn(settings.scanner, 'nativeSources'));
+  assert.match(settings.scanner.assignedBy, /6878641993/u);
   assert.match(settings.scanner.assignedBy, /額度用完/u);
+
+  const geminiSpec = reviewLaunch.resolveScannerSpec(settings, 'Gemini', usable);
+  assert.equal(geminiSpec.scanner, 'Gemini');
+  assert.match(geminiSpec.command, /scripts\/gemini-scan-native\.js --model \{model\} --effort \{effort\} --scan-tree \{scanTree\}/u);
+  assert.doesNotMatch(geminiSpec.command, /reviewTree|review-tree|mutationCopy|mutation-copy/u);
 });
 
 test('專案停用掃描設定讓掃描啟動入口在外部命令前拒絕', () => {
@@ -33,7 +42,7 @@ test('專案停用掃描設定讓掃描啟動入口在外部命令前拒絕', ()
 });
 
 
-test('Gemini 單輪登記使用原生有效模型與推理命令', () => {
+test('Gemini 單輪登記與 Claude CLI 審查命令符合設定契約', () => {
   const row = settings.reviewers.find(item => item.participant === 'Gemini');
   assert.ok(settings.participants.some(item => item.id === 'Gemini'));
   assert.ok(settings.sources.some(item => item.string === 'Gemini CLI'));
@@ -41,6 +50,22 @@ test('Gemini 單輪登記使用原生有效模型與推理命令', () => {
   assert.equal(row.maxEffort, 'HIGH');
   assert.equal(row.source, 'Gemini CLI');
   assert.match(row.command, /scripts\/gemini-review\.js --model \{model\} --effort \{effort\}/u);
+  assert.match(row.scanCommand, /scripts\/gemini-scan-native\.js --model \{model\} --effort \{effort\} --scan-tree \{scanTree\}/u);
+
+  const claude = settings.reviewers.find(item => item.participant === 'Claude');
+  assert.equal(claude.strongest, 'claude-opus-5-5-high');
+  assert.equal(claude.second, 'claude-sonnet-5-5-high');
+  assert.equal(claude.maxEffort, 'high');
+  assert.equal(claude.autoMode, 'auto');
+  assert.equal(claude.source, 'Claude CLI');
+  assert.match(claude.command, /agy -p "\$\(cat \{promptFile\}\)" --model \{model\} --effort \{effort\} --dangerously-skip-permissions --add-dir \{mutationCopy\} --output-format json < \/dev\/null > \{outFile\}/u);
+
+  const codex = settings.reviewers.find(item => item.participant === 'Codex');
+  assert.equal(codex.second, 'gpt-6.1-sol');
+
+  const grok = settings.reviewers.find(item => item.participant === 'Grok');
+  assert.match(grok.scanCommand, /^node tools\/review-launch\.js --grok-exec --mode scan --cwd \{scanTree\}/u);
+
   assert.equal(settings.defaultDivision.reviewer, 'Grok');
 });
 
