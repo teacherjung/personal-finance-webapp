@@ -73,9 +73,10 @@ test('Gemini 單輪登記與 Claude CLI 審查命令符合設定契約', () => {
   const settingsArg = claudeCmd.match(/--settings '([^']+)'/u)?.[1];
   assert.ok(settingsArg, 'Claude 啟動命令必須帶單次會話 --settings JSON；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
   const parsedAgySettings = JSON.parse(settingsArg);
-  assert.equal(parsedAgySettings.allowNonWorkspaceAccess, false);
+  assert.ok(!Object.hasOwn(parsedAgySettings, 'allowNonWorkspaceAccess'), 'Claude 複審 --settings 不得保留未生效的 allowNonWorkspaceAccess；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
   assert.equal(parsedAgySettings.enableTerminalSandbox, false);
   assert.deepEqual(parsedAgySettings.permissions.allow, ['write_file(/synthetic/mutation)']);
+  assert.ok(!parsedAgySettings.permissions.deny.includes('command(gh pr comment)'), 'Claude 複審命令須允許依送審提示執行 gh pr comment 自貼結論；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
   for (const denied of [
     'mcp(*)',
     'read_url(*)',
@@ -85,7 +86,6 @@ test('Gemini 單輪登記與 Claude CLI 審查命令符合設定契約', () => {
     'command(gh pr merge)',
     'command(gh pr edit)',
     'command(gh pr close)',
-    'command(gh pr comment)',
     'command(gh api -X)',
     'command(gh api graphql)',
     'command(git push)',
@@ -104,9 +104,12 @@ test('Gemini 單輪登記與 Claude CLI 審查命令符合設定契約', () => {
     outFile: '/synthetic/scan-output.log',
   }, 'Claude 掃描合成命令');
   const parsedScanSettings = JSON.parse(claudeScanCmd.match(/--settings '([^']+)'/u)?.[1] ?? '');
-  assert.ok(parsedScanSettings.permissions.deny.includes('mcp(*)'));
-  assert.ok(parsedScanSettings.permissions.deny.includes('write_file(/synthetic/scan)'));
+  assert.ok(!Object.hasOwn(parsedScanSettings, 'allowNonWorkspaceAccess'), 'Claude 掃描 --settings 不得保留未生效的 allowNonWorkspaceAccess；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
+  assert.ok(parsedScanSettings.permissions.deny.includes('mcp(*)'), 'Claude 掃描命令缺少 mcp(*)；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
+  assert.ok(parsedScanSettings.permissions.deny.includes('write_file(/synthetic/scan)'), 'Claude 掃描命令缺少 write_file(/synthetic/scan)；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
+  assert.ok(parsedScanSettings.permissions.deny.includes('command(gh pr comment)'), 'Claude 掃描命令必須維持拒絕 command(gh pr comment)；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
   assert.match(claude.verified, /available: low, medium, high/u);
+  assert.match(claude.verified, /guard_canary\/ping/u, 'Claude verified 欄須記錄測試鈕實測；查 settings.json，重跑 node --test test/project-collaboration-settings.test.js');
 
   const codex = settings.reviewers.find(item => item.participant === 'Codex');
   assert.equal(codex.second, 'gpt-6.1-sol');
